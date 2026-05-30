@@ -32,16 +32,8 @@ output "sns_topic_arn" {
   value       = aws_sns_topic.alerts.arn
 }
 
-output "backend_public_ip" {
-  value = aws_instance.backend.public_ip
-}
-
-output "worker_public_ip" {
-  value = aws_instance.worker.public_ip
-}
-
 # ===================================================
-# Auto-Generate Ansible Inventory File
+# Auto-Generate Ansible Inventory File (With Bastion)
 # ===================================================
 resource "local_file" "ansible_inventory" {
   filename = "../ansible/inventory.ini"
@@ -50,13 +42,20 @@ resource "local_file" "ansible_inventory" {
     ${aws_instance.frontend.public_ip}
 
     [backend]
-    ${aws_instance.backend.public_ip} private_ip=${aws_instance.backend.private_ip}
+    ${aws_instance.backend.private_ip} private_ip=${aws_instance.backend.private_ip}
 
     [worker]
-    ${aws_instance.worker.public_ip}
+    ${aws_instance.worker.private_ip}
 
     [all:vars]
     ansible_user=ubuntu
+
+    # Bulletproof Bastion Tunnel: Bypasses hidden host-key prompts on the jump host
+    [backend:vars]
+    ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -W %h:%p -q ubuntu@${aws_instance.frontend.public_ip} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /tmp/project_key.pem"'
+
+    [worker:vars]
+    ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -W %h:%p -q ubuntu@${aws_instance.frontend.public_ip} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /tmp/project_key.pem"'
   EOT
 }
 

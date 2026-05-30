@@ -42,10 +42,9 @@ resource "aws_security_group" "frontend_sg" {
 # 2. Backend Security Group
 resource "aws_security_group" "backend_sg" {
   name        = "backend_sg"
-  description = "Allow inbound API traffic from Frontend and SSH for Ansible"
+  description = "Allow inbound API traffic and SSH ONLY from Frontend"
   vpc_id      = aws_vpc.main_vpc.id
 
-  # API traffic ONLY allowed from the Frontend Security Group (Strict Minimal Permission)
   ingress {
     description     = "Flask API from Frontend SG only"
     from_port       = 5000
@@ -54,13 +53,12 @@ resource "aws_security_group" "backend_sg" {
     security_groups = [aws_security_group.frontend_sg.id]
   }
 
-  # SSH Rule - Allowed from anywhere (0.0.0.0/0) ONLY because Ansible requires access from a dynamic local IP
   ingress {
-    description = "SSH for Ansible (Required for local provisioning)"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = "SSH strictly from Frontend SG (Bastion Host)"
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [aws_security_group.frontend_sg.id] # <--- LOCKED DOWN
   }
 
   egress {
@@ -74,16 +72,15 @@ resource "aws_security_group" "backend_sg" {
 # 3. Worker Security Group
 resource "aws_security_group" "worker_sg" {
   name        = "worker_sg"
-  description = "Allow SSH for Ansible. No inbound app ports needed."
+  description = "Allow SSH ONLY from Frontend. No inbound app ports needed."
   vpc_id      = aws_vpc.main_vpc.id
 
-  # SSH Rule - Allowed from anywhere (0.0.0.0/0) ONLY because Ansible requires access from a dynamic local IP
   ingress {
-    description = "SSH for Ansible (Required for local provisioning)"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = "SSH strictly from Frontend SG (Bastion Host)"
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [aws_security_group.frontend_sg.id] # <--- LOCKED DOWN
   }
 
   egress {

@@ -62,6 +62,11 @@ sleep 60
 echo "Running Ansible Playbook..."
 cd ansible
 
+# --- NEW: Force cleanup of any old locked files from previous crashed runs ---
+rm -f /tmp/.vault_tmp
+rm -f /tmp/project_key.pem
+# -------------------------------------------------------------------------
+
 # 1. Secure the Vault Password in /tmp
 echo "$VAULT_PASS" > /tmp/.vault_tmp
 chmod 600 /tmp/.vault_tmp
