@@ -49,6 +49,9 @@ echo "Initializing and Applying Terraform..."
 cd terraform
 terraform init -input=false
 terraform apply -auto-approve
+
+# Grab the public IP directly from Terraform's outputs
+FRONTEND_IP=$(terraform output -raw frontend_public_ip)
 cd ..
 
 # Wait for the EC2 servers to fully start up before configuring them
@@ -82,4 +85,10 @@ rm -f /tmp/project_key.pem
 unset VAULT_PASS
 
 cd ..
+
+# --- 5. Finish ---
+echo ""
+echo "--------------------------------------------------------"
 echo "Deployment finished successfully!"
+echo "Your application is live at: https://${FRONTEND_IP}"
+echo "--------------------------------------------------------"
