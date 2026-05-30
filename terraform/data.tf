@@ -52,3 +52,8 @@ resource "aws_sns_topic_subscription" "email_sub" {
   protocol  = "email"
   endpoint  = var.my_email # Pulled from variables
 }
+
+# 6. Fetch your local machine's public IP dynamically for SSH access
+data "http" "my_local_ip" {
+  url = "http://ipv4.icanhazip.com"
+}

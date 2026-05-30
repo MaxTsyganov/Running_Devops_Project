@@ -22,13 +22,13 @@ resource "aws_security_group" "frontend_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # SSH Rule - Allowed from anywhere
+# SSH Rule - Dynamically locked to your exact local IP
   ingress {
-    description = "SSH for Ansible (Required for local provisioning)"
+    description = "SSH for Ansible (Restricted to local machine IP)"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["${chomp(data.http.my_local_ip.response_body)}/32"]
   }
 
   egress {
