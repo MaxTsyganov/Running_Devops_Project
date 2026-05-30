@@ -2,6 +2,10 @@
 # Stop the script immediately if any command fails
 set -e
 
+# --- Secure Cleanup Trap ---
+# Guarantees secrets are wiped from /tmp on ANY exit (success or crash)
+trap 'rm -f /tmp/.vault_tmp /tmp/project_key.pem; echo "Security cleanup complete."' EXIT
+
 # Check if Terraform and Ansible are installed before starting
 command -v terraform >/dev/null 2>&1 || { echo "Terraform is not installed. Aborting."; exit 1; }
 command -v ansible-playbook >/dev/null 2>&1 || { echo "Ansible is not installed. Aborting."; exit 1; }
@@ -62,11 +66,6 @@ sleep 60
 echo "Running Ansible Playbook..."
 cd ansible
 
-# --- NEW: Force cleanup of any old locked files from previous crashed runs ---
-rm -f /tmp/.vault_tmp
-rm -f /tmp/project_key.pem
-# -------------------------------------------------------------------------
-
 # 1. Secure the Vault Password in /tmp
 echo "$VAULT_PASS" > /tmp/.vault_tmp
 chmod 600 /tmp/.vault_tmp
@@ -84,9 +83,7 @@ ansible-playbook -i inventory.ini playbook.yml \
     --private-key /tmp/project_key.pem \
     --vault-password-file /tmp/.vault_tmp
 
-# 4. Clean up all temporary security files
-rm -f /tmp/.vault_tmp
-rm -f /tmp/project_key.pem
+# Unset the vault password variable from memory
 unset VAULT_PASS
 
 cd ..
