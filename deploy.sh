@@ -41,10 +41,13 @@ read -r -p "Enter full path to your .pem file: " USER_PEM_PATH
 read -r -s -p "Enter Ansible Vault Password: " VAULT_PASS
 echo ""
 
-# Sanitize the Windows path (if applicable):
+# Sanitize the path:
 USER_PEM_PATH="${USER_PEM_PATH//\"/}"
 USER_PEM_PATH="${USER_PEM_PATH//\'/}"
 USER_PEM_PATH="${USER_PEM_PATH//$'\r'/}"
+
+# NEW: Expand the tilde (~) to the absolute home directory path
+USER_PEM_PATH="${USER_PEM_PATH/#\~/$HOME}"
 
 # --- 3. Run Terraform ---
 echo "Initializing and Applying Terraform..."
@@ -71,10 +74,10 @@ chmod 600 /tmp/.vault_tmp
 # 2. Copy the PEM key securely (Cross-Platform compatibility)
 if command -v wslpath >/dev/null 2>&1; then
     # We are on WSL, convert the Windows path
-    cp "$(wslpath -u "${USER_PEM_PATH}")" /tmp/project_key.pem
+    cp -f "$(wslpath -u "${USER_PEM_PATH}")" /tmp/project_key.pem
 else
     # We are on Mac or Native Linux, use the path as-is
-    cp "${USER_PEM_PATH}" /tmp/project_key.pem
+    cp -f "${USER_PEM_PATH}" /tmp/project_key.pem
 fi
 chmod 400 /tmp/project_key.pem
 

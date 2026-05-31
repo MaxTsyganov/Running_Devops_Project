@@ -98,7 +98,7 @@
           DB_PORT=5432
           DB_NAME=appdb
           DB_USER=postgres
-          DB_PASSWORD={{ db_password }}
+          DB_PASSWORD="{{ db_password }}"
           AWS_REGION={{ aws_region }}
           S3_BUCKET_NAME={{ s3_bucket }}
           SNS_TOPIC_ARN={{ sns_arn }}
@@ -157,7 +157,7 @@
           DB_PORT=5432
           DB_NAME=appdb
           DB_USER=postgres
-          DB_PASSWORD={{ db_password }}
+          DB_PASSWORD="{{ db_password }}"
           AWS_REGION={{ aws_region }}
           SNS_TOPIC_ARN={{ sns_arn }}
           POLL_INTERVAL_SECONDS=30
