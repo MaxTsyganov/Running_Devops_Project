@@ -1,7 +1,6 @@
 """
-Tier 2: Python Backend API
-This script handles the database connections, file uploads to AWS S3,
-and sends email notifications using AWS SNS.
+Backend API service for managing database records,
+handling S3 file uploads, and triggering SNS alerts.
 """
 
 import os
@@ -16,28 +15,25 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-# Load environment variables from the .env file
 load_dotenv()
 
-# Configure logging to print messages to the console
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
 )
 logger = logging.getLogger("backend")
 
-# Initialize the Flask application and allow cross-origin requests from the frontend
 app = Flask(__name__)
 CORS(app)
 
-# Database configuration pulled from environment variables
+# Database Configuration
 DB_HOST = os.environ.get("DB_HOST", "localhost")
 DB_PORT = os.environ.get("DB_PORT", "5432")
 DB_NAME = os.environ.get("DB_NAME", "appdb")
 DB_USER = os.environ.get("DB_USER", "postgres")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "changeme")
 
-# AWS configuration pulled from environment variables
+# AWS Configuration
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "")
 SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")

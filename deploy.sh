@@ -1,105 +1,88 @@
 #!/bin/bash
-# Stop the script immediately if any command fails
+# Stop script on first error
 set -e
 
-# --- Secure Cleanup Trap ---
-# Guarantees secrets are wiped from /tmp on ANY exit (success or crash)
-trap 'rm -f /tmp/.vault_tmp /tmp/project_key.pem; echo "Security cleanup complete."' EXIT
+# Clean up sensitive files when script exits
+trap 'rm -f /tmp/.vault_tmp /tmp/project_key.pem; echo "Cleanup complete."' EXIT
 
-# Check if Terraform and Ansible are installed before starting
-command -v terraform >/dev/null 2>&1 || { echo "Terraform is not installed. Aborting."; exit 1; }
-command -v ansible-playbook >/dev/null 2>&1 || { echo "Ansible is not installed. Aborting."; exit 1; }
+# Verify required tools are installed
+command -v terraform >/dev/null 2>&1 || { echo "Terraform required. Aborting."; exit 1; }
+command -v ansible-playbook >/dev/null 2>&1 || { echo "Ansible required. Aborting."; exit 1; }
 
-echo "Starting infrastructure deployment..."
+echo "Starting deployment..."
 
-# --- 1. Smart Terraform Configuration ---
+# 1. Setup Terraform Variables
 if [ ! -f "terraform/terraform.tfvars" ]; then
-    echo "No terraform.tfvars file found. Let's configure your environment!"
-    read -r -p "Enter AWS Key Pair Name: " USER_KEY_NAME
-    read -r -p "Enter S3 Bucket name (lowercase, hyphens only): " USER_BUCKET
-    read -r -p "Enter email for SNS alerts: " USER_EMAIL
-    read -r -s -p "Enter a strong password for your RDS Database: " DB_PASS
+    echo "Configuring environment variables..."
+    read -r -p "AWS Key Pair Name: " USER_KEY_NAME
+    read -r -p "S3 Bucket Name (lowercase, hyphens): " USER_BUCKET
+    read -r -p "SNS Alert Email: " USER_EMAIL
+    read -r -s -p "RDS Database Password: " DB_PASS
     echo ""
     
-    # Generate the file safely
     cat <<EOF > terraform/terraform.tfvars
 key_name    = "${USER_KEY_NAME}"
 bucket_name = "${USER_BUCKET}"
 my_email    = "${USER_EMAIL}"
 db_password = "${DB_PASS}"
 EOF
-    echo "Created terraform/terraform.tfvars successfully."
-    echo "---"
 else
-    echo "Found existing terraform/terraform.tfvars. Using saved configuration."
-    # Dynamically extract the saved database password to pass to Ansible
+    echo "Using existing terraform.tfvars file."
     DB_PASS=$(grep 'db_password' terraform/terraform.tfvars | cut -d '"' -f 2)
 fi
 
-# --- 2. Gather Ansible Runtime Credentials ---
-read -r -p "Enter full path to your .pem file: " USER_PEM_PATH
-read -r -s -p "Enter Ansible Vault Password: " VAULT_PASS
+# 2. Setup Ansible Credentials
+read -r -p "Path to .pem file: " USER_PEM_PATH
+read -r -s -p "Ansible Vault Password: " VAULT_PASS
 echo ""
 
-# Sanitize the path:
+# Format file path for cross-platform compatibility
 USER_PEM_PATH="${USER_PEM_PATH//\"/}"
 USER_PEM_PATH="${USER_PEM_PATH//\'/}"
 USER_PEM_PATH="${USER_PEM_PATH//$'\r'/}"
-
-# NEW: Expand the tilde (~) to the absolute home directory path
 USER_PEM_PATH="${USER_PEM_PATH/#\~/$HOME}"
 
-# --- 3. Run Terraform ---
-echo "Initializing and Applying Terraform..."
+# 3. Apply Infrastructure (Terraform)
 cd terraform
 terraform init -input=false
 terraform apply -auto-approve
-
-# Grab the public IP directly from Terraform's outputs
 FRONTEND_IP=$(terraform output -raw frontend_public_ip)
 cd ..
 
-# Wait for the EC2 servers to fully start up before configuring them
-echo "Waiting for EC2 instances to initialize (60 seconds)..."
+echo "Waiting 60 seconds for servers to boot..."
 sleep 60
 
-# --- 4. Configure Application (Ansible) ---
-echo "Running Ansible Playbook..."
+# 4. Configure Servers (Ansible)
 cd ansible
 
-# 1. Secure the Vault Password in /tmp
+# Save Vault password securely
 echo "$VAULT_PASS" > /tmp/.vault_tmp
 chmod 600 /tmp/.vault_tmp
 
-# 2. Copy the PEM key securely (Cross-Platform compatibility)
+# Copy SSH key securely to handle path formatting
 if command -v wslpath >/dev/null 2>&1; then
-    # We are on WSL, convert the Windows path
     cp -f "$(wslpath -u "${USER_PEM_PATH}")" /tmp/project_key.pem
 else
-    # We are on Mac or Native Linux, use the path as-is
     cp -f "${USER_PEM_PATH}" /tmp/project_key.pem
 fi
 chmod 400 /tmp/project_key.pem
 
-# 3. Apply configurations
 export ANSIBLE_CONFIG=ansible.cfg
 export ANSIBLE_HOST_KEY_CHECKING=False
 
-# Execute the playbook using the safe Linux paths and inject the dynamic DB password
+# Run configuration playbook
 ansible-playbook -i inventory.ini playbook.yml \
     -e "db_password=${DB_PASS}" \
     --private-key /tmp/project_key.pem \
     --vault-password-file /tmp/.vault_tmp
 
-# Unset the variables from memory to ensure no secrets linger
+# Clear sensitive variables from memory
 unset VAULT_PASS
 unset DB_PASS
-
 cd ..
 
-# --- 5. Finish ---
-echo ""
+# 5. Success Output
 echo "--------------------------------------------------------"
-echo "Deployment finished successfully!"
-echo "Your application is live at: https://${FRONTEND_IP}"
+echo "Deployment complete."
+echo "Application URL: https://${FRONTEND_IP}"
 echo "--------------------------------------------------------"

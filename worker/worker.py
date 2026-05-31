@@ -1,7 +1,6 @@
 """
-Tier 3: Background Worker
-This script runs independently to check the database for new tasks.
-It processes pending items and sends an email when they are finished.
+Background service that polls the database for pending tasks,
+processes them, and sends SNS notifications upon completion.
 """
 
 import os
@@ -15,35 +14,33 @@ import psycopg2.extras
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 
-# Load environment variables from the .env file
 load_dotenv()
 
-# Configure logging to print messages to the console
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
 )
 logger = logging.getLogger("worker")
 
-# Database configuration pulled from environment variables
+# Database Configuration
 DB_HOST = os.environ.get("DB_HOST", "localhost")
 DB_PORT = os.environ.get("DB_PORT", "5432")
 DB_NAME = os.environ.get("DB_NAME", "appdb")
 DB_USER = os.environ.get("DB_USER", "postgres")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "changeme")
 
-# AWS configuration pulled from environment variables
+# AWS Configuration
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "") or None
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "") or None
 
-# Set how often the worker checks the database (in seconds)
+# Polling interval in seconds
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "30"))
 
 
 def get_db_connection():
-    """Create a connection to the PostgreSQL database."""
+    """Establish a connection to the PostgreSQL database."""
     return psycopg2.connect(
         host=DB_HOST,
         port=int(DB_PORT),
@@ -55,9 +52,9 @@ def get_db_connection():
 
 
 def publish_sns(subject: str, message: str):
-    """Send an email notification using AWS SNS."""
+    """Publish a message to the configured AWS SNS topic."""
     if not SNS_TOPIC_ARN:
-        logger.warning("SNS topic is missing. Notification skipped.")
+        logger.warning("SNS topic missing. Notification skipped.")
         return
     try:
         sns = boto3.client(
@@ -71,14 +68,13 @@ def publish_sns(subject: str, message: str):
             Subject=subject,
             Message=message,
         )
-        logger.info(
-            f"Notification sent successfully. Message ID: {resp['MessageId']}")
+        logger.info(f"Notification sent. Message ID: {resp['MessageId']}")
     except ClientError:
         logger.exception("Failed to send notification")
 
 
 def fetch_pending_items(conn) -> list[dict]:
-    """Find all items in the database that are marked as 'pending'."""
+    """Retrieve all database items with a 'pending' status."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("""
             SELECT id, name, description, created_at
@@ -90,7 +86,7 @@ def fetch_pending_items(conn) -> list[dict]:
 
 
 def mark_item_done(conn, item_id: int):
-    """Update an item's status in the database to 'done'."""
+    """Update an item's status to 'done' and set the processing timestamp."""
     with conn.cursor() as cur:
         cur.execute("""
             UPDATE items
@@ -102,18 +98,18 @@ def mark_item_done(conn, item_id: int):
 
 
 def process_item(item: dict):
-    """Simulate working on a task by pausing for half a second."""
-    logger.info(f"Processing item ID {item['id']} named '{item['name']}'...")
+    """Simulate task processing."""
+    logger.info(f"Processing item ID {item['id']} ('{item['name']}')...")
     time.sleep(0.5)
-    logger.info(f"Item ID {item['id']} processed successfully.")
+    logger.info(f"Item ID {item['id']} processed.")
 
 
 def run_one_cycle():
-    """Check the database, process any pending items, and send an alert."""
+    """Execute a single polling cycle to process pending items."""
     try:
         conn = get_db_connection()
     except Exception:
-        logger.exception("Cannot connect to the database. Will retry later.")
+        logger.exception("Database connection failed. Retrying next cycle.")
         return
 
     try:
@@ -121,11 +117,9 @@ def run_one_cycle():
 
         if not pending:
             logger.info("No pending items found.")
-            conn.close()
             return
 
-        logger.info(
-            f"Found {len(pending)} pending item(s). Starting processing...")
+        logger.info(f"Found {len(pending)} pending item(s).")
         processed_names = []
 
         for item in pending:
@@ -133,19 +127,17 @@ def run_one_cycle():
                 process_item(item)
                 mark_item_done(conn, item["id"])
                 processed_names.append(item["name"])
-                logger.info(f"Item ID {item['id']} marked as done.")
             except Exception:
                 logger.exception(f"Failed to process item ID {item['id']}")
 
-        # Send a summary email if any items were processed
         if processed_names:
             count = len(processed_names)
             names_list = "\n".join(f"  - {n}" for n in processed_names)
             publish_sns(
-                subject=f"[Worker] {count} item(s) processed successfully",
+                subject=f"[Worker] {count} item(s) processed",
                 message=(
-                    f"The background worker finished processing {count} item(s).\n\n"
-                    f"Processed items:\n{names_list}\n\n"
+                    f"Worker finished processing {count} item(s).\n\n"
+                    f"Items:\n{names_list}\n\n"
                     f"Completed at: {datetime.utcnow().isoformat()}Z\n"
                 ),
             )
@@ -155,16 +147,13 @@ def run_one_cycle():
 
 
 def main():
-    """Start the infinite loop to keep the worker running."""
-    logger.info("Background Worker started.")
-    logger.info(f"Database target: {DB_HOST}:{DB_PORT}/{DB_NAME}")
-    logger.info(f"Checking every {POLL_INTERVAL_SECONDS} seconds.")
+    """Run the worker polling loop continuously."""
+    logger.info("Worker service started.")
+    logger.info(f"Target database: {DB_HOST}:{DB_PORT}/{DB_NAME}")
+    logger.info(f"Polling interval: {POLL_INTERVAL_SECONDS} seconds.")
 
     while True:
-        logger.info("Starting a new check cycle...")
         run_one_cycle()
-        logger.info(
-            f"Cycle complete. Waiting {POLL_INTERVAL_SECONDS} seconds...\n")
         time.sleep(POLL_INTERVAL_SECONDS)
 
 

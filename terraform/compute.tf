@@ -1,4 +1,4 @@
-# 1. Frontend / Nginx Server (Public)
+# Public Frontend Server
 resource "aws_instance" "frontend" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
@@ -12,11 +12,11 @@ resource "aws_instance" "frontend" {
   }
 }
 
-# 2. Backend Server (Private)
+# Private Backend Server
 resource "aws_instance" "backend" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
-  subnet_id              = aws_subnet.private_subnet_1.id # <--- MOVED TO PRIVATE
+  subnet_id              = aws_subnet.private_subnet_1.id
   vpc_security_group_ids = [aws_security_group.backend_sg.id]
   key_name               = var.key_name
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
@@ -27,11 +27,11 @@ resource "aws_instance" "backend" {
   }
 }
 
-# 3. Worker Server (Private)
+# Private Worker Server
 resource "aws_instance" "worker" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
-  subnet_id              = aws_subnet.private_subnet_1.id # <--- MOVED TO PRIVATE
+  subnet_id              = aws_subnet.private_subnet_1.id
   vpc_security_group_ids = [aws_security_group.worker_sg.id]
   key_name               = var.key_name
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
