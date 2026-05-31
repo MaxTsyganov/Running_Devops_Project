@@ -99,7 +99,7 @@
           DB_NAME=appdb
           DB_USER=postgres
           DB_PASSWORD={{ db_password }}
-          AWS_REGION=us-east-1
+          AWS_REGION={{ aws_region }}
           S3_BUCKET_NAME={{ s3_bucket }}
           SNS_TOPIC_ARN={{ sns_arn }}
 
@@ -122,6 +122,7 @@
       args:
         chdir: /home/ubuntu/app/backend
         executable: /bin/bash
+      changed_when: false
 
     - name: Register the system service for the Backend
       command: cp /home/ubuntu/app/backend/backend.service /etc/systemd/system/backend.service
@@ -157,7 +158,7 @@
           DB_NAME=appdb
           DB_USER=postgres
           DB_PASSWORD={{ db_password }}
-          AWS_REGION=us-east-1
+          AWS_REGION={{ aws_region }}
           SNS_TOPIC_ARN={{ sns_arn }}
           POLL_INTERVAL_SECONDS=30
 

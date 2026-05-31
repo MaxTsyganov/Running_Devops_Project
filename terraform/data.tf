@@ -1,3 +1,18 @@
+# Automatically fetch the latest Ubuntu 24.04 AMI for the current region
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical's official AWS Account
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
+  }
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
 # 1. Database Subnet Group (Required by RDS to know where it can live)
 resource "aws_db_subnet_group" "db_subnet_group" {
   name       = "devops-db-subnet-group"
@@ -29,6 +44,13 @@ resource "aws_db_instance" "postgres" {
   tags = {
     Name = "DevOps-RDS-Postgres"
   }
+}
+
+# Generate a random 6-character string to guarantee S3 uniqueness
+resource "random_string" "bucket_suffix" {
+  length  = 6
+  special = false
+  upper   = false
 }
 
 # 3. S3 Bucket

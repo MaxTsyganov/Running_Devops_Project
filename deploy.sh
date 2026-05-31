@@ -33,6 +33,8 @@ EOF
     echo "---"
 else
     echo "Found existing terraform/terraform.tfvars. Using saved configuration."
+    # Dynamically extract the saved database password to pass to Ansible
+    DB_PASS=$(grep 'db_password' terraform/terraform.tfvars | cut -d '"' -f 2)
 fi
 
 # --- 2. Gather Ansible Runtime Credentials ---
@@ -78,13 +80,15 @@ chmod 400 /tmp/project_key.pem
 export ANSIBLE_CONFIG=ansible.cfg
 export ANSIBLE_HOST_KEY_CHECKING=False
 
-# Execute the playbook using the safe Linux paths
+# Execute the playbook using the safe Linux paths and inject the dynamic DB password
 ansible-playbook -i inventory.ini playbook.yml \
+    -e "db_password=${DB_PASS}" \
     --private-key /tmp/project_key.pem \
     --vault-password-file /tmp/.vault_tmp
 
-# Unset the vault password variable from memory
+# Unset the variables from memory to ensure no secrets linger
 unset VAULT_PASS
+unset DB_PASS
 
 cd ..
 

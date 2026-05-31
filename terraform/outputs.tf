@@ -69,5 +69,6 @@ resource "local_file" "ansible_vars" {
     db_host: "${aws_db_instance.postgres.address}"
     s3_bucket: "${aws_s3_bucket.app_bucket.bucket}"
     sns_arn: "${aws_sns_topic.alerts.arn}"
+    aws_region: "${var.aws_region}"
   EOT
 }

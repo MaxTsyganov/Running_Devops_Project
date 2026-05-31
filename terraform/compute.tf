@@ -1,6 +1,6 @@
 # 1. Frontend / Nginx Server (Public)
 resource "aws_instance" "frontend" {
-  ami                    = var.ami_id
+  ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.frontend_sg.id]
@@ -14,7 +14,7 @@ resource "aws_instance" "frontend" {
 
 # 2. Backend Server (Private)
 resource "aws_instance" "backend" {
-  ami                    = var.ami_id
+  ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = aws_subnet.private_subnet_1.id # <--- MOVED TO PRIVATE
   vpc_security_group_ids = [aws_security_group.backend_sg.id]
@@ -29,7 +29,7 @@ resource "aws_instance" "backend" {
 
 # 3. Worker Server (Private)
 resource "aws_instance" "worker" {
-  ami                    = var.ami_id
+  ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = aws_subnet.private_subnet_1.id # <--- MOVED TO PRIVATE
   vpc_security_group_ids = [aws_security_group.worker_sg.id]

@@ -10,12 +10,6 @@ variable "instance_type" {
   default     = "t3.micro" # Free tier eligible
 }
 
-variable "ami_id" {
-  description = "The AMI ID for Ubuntu Server 24.04 LTS in us-east-1"
-  type        = string
-  default     = "ami-04b70fa74e45c3917" # Update this if you used a different Ubuntu AMI today!
-}
-
 variable "key_name" {
   description = "The name of the AWS Key Pair to use for SSH access"
   type        = string
