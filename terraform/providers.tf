@@ -9,9 +9,16 @@ terraform {
       version = "~> 3.4"
     }
   }
+
+  backend "s3" {
+    bucket       = "max-devops-terraform-state-2026" # Keep your exact bucket name
+    key          = "project/terraform.tfstate"
+    region       = "us-east-1" # Keep your region
+    use_lockfile = true
+    encrypt      = true
+  }
 }
 
-# Configure the AWS Provider using our variable
 provider "aws" {
   region = var.aws_region
 }
