@@ -32,6 +32,14 @@ spec:
             memory: "256Mi"
         securityContext:
           allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: nginx-cache
+          mountPath: /var/cache/nginx
+        - name: nginx-pid
+          mountPath: /var/run
         readinessProbe:
           httpGet:
             path: /
@@ -44,6 +52,11 @@ spec:
             port: 80
           initialDelaySeconds: 15
           periodSeconds: 20
+      volumes:
+      - name: nginx-cache
+        emptyDir: {}
+      - name: nginx-pid
+        emptyDir: {}
 
 ---
 apiVersion: apps/v1
@@ -85,6 +98,8 @@ spec:
             memory: "512Mi"
         securityContext:
           allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
         readinessProbe:
           httpGet:
             path: /api/health
@@ -136,3 +151,5 @@ spec:
             memory: "256Mi"
         securityContext:
           allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
