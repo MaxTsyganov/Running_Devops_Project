@@ -11,14 +11,30 @@ command -v ansible-playbook >/dev/null 2>&1 || { echo "Ansible required. Abortin
 
 echo "Starting deployment..."
 
+# Check for CI/CD flag
+NON_INTERACTIVE=false
+if [[ "$1" == "--ci" ]]; then
+    NON_INTERACTIVE=true
+    echo "Running in CI/CD non-interactive mode."
+fi
+
 # 1. Setup Terraform Variables
 if [ ! -f "terraform/terraform.tfvars" ]; then
     echo "Configuring environment variables..."
-    read -r -p "AWS Key Pair Name: " USER_KEY_NAME
-    read -r -p "S3 Bucket Name (lowercase, hyphens): " USER_BUCKET
-    read -r -p "SNS Alert Email: " USER_EMAIL
-    read -r -s -p "RDS Database Password: " DB_PASS
-    echo ""
+    
+    if [ "$NON_INTERACTIVE" = true ]; then
+        # In CI mode, fail immediately if these variables are missing
+        USER_KEY_NAME="${DEPLOY_KEY_NAME:?DEPLOY_KEY_NAME must be set in CI mode}"
+        USER_BUCKET="${DEPLOY_BUCKET:?DEPLOY_BUCKET must be set in CI mode}"
+        USER_EMAIL="${DEPLOY_EMAIL:?DEPLOY_EMAIL must be set in CI mode}"
+        DB_PASS="${DEPLOY_DB_PASS:?DEPLOY_DB_PASS must be set in CI mode}"
+    else
+        read -r -p "AWS Key Pair Name: " USER_KEY_NAME
+        read -r -p "S3 Bucket Name (lowercase, hyphens): " USER_BUCKET
+        read -r -p "SNS Alert Email: " USER_EMAIL
+        read -r -s -p "RDS Database Password: " DB_PASS
+        echo ""
+    fi
     
     cat <<EOF > terraform/terraform.tfvars
 key_name    = "${USER_KEY_NAME}"
@@ -32,9 +48,14 @@ else
 fi
 
 # 2. Setup Ansible Credentials
-read -r -p "Path to .pem file: " USER_PEM_PATH
-read -r -s -p "Ansible Vault Password: " VAULT_PASS
-echo ""
+if [ "$NON_INTERACTIVE" = true ]; then
+    USER_PEM_PATH="${DEPLOY_PEM_PATH:?DEPLOY_PEM_PATH must be set in CI mode}"
+    VAULT_PASS="${DEPLOY_VAULT_PASS:?DEPLOY_VAULT_PASS must be set in CI mode}"
+else
+    read -r -p "Path to .pem file: " USER_PEM_PATH
+    read -r -s -p "Ansible Vault Password: " VAULT_PASS
+    echo ""
+fi
 
 # Format file path for cross-platform compatibility
 USER_PEM_PATH="${USER_PEM_PATH//\"/}"
