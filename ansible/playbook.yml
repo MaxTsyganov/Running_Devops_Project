@@ -1,120 +1,29 @@
 ---
-# Step 1: Base Configuration (Applies to all servers)
+# Step 1: Base Configuration
 - name: Initialize Server Baseline
   hosts: all
   become: yes 
-  tasks:
-    - name: Update apt cache and install base dependencies
-      apt:
-        name:
-          - python3-pip
-          - python3-venv
-          - git
-        state: present
-        update_cache: yes
-
-    - name: Create the main application directory
-      file:
-        path: /home/ubuntu/app
-        state: directory
-        owner: ubuntu
-        group: ubuntu
-        mode: '0755'
+  roles:
+    - common
 
 # Step 2: Configure the Frontend Web Server
-- name: Deploy Frontend
+- name: Deploy Frontend Web Server
   hosts: frontend
   become: yes
   vars_files:
     - vars.yml
-  tasks:
-    - name: Create SSL directory for secure connections
-      file:
-        path: /etc/nginx/ssl
-        state: directory
-        mode: '0755'
-
-    - name: Generate a self-signed SSL certificate
-      command: >
-        openssl req -x509 -nodes -days 365 -newkey rsa:2048
-        -keyout /etc/nginx/ssl/nginx.key
-        -out /etc/nginx/ssl/nginx.crt
-        -subj "/C=IL/ST=Israel/L=TelAviv/O=JohnBryce/OU=DevOps/CN=max-project.local"
-      args:
-        creates: /etc/nginx/ssl/nginx.crt
-        
-    - name: Install Nginx web server
-      apt:
-        name: nginx
-        state: present
-
-    - name: Copy the website files to the server
-      copy:
-        src: ../frontend/index.html
-        dest: /usr/share/nginx/html/index.html
-
-    - name: Deploy Nginx configuration from template
-      template:
-        src: ../frontend/nginx.conf.j2
-        dest: /etc/nginx/conf.d/app.conf
-
-    - name: Remove the default Nginx welcome page
-      file:
-        path: /etc/nginx/sites-enabled/default
-        state: absent
-
-    - name: Restart and enable Nginx to apply changes
-      systemd:
-        name: nginx
-        state: restarted
-        enabled: yes
+  roles:
+    - frontend
 
 # Step 3: Configure the Python Backend API
-- name: Deploy Backend API
+- name: Deploy Python Backend API
   hosts: backend
   become: yes
   vars_files:
     - vars.yml
     - secrets.yml
-  tasks:
-    - name: Copy backend application code to the server
-      copy:
-        src: ../backend/
-        dest: /home/ubuntu/app/backend/
-        owner: ubuntu
-        group: ubuntu
-
-    - name: Deploy .env configuration from template
-      template:
-        src: ../backend/.env.j2
-        dest: /home/ubuntu/app/backend/.env
-
-    - name: Deploy systemd service file from template
-      template:
-        src: ../backend/backend.service.j2
-        dest: /etc/systemd/system/backend.service
-
-    - name: Create a Python Virtual Environment and install packages
-      pip:
-        requirements: /home/ubuntu/app/backend/requirements.txt
-        virtualenv: /home/ubuntu/app/backend/venv
-        virtualenv_command: /usr/bin/python3 -m venv
-
-    - name: Initialize the database tables
-      ansible.builtin.shell: |
-        source venv/bin/activate
-        python -c "from app import init_db; init_db()"
-      args:
-        chdir: /home/ubuntu/app/backend
-        executable: /bin/bash
-      changed_when: false
-
-    - name: Start and enable the Backend service
-      systemd:
-        name: backend
-        daemon_reload: yes
-        state: restarted
-        enabled: yes
+  roles:
+    - backend
 
 # Step 4: Configure the Background Worker
 - name: Deploy Background Worker
@@ -123,36 +32,8 @@
   vars_files:
     - vars.yml
     - secrets.yml
-  tasks:
-    - name: Copy worker application code to the server
-      copy:
-        src: ../worker/
-        dest: /home/ubuntu/app/worker/
-        owner: ubuntu
-        group: ubuntu
-
-    - name: Deploy .env configuration from template
-      template:
-        src: ../worker/.env.j2
-        dest: /home/ubuntu/app/worker/.env
-
-    - name: Deploy systemd service file from template
-      template:
-        src: ../worker/worker.service.j2
-        dest: /etc/systemd/system/worker.service
-
-    - name: Create a Python Virtual Environment and install packages
-      pip:
-        requirements: /home/ubuntu/app/worker/requirements.txt
-        virtualenv: /home/ubuntu/app/worker/venv
-        virtualenv_command: /usr/bin/python3 -m venv
-
-    - name: Start and enable the Worker service
-      systemd:
-        name: worker
-        daemon_reload: yes
-        state: restarted
-        enabled: yes
+  roles:
+    - worker
 
 # Step 5: Verify the Deployment
 - name: Post-Deployment Health Checks
