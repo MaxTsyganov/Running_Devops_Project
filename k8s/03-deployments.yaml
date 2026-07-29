@@ -15,6 +15,7 @@ spec:
       labels:
         app: frontend
     spec:
+      serviceAccountName: app-service-account
       securityContext:
         runAsNonRoot: true
         runAsUser: 101
@@ -76,6 +77,7 @@ spec:
       labels:
         app: backend
     spec:
+      serviceAccountName: app-service-account
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -131,6 +133,7 @@ spec:
       labels:
         app: worker
     spec:
+      serviceAccountName: app-service-account
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
