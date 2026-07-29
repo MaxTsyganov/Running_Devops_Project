@@ -4,7 +4,6 @@
 # INSTRUCTIONS: 
 # 1. Copy this file and rename it to 'terraform.tfvars'
 # 2. Replace the dummy values below with your actual AWS details.
-# 3. DO NOT commit the real 'terraform.tfvars' file to version control.
 # ==============================================================================
 
 # A globally unique name for the S3 bucket (no spaces or uppercase letters)

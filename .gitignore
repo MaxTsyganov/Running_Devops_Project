@@ -33,3 +33,16 @@ terraform.tfstate.backup
 # Ansible
 inventory.ini
 .vault_tmp
+
+# Ansible
+.vault_pass
+ansible/secrets.yml
+
+# Terraform
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+*.tfvars
+
+# Environment files
+**/.env
