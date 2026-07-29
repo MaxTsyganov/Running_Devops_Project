@@ -1,0 +1,28 @@
+# Internal Service for Backend (Private to Cluster)
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: devops-app
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+  - port: 5000
+    targetPort: 5000
+
+---
+# Public Service for Frontend (AWS Load Balancer)
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: devops-app
+spec:
+  type: LoadBalancer
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 80

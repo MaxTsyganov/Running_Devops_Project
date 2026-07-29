@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: devops-app
+data:
+  AWS_REGION: "us-east-1"
+  DB_PORT: "5432"
+  DB_NAME: "appdb"
+  DB_USER: "postgres"
+  POLL_INTERVAL_SECONDS: "30"

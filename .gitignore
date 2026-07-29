@@ -45,4 +45,4 @@ terraform.tfstate.backup
 *.tfvars
 
 # Environment files
-**/.env
+**/.envk8s/secret.yaml
