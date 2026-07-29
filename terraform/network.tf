@@ -12,7 +12,7 @@ resource "aws_subnet" "public_subnet" {
   vpc_id                  = aws_vpc.main_vpc.id
   cidr_block              = "10.0.1.0/24"
   map_public_ip_on_launch = true
-  availability_zone       = "${var.aws_region}a"
+  availability_zone       = data.aws_availability_zones.available.names[0]
 
   tags = { Name = "DevOps-Public-Subnet" }
 }
@@ -21,7 +21,7 @@ resource "aws_subnet" "public_subnet" {
 resource "aws_subnet" "private_subnet_1" {
   vpc_id            = aws_vpc.main_vpc.id
   cidr_block        = "10.0.2.0/24"
-  availability_zone = "${var.aws_region}a"
+  availability_zone = data.aws_availability_zones.available.names[0]
 
   tags = { Name = "DevOps-Private-Subnet-1" }
 }
@@ -30,9 +30,9 @@ resource "aws_subnet" "private_subnet_1" {
 resource "aws_subnet" "private_subnet_2" {
   vpc_id            = aws_vpc.main_vpc.id
   cidr_block        = "10.0.3.0/24"
-  availability_zone = "${var.aws_region}b"
+  availability_zone = data.aws_availability_zones.available.names[1]
 
-  tags = { Name = "DevOps-Private-Subnet-2" }
+  tags = { Name = "DevOps-DevOps-Private-Subnet-2" } # Keep your tag structure consistent
 }
 
 # 5. Create the Internet Gateway (The Front Door)

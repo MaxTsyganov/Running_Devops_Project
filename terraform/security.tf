@@ -61,7 +61,7 @@ resource "aws_security_group" "frontend_sg" {
   }
 }
 
-# Backend Security Group
+# Backend Security Group (Updated - RDS Egress removed)
 resource "aws_security_group" "backend_sg" {
   name        = "backend_sg"
   description = "Allow API traffic and SSH from Frontend only"
@@ -114,17 +114,10 @@ resource "aws_security_group" "backend_sg" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
-  egress {
-    description     = "Allow outbound to RDS PostgreSQL"
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [aws_security_group.rds_sg.id]
-  }
+  # NOTE: The RDS egress block was removed here to break the cycle.
 }
 
-# Worker Security Group
+# Worker Security Group (Updated - RDS Egress removed)
 resource "aws_security_group" "worker_sg" {
   name        = "worker_sg"
   description = "Allow SSH from Frontend only"
@@ -169,14 +162,7 @@ resource "aws_security_group" "worker_sg" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
-  egress {
-    description     = "Allow outbound to RDS PostgreSQL"
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [aws_security_group.rds_sg.id]
-  }
+  # NOTE: The RDS egress block was removed here to break the cycle.
 }
 
 # RDS Security Group

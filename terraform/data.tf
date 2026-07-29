@@ -79,3 +79,8 @@ resource "aws_sns_topic_subscription" "email_sub" {
 data "http" "my_local_ip" {
   url = "http://ipv4.icanhazip.com"
 }
+
+# Automatically fetch available availability zones for the current region
+data "aws_availability_zones" "available" {
+  state = "available"
+}
