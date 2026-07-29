@@ -29,9 +29,34 @@ resource "aws_security_group" "frontend_sg" {
   }
 
   egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    description = "Allow HTTP for updates"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Allow HTTPS for packages and APIs"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Allow DNS UDP"
+    from_port   = 53
+    to_port     = 53
+    protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Allow DNS TCP"
+    from_port   = 53
+    to_port     = 53
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
@@ -59,10 +84,43 @@ resource "aws_security_group" "backend_sg" {
   }
 
   egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    description = "Allow HTTP"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Allow HTTPS for AWS APIs (S3/SNS)"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Allow DNS UDP"
+    from_port   = 53
+    to_port     = 53
+    protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Allow DNS TCP"
+    from_port   = 53
+    to_port     = 53
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description     = "Allow outbound to RDS PostgreSQL"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.rds_sg.id]
   }
 }
 
@@ -81,10 +139,43 @@ resource "aws_security_group" "worker_sg" {
   }
 
   egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    description = "Allow HTTP"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Allow HTTPS for AWS APIs"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Allow DNS UDP"
+    from_port   = 53
+    to_port     = 53
+    protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Allow DNS TCP"
+    from_port   = 53
+    to_port     = 53
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description     = "Allow outbound to RDS PostgreSQL"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.rds_sg.id]
   }
 }
 
@@ -103,12 +194,5 @@ resource "aws_security_group" "rds_sg" {
       aws_security_group.backend_sg.id, 
       aws_security_group.worker_sg.id
     ]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
   }
 }
