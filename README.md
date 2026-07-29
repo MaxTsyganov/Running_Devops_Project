@@ -17,7 +17,8 @@ The application runs on three separate Ubuntu servers working together in a stri
 Terraform is responsible for provisioning all physical cloud infrastructure:
 
 * **Networking:** VPC, Public Subnets, Private Subnets, Internet Gateway, NAT Gateway, and Route Tables.
-* **Security:** * **Dynamic SSH:** Uses Terraform's HTTP provider to fetch the deployer's exact local IP address, locking down port 22 access exclusively to the executor's machine.
+* **Security:** 
+  * **Dynamic SSH:** Uses Terraform's HTTP provider to fetch the deployer's exact local IP address, locking down port 22 access exclusively to the executor's machine.
   * **Strict IAM:** Applies the Principle of Least Privilege. Servers are assigned a custom inline IAM policy granting only explicit `s3:PutObject`, `s3:ListBucket`, and `sns:Publish` permissions restricted exactly to the provisioned resources.
 * **Compute:** 3 EC2 instances (Frontend, Backend, Worker).
 * **Managed Services:** RDS PostgreSQL database, S3 Bucket for file storage, and an SNS Topic for email alerts.
@@ -53,38 +54,35 @@ This architecture provisions a **NAT Gateway** to allow resources in private sub
 
 To prevent unexpected AWS charges, you must **always destroy the infrastructure** when you are done working. You can do this easily using the included Makefile:
 
-```bash
-make destroy
+"```bash
+make destroy"
 
 ## How to Run the Project
-
-The fastest and safest method is to use the automated deployment script:
+The fastest and safest method is to use the included Makefile, which handles all directory switching and script execution for you.
 
 1. Open a terminal (Linux/WSL) in the root project folder.
-2. Run the command: `bash deploy.sh`
-3. The script will interactively ask for your AWS details to build the environment.
-4. To run the playbook, create a .vault_pass file in the root directory containing the vault password.
-5. The script will automatically run Terraform, wait 60 seconds for the servers to boot, and then run Ansible.
 
-**To run manually:**
+2. Run the deployment command:
+Bash
+make deploy
 
-* **Terraform:** Navigate to the `terraform` folder. Run `terraform init` followed by `terraform apply`.
-* **Important:** You need to create your own `terraform.tfvars` file before running the command. You can use the template provided in `terraform.tfvars.example`, Instructions are provided inside.
-* **Ansible:** Navigate to the `ansible` folder. Run `ansible-playbook -i inventory.ini playbook.yml --vault-password-file /path/to/pass`.
+3. The script will interactively ask for your AWS details and Ansible Vault password. It will automatically run Terraform, wait for the servers to boot, and then execute the Ansible roles securely.
+
+## For CI/CD Pipelines (Automated):
+If you are running this in an automated pipeline (like GitHub Actions or Jenkins), use the non-interactive flag:
+"```bash
+make deploy-ci"    (Note: This requires exporting the required environment variables first. See the deployment script for variable names).
 
 ## How to Verify the System Works
-
-Once the deployment finishes successfully:
-
+* **Once the deployment finishes successfully:**
 1. Open a web browser and navigate to the Public IP of the Frontend server.
-2. **Test RDS & SNS:** Create a new item in the UI. It should appear at the bottom with a "pending" status, and you should receive an email alert.
-3. **Test S3:** Upload a file through the UI. You should see a success message containing the S3 Key, and a second email will be sent.
-4. **Test the Worker:** Wait approximately 30 seconds and refresh the page. The item's status should change from "pending" to "done".
+2. Test RDS & SNS: Create a new item in the UI. It should appear at the bottom with a "pending" status, and you should receive an email alert.
+3. Test S3: Upload a file through the UI. You should see a success message containing the S3 Key, and a second email will be sent.
+4. Test the Worker: Wait approximately 30 seconds and refresh the page. The item's status should change from "pending" to "done".
 
 ## How to Delete the Environment
+To avoid unexpected AWS charges (especially for the NAT Gateway, which incurs hourly costs), you must destroy the infrastructure when you are finished testing.
+* From the root project folder, simply run:
+"```bash
+make destroy"       Type *yes* when prompted. Terraform will safely tear down all servers, databases, the NAT Gateway, and network components.
 
-To avoid unexpected AWS charges (especially for the NAT Gateway, which incurs hourly costs), you must destroy the infrastructure when you are finished testing:
-
-1. Open a terminal and navigate to the `terraform` folder.
-2. Run the command: `terraform destroy`
-3. Type `yes` when prompted. Terraform will safely delete all servers, databases, NAT Gateway, and network components.
