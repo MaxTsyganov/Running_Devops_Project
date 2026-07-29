@@ -45,6 +45,17 @@ Ansible connects to the servers after they are built to install and configure th
   * **Important:** The decryption code for the vault in this project is `11223311`.
 * **Deployment Script Security:** The `deploy.sh` script temporarily copies the Vault password and SSH key to the isolated Linux `/tmp` directory. It utilizes a Bash `trap` command to guarantee these sensitive files are wiped immediately upon script exit, whether the deployment succeeds or crashes.
 
+## ⚠️ AWS Cost Warning & Teardown
+
+This architecture provisions a **NAT Gateway** to allow resources in private subnets to securely access the internet (e.g., to download packages or hit AWS APIs). 
+
+**Please note: NAT Gateways are NOT covered under the AWS Free Tier. They incur an hourly charge (~$0.045/hour) for as long as they exist, regardless of traffic.**
+
+To prevent unexpected AWS charges, you must **always destroy the infrastructure** when you are done working. You can do this easily using the included Makefile:
+
+```bash
+make destroy
+
 ## How to Run the Project
 
 The fastest and safest method is to use the automated deployment script:
@@ -52,7 +63,7 @@ The fastest and safest method is to use the automated deployment script:
 1. Open a terminal (Linux/WSL) in the root project folder.
 2. Run the command: `bash deploy.sh`
 3. The script will interactively ask for your AWS details to build the environment.
-4. When prompted for the Ansible Vault Password, enter: `11223311`
+4. To run the playbook, create a .vault_pass file in the root directory containing the vault password.
 5. The script will automatically run Terraform, wait 60 seconds for the servers to boot, and then run Ansible.
 
 **To run manually:**
