@@ -15,7 +15,7 @@ spec:
       labels:
         app: frontend
     spec:
-      serviceAccountName: app-service-account
+      serviceAccountName: frontend-sa
       securityContext:
         runAsNonRoot: true
         runAsUser: 101
@@ -24,6 +24,7 @@ spec:
         image: 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:v1.0.0
         ports:
         - containerPort: 80
+        - containerPort: 443
         resources:
           requests:
             cpu: "100m"
@@ -41,6 +42,9 @@ spec:
           mountPath: /var/cache/nginx
         - name: nginx-pid
           mountPath: /var/run
+        - name: tls-cert
+          mountPath: /etc/nginx/tls
+          readOnly: true
         readinessProbe:
           httpGet:
             path: /
@@ -58,6 +62,9 @@ spec:
         emptyDir: {}
       - name: nginx-pid
         emptyDir: {}
+      - name: tls-cert
+        secret:
+          secretName: frontend-tls-cert
 
 ---
 apiVersion: apps/v1
@@ -77,7 +84,7 @@ spec:
       labels:
         app: backend
     spec:
-      serviceAccountName: app-service-account
+      serviceAccountName: backend-sa
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -140,7 +147,7 @@ spec:
       labels:
         app: worker
     spec:
-      serviceAccountName: app-service-account
+      serviceAccountName: worker-sa
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

@@ -1,18 +1,3 @@
-# Automatically fetch the latest Ubuntu 24.04 AMI for the current region
-data "aws_ami" "ubuntu" {
-  most_recent = true
-  owners      = ["099720109477"] # Canonical's official AWS Account
-
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
-  }
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-}
-
 # 1. Database Subnet Group (Required by RDS to know where it can live)
 resource "aws_db_subnet_group" "db_subnet_group" {
   name       = "devops-db-subnet-group"
@@ -75,12 +60,8 @@ resource "aws_sns_topic_subscription" "email_sub" {
   endpoint  = var.my_email # Pulled from variables
 }
 
-# 6. Fetch your local machine's public IP dynamically for SSH access
-data "http" "my_local_ip" {
-  url = "http://ipv4.icanhazip.com"
-}
-
-# Automatically fetch available availability zones for the current region
+# Automatically fetch available availability zones for the current region -
+# used by network.tf to spread subnets across 2 AZs (EKS requirement)
 data "aws_availability_zones" "available" {
   state = "available"
 }

@@ -15,7 +15,7 @@ echo "  cluster, build & push images, and deploy the app to Kubernetes."
 echo "  Total time: ~15-25 minutes on a first run (mostly EKS cluster boot)."
 echo -e "==================================================================${RESET}"
 
-step "[0/8] Running pre-flight checks..."
+step "[0/9] Running pre-flight checks..."
 
 info "Checking required CLI tools..."
 for tool in terraform eksctl aws kubectl docker; do
@@ -66,14 +66,10 @@ if grep -q '^db_password' terraform/terraform.tfvars 2>/dev/null; then
     info "Removed db_password from terraform.tfvars - it's supplied securely below instead, never stored on disk."
 fi
 
-info "Checking the EC2 key pair Terraform will need..."
-KEY_NAME=$(grep -E '^\s*key_name\s*=' terraform/terraform.tfvars 2>/dev/null | sed -E 's/^[^=]*=\s*"([^"]*)".*/\1/')
-KEY_NAME="${KEY_NAME:-devops-project-key}"
-aws ec2 describe-key-pairs --key-names "$KEY_NAME" --region "$AWS_REGION" >/dev/null 2>&1 \
-    || fail "EC2 key pair '$KEY_NAME' not found in $AWS_REGION - Terraform needs it to exist first.\n   Create it with:\n   aws ec2 create-key-pair --key-name $KEY_NAME --region $AWS_REGION --query 'KeyMaterial' --output text > ~/.ssh/$KEY_NAME.pem && chmod 400 ~/.ssh/$KEY_NAME.pem"
-success "EC2 key pair '$KEY_NAME' exists."
 
-step "[1/8] Enter secrets for this run (kept in memory only, never written to disk)"
+step "[1/9] Enter the database password for this run (kept in memory only, never written to disk)"
+# No AWS Access Key / Secret prompt anymore - backend-sa and worker-sa get AWS
+# permissions via IRSA (step 5) instead of long-lived static credentials.
 set +e
 while true; do
     read -s -p "    Database password (min 8 characters): " DB_PASSWORD; echo
@@ -82,13 +78,11 @@ while true; do
     [ ${#DB_PASSWORD} -ge 8 ] || { echo -e "${RED}    Must be at least 8 characters (RDS requirement), try again.${RESET}"; continue; }
     break
 done
-read -p    "    AWS Access Key ID (app's S3/SNS access):     " AWS_ACCESS_KEY
-read -s -p "    AWS Secret Access Key: " AWS_SECRET_KEY; echo
 set -e
 export TF_VAR_db_password="$DB_PASSWORD"
-success "Secrets captured for this run."
+success "Database password captured for this run."
 
-step "[2/8] Applying Terraform (RDS, S3, SNS, IAM, networking)..."
+step "[2/9] Applying Terraform (RDS, S3, SNS, IAM, networking)..."
 cd terraform
 terraform init -input=false
 # -auto-approve: this script already stops (set -e) on any Terraform error,
@@ -115,7 +109,7 @@ if [ -n "$PENDING_EMAIL" ]; then
     echo "      (the app will still work and report success either way)."
 fi
 
-step "[3/8] Ensuring EKS cluster '$CLUSTER_NAME' exists inside VPC $VPC_ID..."
+step "[3/9] Ensuring EKS cluster '$CLUSTER_NAME' exists inside VPC $VPC_ID..."
 if eksctl get cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
     info "Cluster already exists, reusing it."
 else
@@ -132,7 +126,7 @@ fi
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
 success "kubectl is now pointed at '$CLUSTER_NAME'."
 
-step "[4/8] Allowing the EKS cluster to reach RDS on port 5432..."
+step "[4/9] Allowing the EKS cluster to reach RDS on port 5432..."
 EKS_SG_ID=$(aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" \
     --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
 aws ec2 authorize-security-group-ingress \
@@ -142,7 +136,31 @@ aws ec2 authorize-security-group-ingress \
     --region "$AWS_REGION" 2>/dev/null && success "Firewall rule added." \
     || info "Rule already exists, skipping."
 
-step "[5/8] Writing the Kubernetes ConfigMap..."
+step "[5/9] Setting up IRSA so backend/worker get AWS access without static keys..."
+# IRSA (IAM Roles for Service Accounts) lets a pod assume a real IAM role via a
+# short-lived, auto-rotated token instead of a long-lived access key sitting in
+# a Secret. It needs: (a) an OIDC identity provider associated with the cluster,
+# and (b) an IAM role, trusted only by a specific Kubernetes ServiceAccount, with
+# the same least-privilege S3/SNS policy Terraform already created for the old
+# EC2 instances (terraform/iam.tf). frontend-sa is left alone - it never needs
+# AWS access at all, so it gets no role.
+kubectl apply -f k8s/00-namespace.yaml >/dev/null
+
+eksctl utils associate-iam-oidc-provider \
+    --cluster "$CLUSTER_NAME" --region "$AWS_REGION" --approve
+success "Cluster has an OIDC provider (required for IRSA)."
+
+POLICY_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:policy/DevOps-App-Least-Privilege-Policy"
+for sa in backend-sa worker-sa; do
+    eksctl create iamserviceaccount \
+        --cluster "$CLUSTER_NAME" --region "$AWS_REGION" \
+        --namespace devops-app --name "$sa" \
+        --attach-policy-arn "$POLICY_ARN" \
+        --approve --override-existing-serviceaccounts
+    success "$sa can now reach S3/SNS via IRSA - no AWS keys involved."
+done
+
+step "[6/9] Writing the Kubernetes ConfigMap..."
 cat <<EOF > k8s/01-configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -161,10 +179,10 @@ data:
 EOF
 success "k8s/01-configmap.yaml written."
 
-step "[6/8] Writing the Kubernetes Secret (reusing the credentials from step 1)..."
+step "[7/9] Writing the Kubernetes Secret (reusing the password from step 1)..."
+# Only DB_PASSWORD lives here now - AWS access no longer goes through a Secret
+# at all, it comes from IRSA (step 5).
 B64_DB_PASS=$(echo -n "$DB_PASSWORD" | base64 | tr -d '\n')
-B64_AWS_KEY=$(echo -n "$AWS_ACCESS_KEY" | base64 | tr -d '\n')
-B64_AWS_SECRET=$(echo -n "$AWS_SECRET_KEY" | base64 | tr -d '\n')
 
 cat <<EOF > k8s/02-secret.yaml
 apiVersion: v1
@@ -175,23 +193,67 @@ metadata:
 type: Opaque
 data:
   DB_PASSWORD: ${B64_DB_PASS}
-  AWS_ACCESS_KEY_ID: ${B64_AWS_KEY}
-  AWS_SECRET_ACCESS_KEY: ${B64_AWS_SECRET}
 EOF
 success "k8s/02-secret.yaml written (git-ignored, never commit this file)."
 
-step "[7/8] Building, tagging, and pushing Docker images to ECR..."
+info "Generating a self-signed TLS certificate for the frontend..."
+# Self-signed, not from a real CA - browsers will show a "not trusted" warning.
+# Getting a real trusted cert (ACM/cert-manager) needs a domain name pointed at
+# the load balancer, which is out of scope here. Regenerated fresh every run
+# rather than reused, since it's cheap and avoids needing to persist it anywhere.
+TLS_DIR=$(mktemp -d)
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout "$TLS_DIR/tls.key" -out "$TLS_DIR/tls.crt" \
+    -subj "/CN=devops-app/O=devops-app" 2>/dev/null
+TLS_CRT_B64=$(base64 -w0 "$TLS_DIR/tls.crt")
+TLS_KEY_B64=$(base64 -w0 "$TLS_DIR/tls.key")
+rm -rf "$TLS_DIR"
+
+cat <<EOF > k8s/08-tls-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: frontend-tls-cert
+  namespace: devops-app
+type: kubernetes.io/tls
+data:
+  tls.crt: ${TLS_CRT_B64}
+  tls.key: ${TLS_KEY_B64}
+EOF
+success "k8s/08-tls-secret.yaml written (git-ignored, never commit this file)."
+
+step "[8/9] Building, scanning, tagging, and pushing Docker images to ECR..."
 aws ecr get-login-password --region "$AWS_REGION" | \
     docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com" >/dev/null
+
+# Trivy is optional (bonus, not one of the hard-required tools from step 0) -
+# scan if it's available, skip quietly if not.
+HAVE_TRIVY=false
+if command -v trivy >/dev/null 2>&1; then
+    HAVE_TRIVY=true
+else
+    info "trivy not installed - skipping image vulnerability scanning (optional)."
+    info "Install: https://aquasecurity.github.io/trivy/latest/getting-started/installation/"
+fi
+
 for service in frontend backend worker; do
     info "Processing $service..."
     docker build -q -t devops-$service ./$service
+
+    if [ "$HAVE_TRIVY" = true ]; then
+        info "Scanning devops-$service for HIGH/CRITICAL vulnerabilities..."
+        # --exit-code 0: report findings but never fail the deploy over them -
+        # base images like python:3.11-slim will always have some OS-level CVEs
+        # that aren't practically fixable from this project alone.
+        trivy image --severity HIGH,CRITICAL --quiet --exit-code 0 devops-$service:latest
+    fi
+
     docker tag devops-$service:latest "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/devops-$service:v1.0.0"
     docker push -q "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/devops-$service:v1.0.0" >/dev/null
 done
-success "All 3 images pushed as :v1.0.0."
+success "All 3 images built, scanned, and pushed as :v1.0.0."
 
-step "[8/8] Deploying to Kubernetes and waiting for rollout..."
+step "[9/9] Deploying to Kubernetes and waiting for rollout..."
 # Applied as an explicit, dependency-ordered list rather than `kubectl apply -f k8s/`
 # on the whole directory - k8s/02-secret.example.yaml defines a Secret with the same
 # name as k8s/02-secret.yaml (the real one), and applying both is order-dependent:
@@ -200,9 +262,12 @@ kubectl apply -f k8s/00-namespace.yaml
 kubectl apply -f k8s/00-serviceaccount.yaml
 kubectl apply -f k8s/01-configmap.yaml
 kubectl apply -f k8s/02-secret.yaml
+kubectl apply -f k8s/08-tls-secret.yaml
 kubectl apply -f k8s/03-deployments.yaml
 kubectl apply -f k8s/04-services.yaml
 kubectl apply -f k8s/05-network-policies.yaml
+kubectl apply -f k8s/06-poddisruptionbudget.yaml
+kubectl apply -f k8s/07-hpa.yaml
 kubectl rollout status deployment/frontend-deployment -n devops-app --timeout=180s
 kubectl rollout status deployment/backend-deployment -n devops-app --timeout=180s
 kubectl rollout status deployment/worker-deployment -n devops-app --timeout=180s
@@ -218,7 +283,8 @@ done
 echo -e "\n${GREEN}${BOLD}=================================================================="
 echo "  DEPLOYMENT COMPLETE"
 echo "==================================================================${RESET}"
-echo "  App URL:        http://$EXTERNAL_IP"
+echo "  App URL (HTTP):   http://$EXTERNAL_IP"
+echo "  App URL (HTTPS):  https://$EXTERNAL_IP  (self-signed cert - browser will warn, that's expected)"
 echo "  Check pods:      kubectl get pods -n devops-app"
 echo "  Check services:  kubectl get svc -n devops-app"
 echo "  Tail logs:       kubectl logs -f deployment/backend-deployment -n devops-app"

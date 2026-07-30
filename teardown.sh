@@ -12,10 +12,10 @@ echo "  This deletes Kubernetes workloads, the EKS cluster, and every"
 echo "  Terraform-managed AWS resource (RDS, S3, SNS, IAM, networking)."
 echo -e "==================================================================${RESET}"
 
-step "[1/6] Deleting Kubernetes workloads..."
+step "[1/7] Deleting Kubernetes workloads..."
 kubectl delete -f k8s/ --ignore-not-found=true 2>/dev/null || info "No cluster reachable, nothing to delete here - continuing."
 
-step "[2/6] Waiting for the AWS Load Balancer to fully release..."
+step "[2/7] Waiting for the AWS Load Balancer to fully release..."
 # kubectl delete only removes the Service object immediately - the actual AWS
 # ELB/NLB and the network interfaces it planted in our subnets are cleaned up
 # asynchronously by a controller running INSIDE the cluster. If we delete the
@@ -50,7 +50,7 @@ else
     info "Could not read the VPC ID from Terraform state - skipping this check."
 fi
 
-step "[3/6] Revoking the RDS rule that references the EKS cluster's security group..."
+step "[3/7] Revoking the RDS rule that references the EKS cluster's security group..."
 # setup.sh authorized RDS's security group to accept traffic FROM the EKS
 # cluster's auto-created "cluster security group". AWS refuses to delete a
 # security group that's still referenced by another group's rule - so if we
@@ -74,10 +74,28 @@ else
     info "No RDS security group or no live cluster found - nothing to revoke."
 fi
 
-step "[4/6] Deleting EKS cluster (10-15 minutes)..."
+step "[4/7] Deleting IRSA IAM service accounts (backend-sa, worker-sa)..."
+# Same lesson as the security-group rule above: these were created by `eksctl
+# create iamserviceaccount` as their own CloudFormation stacks, separate from
+# the main cluster stack. Deleting them explicitly first (rather than assuming
+# `eksctl delete cluster` cleans them up) avoids leaving orphaned IAM roles
+# behind, the same way the orphaned cluster security group happened before.
+if eksctl get cluster --name devops-cluster --region us-east-1 >/dev/null 2>&1; then
+    for sa in backend-sa worker-sa; do
+        eksctl delete iamserviceaccount \
+            --cluster devops-cluster --region us-east-1 \
+            --namespace devops-app --name "$sa" \
+            --wait 2>/dev/null && success "Deleted IAM role for $sa." \
+            || info "$sa's IAM role already gone, continuing."
+    done
+else
+    info "No live cluster found - nothing to delete here."
+fi
+
+step "[5/7] Deleting EKS cluster (10-15 minutes)..."
 eksctl delete cluster --region=us-east-1 --name=devops-cluster 2>/dev/null || info "Cluster already gone, continuing."
 
-step "[5/6] Destroying Terraform infrastructure (RDS, S3, SNS, IAM, VPC)..."
+step "[6/7] Destroying Terraform infrastructure (RDS, S3, SNS, IAM, VPC)..."
 cd terraform
 # db_password's real value is irrelevant for `destroy` (it's never re-sent to AWS
 # on delete), so a throwaway value avoids prompting for a secret we're about to
@@ -86,9 +104,11 @@ export TF_VAR_db_password="unused-during-teardown"
 terraform destroy -auto-approve
 cd ..
 
-step "[6/6] Removing locally-generated files..."
+step "[7/7] Removing locally-generated files..."
 rm -f k8s/02-secret.yaml
 success "Removed k8s/02-secret.yaml (it held real credentials for the now-deleted infra)."
+rm -f k8s/08-tls-secret.yaml
+success "Removed k8s/08-tls-secret.yaml (self-signed cert, regenerated fresh on the next run)."
 rm -f terraform/terraform.tfvars
 success "Removed terraform/terraform.tfvars (setup.sh recreates it, asking again, on the next run)."
 
