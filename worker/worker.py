@@ -38,6 +38,15 @@ AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "") or None
 # Polling interval in seconds
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "30"))
 
+# Heartbeat file used by Kubernetes readiness/liveness probes (worker has no HTTP port)
+HEARTBEAT_FILE = os.environ.get("HEARTBEAT_FILE", "/tmp/worker_heartbeat")
+
+
+def touch_heartbeat():
+    """Update the heartbeat file's mtime so probes can detect a stuck loop."""
+    with open(HEARTBEAT_FILE, "a"):
+        os.utime(HEARTBEAT_FILE, None)
+
 
 def get_db_connection():
     """Establish a connection to the PostgreSQL database."""
@@ -152,8 +161,10 @@ def main():
     logger.info(f"Target database: {DB_HOST}:{DB_PORT}/{DB_NAME}")
     logger.info(f"Polling interval: {POLL_INTERVAL_SECONDS} seconds.")
 
+    touch_heartbeat()
     while True:
         run_one_cycle()
+        touch_heartbeat()
         time.sleep(POLL_INTERVAL_SECONDS)
 
 

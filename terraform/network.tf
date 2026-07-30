@@ -35,6 +35,16 @@ resource "aws_subnet" "private_subnet_2" {
   tags = { Name = "DevOps-DevOps-Private-Subnet-2" } # Keep your tag structure consistent
 }
 
+# 2b. Second Public Subnet (EKS requires the cluster to span >= 2 Availability Zones)
+resource "aws_subnet" "public_subnet_2" {
+  vpc_id                  = aws_vpc.main_vpc.id
+  cidr_block              = "10.0.4.0/24"
+  map_public_ip_on_launch = true
+  availability_zone       = data.aws_availability_zones.available.names[1]
+
+  tags = { Name = "DevOps-Public-Subnet-2" }
+}
+
 # 5. Create the Internet Gateway (The Front Door)
 resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.main_vpc.id
@@ -51,9 +61,14 @@ resource "aws_route_table" "public_rt" {
   tags = { Name = "DevOps-Public-Route-Table" }
 }
 
-# 7. Associate the Route Table with the Public Subnet
+# 7. Associate the Route Table with the Public Subnets
 resource "aws_route_table_association" "public_association" {
   subnet_id      = aws_subnet.public_subnet.id
+  route_table_id = aws_route_table.public_rt.id
+}
+
+resource "aws_route_table_association" "public_association_2" {
+  subnet_id      = aws_subnet.public_subnet_2.id
   route_table_id = aws_route_table.public_rt.id
 }
 
@@ -85,8 +100,13 @@ resource "aws_route_table" "private_rt" {
   tags = { Name = "DevOps-Private-Route-Table" }
 }
 
-# 11. Associate Private Subnet 1 with the Private Route Table
+# 11. Associate Private Subnets with the Private Route Table (so both can reach the NAT Gateway)
 resource "aws_route_table_association" "private_association_1" {
   subnet_id      = aws_subnet.private_subnet_1.id
+  route_table_id = aws_route_table.private_rt.id
+}
+
+resource "aws_route_table_association" "private_association_2" {
+  subnet_id      = aws_subnet.private_subnet_2.id
   route_table_id = aws_route_table.private_rt.id
 }

@@ -100,8 +100,12 @@ spec:
             memory: "512Mi"
         securityContext:
           allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
           capabilities:
             drop: ["ALL"]
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
         readinessProbe:
           httpGet:
             path: /api/health
@@ -114,6 +118,9 @@ spec:
             port: 5000
           initialDelaySeconds: 20
           periodSeconds: 30
+      volumes:
+      - name: tmp
+        emptyDir: {}
 
 ---
 apiVersion: apps/v1
@@ -154,5 +161,25 @@ spec:
             memory: "256Mi"
         securityContext:
           allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
           capabilities:
             drop: ["ALL"]
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        readinessProbe:
+          exec:
+            command: ["sh", "-c", "test -f /tmp/worker_heartbeat"]
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "test $(( $(date +%s) - $(stat -c %Y /tmp/worker_heartbeat 2>/dev/null || echo 0) )) -lt 90"
+          initialDelaySeconds: 20
+          periodSeconds: 30
+      volumes:
+      - name: tmp
+        emptyDir: {}

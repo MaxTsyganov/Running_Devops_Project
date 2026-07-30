@@ -45,4 +45,9 @@ terraform.tfstate.backup
 *.tfvars
 
 # Environment files
-**/.envk8s/secret.yaml
+**/.env
+
+# Kubernetes generated secrets (real values) - never commit
+k8s/02-secret.yaml
+k8s/secret.yaml
+!k8s/02-secret.example.yaml

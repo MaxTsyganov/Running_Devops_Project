@@ -32,6 +32,28 @@ output "sns_topic_arn" {
   value       = aws_sns_topic.alerts.arn
 }
 
+# ── VPC info needed to put the EKS cluster in the same network as RDS ──
+
+output "vpc_id" {
+  description = "The VPC that RDS lives in - EKS must be created inside this same VPC"
+  value       = aws_vpc.main_vpc.id
+}
+
+output "public_subnet_ids" {
+  description = "Both public subnets (comma-separated), across 2 AZs, for eksctl --vpc-public-subnets"
+  value       = "${aws_subnet.public_subnet.id},${aws_subnet.public_subnet_2.id}"
+}
+
+output "private_subnet_ids" {
+  description = "Both private subnets (comma-separated), across 2 AZs, for eksctl --vpc-private-subnets"
+  value       = "${aws_subnet.private_subnet_1.id},${aws_subnet.private_subnet_2.id}"
+}
+
+output "rds_security_group_id" {
+  description = "The RDS security group - EKS's node security group must be added to its ingress rules"
+  value       = aws_security_group.rds_sg.id
+}
+
 # ===================================================
 # Auto-Generate Ansible Inventory File (With Bastion)
 # ===================================================

@@ -4,6 +4,8 @@ kind: Service
 metadata:
   name: backend-service
   namespace: devops-app
+  labels:
+    app: backend
 spec:
   type: ClusterIP
   selector:
@@ -19,6 +21,8 @@ kind: Service
 metadata:
   name: frontend-service
   namespace: devops-app
+  labels:
+    app: frontend
 spec:
   type: LoadBalancer
   selector:

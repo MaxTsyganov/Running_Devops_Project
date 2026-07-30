@@ -1,9 +1,19 @@
 # ==============================================================================
 # TEMPLATE VARIABLES FILE
 # ==============================================================================
-# INSTRUCTIONS: 
+# You normally don't need to touch this file by hand: `setup.sh` creates a real
+# terraform/terraform.tfvars for you automatically (prompting for these two
+# values) if one doesn't already exist, and `teardown.sh` deletes it again at
+# the end of a full teardown. This example is kept for reference, and for
+# anyone who wants to run `terraform apply` manually instead:
 # 1. Copy this file and rename it to 'terraform.tfvars'
-# 2. Replace the dummy values below with your actual AWS details.
+# 2. Replace the dummy values below with your actual details.
+#
+# NOTE: db_password is intentionally NOT set here or anywhere on disk. setup.sh
+# prompts for it interactively and passes it to Terraform via the
+# TF_VAR_db_password environment variable instead. If you're running
+# `terraform apply` by hand, set it yourself for that shell session, e.g.:
+#   export TF_VAR_db_password='your-password-here'
 # ==============================================================================
 
 # A globally unique name for the S3 bucket (no spaces or uppercase letters)
@@ -11,6 +21,3 @@ bucket_name = "instructor-test-bucket-12345"
 
 # Your email address to receive SNS deployment alerts
 my_email    = "instructor@example.com"
-
-# The master password for the RDS PostgreSQL database (Must be at least 8 characters)
-db_password = "REPLACE_WITH_STRONG_PASSWORD"

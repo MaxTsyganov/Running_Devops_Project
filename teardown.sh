@@ -1,17 +1,97 @@
 #!/bin/bash
+set -e
 
-echo "🗑️ [1/3] Deleting Kubernetes workloads..."
-kubectl delete -f k8s/ --ignore-not-found=true
+BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RESET='\033[0m'
+step()    { echo -e "\n${BOLD}${YELLOW}==> $1${RESET}"; }
+info()    { echo "    $1"; }
+success() { echo -e "${GREEN}✔ $1${RESET}"; }
 
-echo "🔥 [2/3] Deleting EKS Cluster (this takes about 10-15 minutes)..."
-eksctl delete cluster --region=us-east-1 --name=devops-cluster
+echo -e "${BOLD}=================================================================="
+echo "  DevOps App - Full Teardown"
+echo "  This deletes Kubernetes workloads, the EKS cluster, and every"
+echo "  Terraform-managed AWS resource (RDS, S3, SNS, IAM, networking)."
+echo -e "==================================================================${RESET}"
 
-echo "🏗️ [3/3] Destroying Terraform Infrastructure..."
+step "[1/6] Deleting Kubernetes workloads..."
+kubectl delete -f k8s/ --ignore-not-found=true 2>/dev/null || info "No cluster reachable, nothing to delete here - continuing."
+
+step "[2/6] Waiting for the AWS Load Balancer to fully release..."
+# kubectl delete only removes the Service object immediately - the actual AWS
+# ELB/NLB and the network interfaces it planted in our subnets are cleaned up
+# asynchronously by a controller running INSIDE the cluster. If we delete the
+# cluster before that finishes, the load balancer gets orphaned with nothing
+# left to finish deleting it, and `terraform destroy` fails later with a VPC
+# DependencyViolation. So: wait here until no load balancer remains in our VPC.
+VPC_ID=$( (cd terraform && terraform output -raw vpc_id 2>/dev/null) || true)
+if [ -n "$VPC_ID" ]; then
+    WAITED=0
+    MAX_WAIT=300
+    while true; do
+        LB_COUNT=$(aws elb describe-load-balancers --region us-east-1 \
+            --query "length(LoadBalancerDescriptions[?VPCId=='$VPC_ID'])" --output text 2>/dev/null || echo 0)
+        LB_COUNT_V2=$(aws elbv2 describe-load-balancers --region us-east-1 \
+            --query "length(LoadBalancers[?VpcId=='$VPC_ID'])" --output text 2>/dev/null || echo 0)
+        if [ "$LB_COUNT" = "0" ] && [ "$LB_COUNT_V2" = "0" ]; then
+            success "No load balancer left in the VPC - safe to delete the cluster."
+            break
+        fi
+        if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+            echo -e "${YELLOW}    ⚠ Still waiting after 5 minutes - proceeding anyway.${RESET}"
+            info "If 'terraform destroy' fails later with a VPC DependencyViolation, list"
+            info "network interfaces in the VPC to find and manually delete what's stuck:"
+            info "  aws ec2 describe-network-interfaces --region us-east-1 --filters Name=vpc-id,Values=$VPC_ID"
+            break
+        fi
+        info "Still attached, waiting... (${WAITED}s elapsed, checking every 10s)"
+        sleep 10
+        WAITED=$((WAITED + 10))
+    done
+else
+    info "Could not read the VPC ID from Terraform state - skipping this check."
+fi
+
+step "[3/6] Revoking the RDS rule that references the EKS cluster's security group..."
+# setup.sh authorized RDS's security group to accept traffic FROM the EKS
+# cluster's auto-created "cluster security group". AWS refuses to delete a
+# security group that's still referenced by another group's rule - so if we
+# delete the cluster while that reference still exists, EKS's own cleanup of
+# its cluster security group silently fails and orphans it, which later blocks
+# `terraform destroy` from deleting the VPC (a VPC can't be deleted while any
+# non-default security group still lives in it). Revoking the rule first lets
+# EKS clean up after itself properly.
+RDS_SG_ID=$( (cd terraform && terraform output -raw rds_security_group_id 2>/dev/null) || true)
+if [ -n "$RDS_SG_ID" ] && eksctl get cluster --name devops-cluster --region us-east-1 >/dev/null 2>&1; then
+    EKS_SG_ID=$(aws eks describe-cluster --name devops-cluster --region us-east-1 \
+        --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text 2>/dev/null || true)
+    if [ -n "$EKS_SG_ID" ] && [ "$EKS_SG_ID" != "None" ]; then
+        aws ec2 revoke-security-group-ingress \
+            --group-id "$RDS_SG_ID" --protocol tcp --port 5432 \
+            --source-group "$EKS_SG_ID" --region us-east-1 >/dev/null 2>&1 \
+            && success "Revoked - EKS can now clean up its cluster security group properly." \
+            || info "Rule already gone, continuing."
+    fi
+else
+    info "No RDS security group or no live cluster found - nothing to revoke."
+fi
+
+step "[4/6] Deleting EKS cluster (10-15 minutes)..."
+eksctl delete cluster --region=us-east-1 --name=devops-cluster 2>/dev/null || info "Cluster already gone, continuing."
+
+step "[5/6] Destroying Terraform infrastructure (RDS, S3, SNS, IAM, VPC)..."
 cd terraform
+# db_password's real value is irrelevant for `destroy` (it's never re-sent to AWS
+# on delete), so a throwaway value avoids prompting for a secret we're about to
+# delete anyway - the real password is never stored on disk between runs.
+export TF_VAR_db_password="unused-during-teardown"
 terraform destroy -auto-approve
 cd ..
 
-echo "====================================================="
-echo "✅ FULL TEARDOWN COMPLETE."
-echo "Your AWS account is completely clean of EKS and Terraform resources."
-echo "====================================================="
+step "[6/6] Removing locally-generated files..."
+rm -f k8s/02-secret.yaml
+success "Removed k8s/02-secret.yaml (it held real credentials for the now-deleted infra)."
+rm -f terraform/terraform.tfvars
+success "Removed terraform/terraform.tfvars (setup.sh recreates it, asking again, on the next run)."
+
+echo -e "\n${GREEN}${BOLD}=================================================================="
+echo "  TEARDOWN COMPLETE - AWS account is clean of EKS and Terraform resources."
+echo -e "==================================================================${RESET}"
