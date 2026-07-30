@@ -31,8 +31,11 @@ vars.yml
 .vault_tmp
 AWS_NOTES.md
 
-# Kubernetes generated secrets (real values) - never commit
+# Kubernetes files with real generated values (RDS endpoint, S3 bucket, AWS
+# account ID, credentials) - setup.sh writes these fresh each run, never commit
+k8s/01-configmap.yaml
 k8s/02-secret.yaml
 k8s/secret.yaml
 k8s/08-tls-secret.yaml
+!k8s/01-configmap.example.yaml
 !k8s/02-secret.example.yaml

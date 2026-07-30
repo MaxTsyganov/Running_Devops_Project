@@ -105,6 +105,8 @@ terraform destroy -auto-approve
 cd ..
 
 step "[7/7] Removing locally-generated files..."
+rm -f k8s/01-configmap.yaml
+success "Removed k8s/01-configmap.yaml (held real RDS/S3/SNS details for the now-deleted infra)."
 rm -f k8s/02-secret.yaml
 success "Removed k8s/02-secret.yaml (it held real credentials for the now-deleted infra)."
 rm -f k8s/08-tls-secret.yaml

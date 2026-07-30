@@ -1,0 +1,20 @@
+# Template for manual `kubectl apply` use. setup.sh generates the real
+# k8s/01-configmap.yaml itself (with actual Terraform output values) - that
+# file is git-ignored since it ends up holding your real RDS endpoint, S3
+# bucket name, and SNS topic ARN (account ID included). To fill this in by
+# hand instead: cp k8s/01-configmap.example.yaml k8s/01-configmap.yaml, then
+# edit the placeholders below.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: devops-app
+data:
+  DB_HOST: "your-rds-endpoint.amazonaws.com"
+  DB_PORT: "5432"
+  DB_NAME: "appdb"
+  DB_USER: "postgres"
+  S3_BUCKET_NAME: "your-s3-bucket-name"
+  SNS_TOPIC_ARN: "arn:aws:sns:us-east-1:123456789012:your-topic"
+  AWS_REGION: "us-east-1"
+  POLL_INTERVAL_SECONDS: "30"
