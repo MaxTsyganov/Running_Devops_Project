@@ -245,7 +245,7 @@ for service in frontend backend worker; do
         # --exit-code 0: report findings but never fail the deploy over them -
         # base images like python:3.11-slim will always have some OS-level CVEs
         # that aren't practically fixable from this project alone.
-        trivy image --severity HIGH,CRITICAL --quiet --exit-code 0 devops-$service:latest
+        trivy image --severity HIGH,CRITICAL --quiet --exit-code 0 --table-mode summary devops-$service:latest
     fi
 
     docker tag devops-$service:latest "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/devops-$service:v1.0.0"
