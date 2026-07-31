@@ -51,7 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t devops-${{ matrix.service }}:ci ./${{ matrix.service }}
-      - uses: aquasecurity/trivy-action@0.29.0
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: devops-${{ matrix.service }}:ci
           severity: HIGH,CRITICAL
