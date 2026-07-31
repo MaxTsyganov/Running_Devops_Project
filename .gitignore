@@ -31,11 +31,9 @@ vars.yml
 .vault_tmp
 AWS_NOTES.md
 
-# Kubernetes files with real generated values (RDS endpoint, S3 bucket, AWS
-# account ID, credentials) - setup.sh writes these fresh each run, never commit
-k8s/01-configmap.yaml
-k8s/02-secret.yaml
-k8s/secret.yaml
-k8s/08-tls-secret.yaml
-!k8s/01-configmap.example.yaml
-!k8s/02-secret.example.yaml
+# Helm values file with real generated values (RDS endpoint, S3 bucket, AWS
+# account ID, credentials) - setup.sh writes this fresh each run as a temp
+# file that's deleted right after use, but kept here in case anyone generates
+# one manually at a tracked path instead.
+helm/values-dynamic.yaml
+!helm/values-dynamic.example.yaml

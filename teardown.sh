@@ -13,7 +13,10 @@ echo "  Terraform-managed AWS resource (RDS, S3, SNS, IAM, networking)."
 echo -e "==================================================================${RESET}"
 
 step "[1/7] Deleting Kubernetes workloads..."
-kubectl delete -f k8s/ --ignore-not-found=true 2>/dev/null || info "No cluster reachable, nothing to delete here - continuing."
+helm uninstall devops-app -n devops-app 2>/dev/null || info "No Helm release found, nothing to uninstall here - continuing."
+# Helm never deletes the namespace, even one it created via --create-namespace -
+# it only ever manages the resources actually templated in the chart.
+kubectl delete namespace devops-app --ignore-not-found=true 2>/dev/null || info "No cluster reachable, nothing to delete here - continuing."
 
 step "[2/7] Waiting for the AWS Load Balancer to fully release..."
 # kubectl delete only removes the Service object immediately - the actual AWS
@@ -105,12 +108,9 @@ terraform destroy -auto-approve
 cd ..
 
 step "[7/7] Removing locally-generated files..."
-rm -f k8s/01-configmap.yaml
-success "Removed k8s/01-configmap.yaml (held real RDS/S3/SNS details for the now-deleted infra)."
-rm -f k8s/02-secret.yaml
-success "Removed k8s/02-secret.yaml (it held real credentials for the now-deleted infra)."
-rm -f k8s/08-tls-secret.yaml
-success "Removed k8s/08-tls-secret.yaml (self-signed cert, regenerated fresh on the next run)."
+# The Helm dynamic-values file setup.sh generates is already a mktemp file
+# deleted within the same run, right after `helm upgrade` reads it - nothing
+# left over here to clean up for that.
 rm -f terraform/terraform.tfvars
 success "Removed terraform/terraform.tfvars (setup.sh recreates it, asking again, on the next run)."
 

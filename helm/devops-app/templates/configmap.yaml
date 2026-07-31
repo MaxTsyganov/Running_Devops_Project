@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: {{ .Release.Namespace }}
+data:
+  DB_HOST: {{ .Values.config.dbHost | quote }}
+  DB_PORT: {{ .Values.config.dbPort | quote }}
+  DB_NAME: {{ .Values.config.dbName | quote }}
+  DB_USER: {{ .Values.config.dbUser | quote }}
+  S3_BUCKET_NAME: {{ .Values.config.s3BucketName | quote }}
+  SNS_TOPIC_ARN: {{ .Values.config.snsTopicArn | quote }}
+  AWS_REGION: {{ .Values.config.awsRegion | quote }}
+  POLL_INTERVAL_SECONDS: {{ .Values.config.pollIntervalSeconds | quote }}

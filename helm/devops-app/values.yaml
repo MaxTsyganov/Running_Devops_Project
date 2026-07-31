@@ -1,0 +1,60 @@
+# Non-sensitive defaults, safe to commit. Anything that's real infrastructure
+# data (RDS endpoint, S3 bucket, AWS account ID) or a secret is left empty here
+# and supplied at install time by setup.sh via -f <generated-values-file>,
+# which is never written to a tracked path. See values-dynamic.example.yaml
+# for the shape of what gets filled in.
+
+image:
+  # e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com - set at install time
+  registry: ""
+  tag: v1.0.0
+
+frontend:
+  replicas: 2
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+  hpa:
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilization: 70
+
+backend:
+  replicas: 2
+  resources:
+    requests: { cpu: 150m, memory: 256Mi }
+    limits: { cpu: 300m, memory: 512Mi }
+  hpa:
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilization: 70
+
+worker:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+
+# Non-sensitive application config (mirrors the old ConfigMap)
+config:
+  dbPort: "5432"
+  dbName: appdb
+  dbUser: postgres
+  awsRegion: us-east-1
+  pollIntervalSeconds: "30"
+  # Real values, set at install time from Terraform outputs:
+  dbHost: ""
+  s3BucketName: ""
+  snsTopicArn: ""
+
+# Sensitive values - always empty here, always supplied via a separate,
+# git-ignored values file at install time. Never set these in this file.
+# Already base64-encoded (matching what a Kubernetes Secret's data: field
+# expects directly) rather than encoded by the template, so a stray quote or
+# special character in the password can never break the generated YAML.
+secrets:
+  dbPasswordB64: ""
+
+tls:
+  crtB64: ""
+  keyB64: ""

@@ -1,0 +1,30 @@
+# Template for manual `helm install`/`upgrade` use. setup.sh generates the
+# real version of this file itself (from Terraform outputs, a freshly
+# generated TLS cert, and the password you type in) and passes it via
+# `-f <generated-file>` - that generated file is never written to a tracked
+# path. To fill this in and deploy by hand instead:
+#   cp helm/values-dynamic.example.yaml helm/values-dynamic.yaml
+#   (edit the placeholders below, then:)
+#   helm upgrade --install devops-app ./helm/devops-app \
+#     --namespace devops-app --create-namespace \
+#     -f helm/devops-app/values.yaml -f helm/values-dynamic.yaml
+
+image:
+  registry: "123456789012.dkr.ecr.us-east-1.amazonaws.com"
+
+config:
+  dbHost: "your-rds-endpoint.amazonaws.com"
+  s3BucketName: "your-s3-bucket-name"
+  snsTopicArn: "arn:aws:sns:us-east-1:123456789012:your-topic"
+
+# base64-encode these yourself, e.g.: echo -n 'your-password' | base64
+secrets:
+  dbPasswordB64: "eW91ci1kYi1wYXNzd29yZA=="
+
+# base64-encode a real cert/key pair, e.g.:
+#   openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout tls.key -out tls.crt -subj "/CN=devops-app"
+#   base64 -w0 tls.crt
+#   base64 -w0 tls.key
+tls:
+  crtB64: "your-base64-encoded-certificate"
+  keyB64: "your-base64-encoded-private-key"

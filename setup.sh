@@ -15,13 +15,60 @@ echo "  cluster, build & push images, and deploy the app to Kubernetes."
 echo "  Total time: ~15-25 minutes on a first run (mostly EKS cluster boot)."
 echo -e "==================================================================${RESET}"
 
-step "[0/9] Running pre-flight checks..."
+step "[0/8] Running pre-flight checks..."
 
 info "Checking required CLI tools..."
-for tool in terraform eksctl aws kubectl docker; do
-    command -v "$tool" >/dev/null 2>&1 || fail "'$tool' is not installed or not on your PATH. Install it and re-run this script."
+
+# aws and docker are never auto-installed. aws-cli is often managed inside a
+# venv/pip environment (`pip install awscli`) - auto-installing a second,
+# different copy system-wide could create a confusing version conflict with
+# whichever one the user actually intends to use. docker on Windows/WSL is
+# normally Docker Desktop, a GUI installer this script has no safe way to drive.
+for tool in aws docker; do
+    command -v "$tool" >/dev/null 2>&1 \
+        || fail "'$tool' is not installed or not on your PATH. Install it yourself and re-run this script."
 done
-success "terraform, eksctl, aws, kubectl, docker all found."
+
+install_terraform() {
+    wget -qO- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg >/dev/null
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+        | sudo tee /etc/apt/sources.list.d/hashicorp.list >/dev/null
+    sudo apt-get update -qq && sudo apt-get install -y terraform
+}
+install_kubectl() {
+    local ver; ver=$(curl -L -s https://dl.k8s.io/release/stable.txt)
+    curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/${ver}/bin/linux/amd64/kubectl"
+    chmod +x /tmp/kubectl
+    sudo mv /tmp/kubectl /usr/local/bin/kubectl
+}
+install_eksctl() {
+    curl -fsSL -o /tmp/eksctl.tar.gz "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz"
+    tar -xzf /tmp/eksctl.tar.gz -C /tmp && rm -f /tmp/eksctl.tar.gz
+    sudo mv /tmp/eksctl /usr/local/bin/eksctl
+}
+install_helm() {
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+}
+
+# terraform/eksctl/kubectl/helm are plain binaries with no venv-conflict risk,
+# so offering to install them is safe - but still asked one at a time, never
+# silent, since each one runs real sudo commands against the system.
+for tool in terraform eksctl kubectl helm; do
+    command -v "$tool" >/dev/null 2>&1 && continue
+    echo -e "${YELLOW}    '$tool' is not installed.${RESET}"
+    set +e
+    read -p "    Install it now automatically? [y/N]: " REPLY
+    set -e
+    if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+        info "Installing $tool..."
+        "install_$tool"
+        command -v "$tool" >/dev/null 2>&1 || fail "Automatic install of '$tool' did not succeed - install it manually and re-run."
+        success "$tool installed."
+    else
+        fail "'$tool' is required. Install it manually and re-run this script."
+    fi
+done
+success "terraform, eksctl, aws, kubectl, helm, docker all found."
 
 info "Checking Docker is actually running..."
 docker info >/dev/null 2>&1 \
@@ -66,7 +113,7 @@ if grep -q '^db_password' terraform/terraform.tfvars 2>/dev/null; then
     info "Removed db_password from terraform.tfvars - it's supplied securely below instead, never stored on disk."
 fi
 
-step "[1/9] Enter the database password for this run (kept in memory only, never written to disk)"
+step "[1/8] Enter the database password for this run (kept in memory only, never written to disk)"
 # No AWS Access Key / Secret prompt anymore - backend-sa and worker-sa get AWS
 # permissions via IRSA (step 5) instead of long-lived static credentials.
 set +e
@@ -81,7 +128,7 @@ set -e
 export TF_VAR_db_password="$DB_PASSWORD"
 success "Database password captured for this run."
 
-step "[2/9] Applying Terraform (RDS, S3, SNS, IAM, networking)..."
+step "[2/8] Applying Terraform (RDS, S3, SNS, IAM, networking)..."
 cd terraform
 terraform init -input=false
 # -auto-approve: this script already stops (set -e) on any Terraform error,
@@ -108,7 +155,7 @@ if [ -n "$PENDING_EMAIL" ]; then
     echo "      (the app will still work and report success either way)."
 fi
 
-step "[3/9] Ensuring EKS cluster '$CLUSTER_NAME' exists inside VPC $VPC_ID..."
+step "[3/8] Ensuring EKS cluster '$CLUSTER_NAME' exists inside VPC $VPC_ID..."
 if eksctl get cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
     info "Cluster already exists, reusing it."
 else
@@ -125,7 +172,7 @@ fi
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
 success "kubectl is now pointed at '$CLUSTER_NAME'."
 
-step "[4/9] Allowing the EKS cluster to reach RDS on port 5432..."
+step "[4/8] Allowing the EKS cluster to reach RDS on port 5432..."
 EKS_SG_ID=$(aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" \
     --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
 aws ec2 authorize-security-group-ingress \
@@ -135,7 +182,7 @@ aws ec2 authorize-security-group-ingress \
     --region "$AWS_REGION" 2>/dev/null && success "Firewall rule added." \
     || info "Rule already exists, skipping."
 
-step "[5/9] Setting up IRSA so backend/worker get AWS access without static keys..."
+step "[5/8] Setting up IRSA so backend/worker get AWS access without static keys..."
 # IRSA (IAM Roles for Service Accounts) lets a pod assume a real IAM role via a
 # short-lived, auto-rotated token instead of a long-lived access key sitting in
 # a Secret. It needs: (a) an OIDC identity provider associated with the cluster,
@@ -143,7 +190,11 @@ step "[5/9] Setting up IRSA so backend/worker get AWS access without static keys
 # the same least-privilege S3/SNS policy Terraform already created for the old
 # EC2 instances (terraform/iam.tf). frontend-sa is left alone - it never needs
 # AWS access at all, so it gets no role.
-kubectl apply -f k8s/00-namespace.yaml >/dev/null
+# IRSA's iamserviceaccount creation needs the namespace to already exist;
+# Helm creates it too later (via --create-namespace), which is a harmless
+# no-op if it's already there - Helm only checks for existence, it doesn't
+# try to "own" the namespace as a chart-managed resource.
+kubectl create namespace devops-app --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
 eksctl utils associate-iam-oidc-provider \
     --cluster "$CLUSTER_NAME" --region "$AWS_REGION" --approve
@@ -159,43 +210,7 @@ for sa in backend-sa worker-sa; do
     success "$sa can now reach S3/SNS via IRSA - no AWS keys involved."
 done
 
-step "[6/9] Writing the Kubernetes ConfigMap..."
-cat <<EOF > k8s/01-configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: app-config
-  namespace: devops-app
-data:
-  DB_HOST: "${DB_HOST}"
-  DB_PORT: "5432"
-  DB_NAME: "${DB_NAME}"
-  DB_USER: "postgres"
-  S3_BUCKET_NAME: "${S3_BUCKET}"
-  SNS_TOPIC_ARN: "${SNS_TOPIC}"
-  AWS_REGION: "${AWS_REGION}"
-  POLL_INTERVAL_SECONDS: "30"
-EOF
-success "k8s/01-configmap.yaml written."
-
-step "[7/9] Writing the Kubernetes Secret (reusing the password from step 1)..."
-# Only DB_PASSWORD lives here now - AWS access no longer goes through a Secret
-# at all, it comes from IRSA (step 5).
-B64_DB_PASS=$(echo -n "$DB_PASSWORD" | base64 | tr -d '\n')
-
-cat <<EOF > k8s/02-secret.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: app-secrets
-  namespace: devops-app
-type: Opaque
-data:
-  DB_PASSWORD: ${B64_DB_PASS}
-EOF
-success "k8s/02-secret.yaml written (git-ignored, never commit this file)."
-
-info "Generating a self-signed TLS certificate for the frontend..."
+step "[6/8] Generating the TLS cert and the Helm values file for this run..."
 # Self-signed, not from a real CA - browsers will show a "not trusted" warning.
 # Getting a real trusted cert (ACM/cert-manager) needs a domain name pointed at
 # the load balancer, which is out of scope here. Regenerated fresh every run
@@ -208,20 +223,28 @@ TLS_CRT_B64=$(base64 -w0 "$TLS_DIR/tls.crt")
 TLS_KEY_B64=$(base64 -w0 "$TLS_DIR/tls.key")
 rm -rf "$TLS_DIR"
 
-cat <<EOF > k8s/08-tls-secret.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: frontend-tls-cert
-  namespace: devops-app
-type: kubernetes.io/tls
-data:
-  tls.crt: ${TLS_CRT_B64}
-  tls.key: ${TLS_KEY_B64}
-EOF
-success "k8s/08-tls-secret.yaml written (git-ignored, never commit this file)."
+B64_DB_PASS=$(echo -n "$DB_PASSWORD" | base64 | tr -d '\n')
 
-step "[8/9] Building, scanning, tagging, and pushing Docker images to ECR..."
+# All the values that differ per run (real infra data, the password, the cert)
+# live only in this temp file - never written to a tracked path, deleted the
+# moment `helm upgrade` has read it.
+HELM_DYNAMIC_VALUES=$(mktemp)
+cat <<EOF > "$HELM_DYNAMIC_VALUES"
+image:
+  registry: "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+config:
+  dbHost: "${DB_HOST}"
+  s3BucketName: "${S3_BUCKET}"
+  snsTopicArn: "${SNS_TOPIC}"
+secrets:
+  dbPasswordB64: "${B64_DB_PASS}"
+tls:
+  crtB64: "${TLS_CRT_B64}"
+  keyB64: "${TLS_KEY_B64}"
+EOF
+success "Helm values ready (TLS cert, DB endpoint, S3/SNS details, password)."
+
+step "[7/8] Building, scanning, tagging, and pushing Docker images to ECR..."
 aws ecr get-login-password --region "$AWS_REGION" | \
     docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com" >/dev/null
 
@@ -252,26 +275,17 @@ for service in frontend backend worker; do
 done
 success "All 3 images built, scanned, and pushed as :v1.0.0."
 
-step "[9/9] Deploying to Kubernetes and waiting for rollout..."
-# Applied as an explicit, dependency-ordered list rather than `kubectl apply -f k8s/`
-# on the whole directory - k8s/02-secret.example.yaml defines a Secret with the same
-# name as k8s/02-secret.yaml (the real one), and applying both is order-dependent:
-# whichever gets applied last silently wins with its placeholder values.
-kubectl apply -f k8s/00-namespace.yaml
-kubectl apply -f k8s/00-serviceaccount.yaml
-kubectl apply -f k8s/01-configmap.yaml
-kubectl apply -f k8s/02-secret.yaml
-kubectl apply -f k8s/08-tls-secret.yaml
-# Services before Deployments: nginx's `proxy_pass http://backend-service:5000`
-# resolves that hostname ONCE, at startup - not per-request. If backend-service
-# doesn't exist yet when a frontend pod starts, nginx fails to resolve it and
-# crashes immediately (fixed by a restart, but avoidable entirely by making sure
-# the Service - and therefore its DNS record - exists before any pod needs it).
-kubectl apply -f k8s/04-services.yaml
-kubectl apply -f k8s/03-deployments.yaml
-kubectl apply -f k8s/05-network-policies.yaml
-kubectl apply -f k8s/06-poddisruptionbudget.yaml
-kubectl apply -f k8s/07-hpa.yaml
+step "[8/8] Deploying with Helm and waiting for rollout..."
+# --create-namespace: safe to pass even though the namespace already exists
+# (created in step 5, for IRSA) - it only creates if missing, it never tries
+# to "adopt" or manage the namespace as a chart resource.
+helm upgrade --install devops-app ./helm/devops-app \
+    --namespace devops-app --create-namespace \
+    -f ./helm/devops-app/values.yaml \
+    -f "$HELM_DYNAMIC_VALUES"
+rm -f "$HELM_DYNAMIC_VALUES"
+success "Helm release 'devops-app' installed/upgraded."
+
 kubectl rollout status deployment/frontend-deployment -n devops-app --timeout=180s
 kubectl rollout status deployment/backend-deployment -n devops-app --timeout=180s
 kubectl rollout status deployment/worker-deployment -n devops-app --timeout=180s

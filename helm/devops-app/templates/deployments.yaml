@@ -1,0 +1,196 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-deployment
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: frontend
+spec:
+  replicas: {{ .Values.frontend.replicas }}
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      serviceAccountName: frontend-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+      containers:
+      - name: frontend
+        image: {{ .Values.image.registry }}/devops-frontend:{{ .Values.image.tag }}
+        ports:
+        - containerPort: 80
+        - containerPort: 443
+        resources:
+          requests:
+            cpu: {{ .Values.frontend.resources.requests.cpu | quote }}
+            memory: {{ .Values.frontend.resources.requests.memory | quote }}
+          limits:
+            cpu: {{ .Values.frontend.resources.limits.cpu | quote }}
+            memory: {{ .Values.frontend.resources.limits.memory | quote }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: nginx-cache
+          mountPath: /var/cache/nginx
+        - name: nginx-pid
+          mountPath: /var/run
+        - name: tls-cert
+          mountPath: /etc/nginx/tls
+          readOnly: true
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 15
+          periodSeconds: 20
+      volumes:
+      - name: nginx-cache
+        emptyDir: {}
+      - name: nginx-pid
+        emptyDir: {}
+      - name: tls-cert
+        secret:
+          secretName: frontend-tls-cert
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-deployment
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: backend
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      serviceAccountName: backend-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+      - name: backend
+        image: {{ .Values.image.registry }}/devops-backend:{{ .Values.image.tag }}
+        ports:
+        - containerPort: 5000
+        envFrom:
+        - configMapRef:
+            name: app-config
+        - secretRef:
+            name: app-secrets
+        resources:
+          requests:
+            cpu: {{ .Values.backend.resources.requests.cpu | quote }}
+            memory: {{ .Values.backend.resources.requests.memory | quote }}
+          limits:
+            cpu: {{ .Values.backend.resources.limits.cpu | quote }}
+            memory: {{ .Values.backend.resources.limits.memory | quote }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 5000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 5000
+          initialDelaySeconds: 20
+          periodSeconds: 30
+      volumes:
+      - name: tmp
+        emptyDir: {}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-deployment
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      serviceAccountName: worker-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+      - name: worker
+        image: {{ .Values.image.registry }}/devops-worker:{{ .Values.image.tag }}
+        envFrom:
+        - configMapRef:
+            name: app-config
+        - secretRef:
+            name: app-secrets
+        resources:
+          requests:
+            cpu: {{ .Values.worker.resources.requests.cpu | quote }}
+            memory: {{ .Values.worker.resources.requests.memory | quote }}
+          limits:
+            cpu: {{ .Values.worker.resources.limits.cpu | quote }}
+            memory: {{ .Values.worker.resources.limits.memory | quote }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        # No HTTP port to probe, so both probes check a heartbeat file that
+        # worker.py touches at startup and after every poll cycle instead.
+        readinessProbe:
+          exec:
+            command: ["sh", "-c", "test -f /tmp/worker_heartbeat"]
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        livenessProbe:
+          # Fails if the heartbeat is older than 90s (3x the 30s poll interval),
+          # meaning the loop is stuck.
+          exec:
+            command:
+            - sh
+            - -c
+            - "test $(( $(date +%s) - $(stat -c %Y /tmp/worker_heartbeat 2>/dev/null || echo 0) )) -lt 90"
+          initialDelaySeconds: 20
+          periodSeconds: 30
+      volumes:
+      - name: tmp
+        emptyDir: {}

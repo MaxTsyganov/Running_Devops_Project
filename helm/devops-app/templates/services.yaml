@@ -1,0 +1,36 @@
+# ClusterIP: reachable only from inside the cluster, never from the internet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: backend
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+  - port: 5000
+    targetPort: 5000
+
+---
+# LoadBalancer: the only component in this app exposed to the internet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: frontend
+spec:
+  type: LoadBalancer
+  selector:
+    app: frontend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  - name: https
+    port: 443
+    targetPort: 443
