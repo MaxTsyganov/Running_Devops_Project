@@ -263,8 +263,13 @@ kubectl apply -f k8s/00-serviceaccount.yaml
 kubectl apply -f k8s/01-configmap.yaml
 kubectl apply -f k8s/02-secret.yaml
 kubectl apply -f k8s/08-tls-secret.yaml
-kubectl apply -f k8s/03-deployments.yaml
+# Services before Deployments: nginx's `proxy_pass http://backend-service:5000`
+# resolves that hostname ONCE, at startup - not per-request. If backend-service
+# doesn't exist yet when a frontend pod starts, nginx fails to resolve it and
+# crashes immediately (fixed by a restart, but avoidable entirely by making sure
+# the Service - and therefore its DNS record - exists before any pod needs it).
 kubectl apply -f k8s/04-services.yaml
+kubectl apply -f k8s/03-deployments.yaml
 kubectl apply -f k8s/05-network-policies.yaml
 kubectl apply -f k8s/06-poddisruptionbudget.yaml
 kubectl apply -f k8s/07-hpa.yaml
@@ -282,7 +287,7 @@ done
 
 echo -e "\n${GREEN}${BOLD}=================================================================="
 echo "  DEPLOYMENT COMPLETE"
-echo "==================================================================${RESET}"
+echo -e "==================================================================${RESET}"
 echo "  App URL (HTTP):   http://$EXTERNAL_IP"
 echo "  App URL (HTTPS):  https://$EXTERNAL_IP  (self-signed cert - browser will warn, that's expected)"
 echo "  Check pods:      kubectl get pods -n devops-app"
