@@ -159,12 +159,17 @@ if eksctl get cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2
     info "Cluster already exists, reusing it."
 else
     info "Creating cluster inside the existing VPC/subnets (this takes 15-20 minutes)..."
+    # 3 nodes, not 2: t3.small's pod ceiling is set by its network interfaces'
+    # IP capacity (EKS/VPC CNI), not CPU/memory - 11 pods/node regardless of
+    # how much compute is actually free. With kube-system, CoreDNS, ArgoCD,
+    # cert-manager, and this app all scheduled, 2 nodes (22 slots) isn't
+    # enough headroom; 3 nodes (33 slots) is, for a small added cost.
     eksctl create cluster \
         --name "$CLUSTER_NAME" \
         --region "$AWS_REGION" \
         --vpc-public-subnets="$PUBLIC_SUBNET_IDS" \
         --vpc-private-subnets="$PRIVATE_SUBNET_IDS" \
-        --nodes 2 \
+        --nodes 3 \
         --node-type t3.small \
         --managed
 fi

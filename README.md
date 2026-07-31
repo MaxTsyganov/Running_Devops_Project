@@ -47,7 +47,7 @@ flowchart TB
             LB["frontend-service<br/>LoadBalancer, public subnets"]
             NAT["NAT Gateway<br/>public subnets"]
 
-            subgraph EKS["EKS: devops-cluster, 2x t3.small nodes, private subnets"]
+            subgraph EKS["EKS: devops-cluster, 3x t3.small nodes, private subnets"]
                 subgraph NsArgo["namespace: argocd"]
                     ArgoCD["ArgoCD"]
                 end
@@ -362,6 +362,7 @@ load balancer.
 | `LoadBalancer` Service instead of Ingress | Only one public route, no controller needed | No path-based routing |
 | cert-manager with a self-signed issuer, not a real CA | No domain name to get a real cert for; cert-manager itself is still real | Browser warning on every visit |
 | Kubernetes Secrets, no external secret store | Simplicity for a course project | Base64 only, not encrypted at rest |
+| 3 `t3.small` nodes instead of 2 | `t3.small`'s pod ceiling is 11/node (network interface IP limits, not CPU/memory) - kube-system + ArgoCD + cert-manager + this app need more than 2 nodes' worth of slots | Small added hourly node cost |
 
 ---
 
