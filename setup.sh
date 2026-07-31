@@ -132,8 +132,10 @@ cd terraform
 terraform init -input=false
 # -auto-approve: this script already stops (set -e) on any Terraform error,
 # and re-running apply on unchanged infra is a safe no-op, so we skip the
-# interactive "yes" prompt to keep the whole deploy hands-off.
-terraform apply -auto-approve
+# interactive "yes" prompt to keep the whole deploy hands-off. -input=false
+# for the same reason: a missing variable should fail loudly, not block on
+# a prompt with nobody watching for it.
+terraform apply -auto-approve -input=false
 VPC_ID=$(terraform output -raw vpc_id)
 PUBLIC_SUBNET_IDS=$(terraform output -raw public_subnet_ids)
 PRIVATE_SUBNET_IDS=$(terraform output -raw private_subnet_ids)

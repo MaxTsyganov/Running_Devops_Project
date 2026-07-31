@@ -1,10 +1,11 @@
 #!/bin/bash
 set -e
 
-BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RESET='\033[0m'
+BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; RESET='\033[0m'
 step()    { echo -e "\n${BOLD}${YELLOW}==> $1${RESET}"; }
 info()    { echo "    $1"; }
 success() { echo -e "${GREEN}✔ $1${RESET}"; }
+fail()    { echo -e "${RED}✘ $1${RESET}"; exit 1; }
 
 echo -e "${BOLD}=================================================================="
 echo "  DevOps App - Full Teardown"
@@ -92,10 +93,10 @@ step "[4/7] Deleting IRSA IAM service accounts (backend-sa, worker-sa)..."
 # behind, the same way the orphaned cluster security group happened before.
 if eksctl get cluster --name devops-cluster --region us-east-1 >/dev/null 2>&1; then
     for sa in backend-sa worker-sa; do
-        eksctl delete iamserviceaccount \
+        eksctl delete iamserviceaccount --verbose 0 \
             --cluster devops-cluster --region us-east-1 \
             --namespace devops-app --name "$sa" \
-            --wait 2>/dev/null && success "Deleted IAM role for $sa." \
+            --wait >/dev/null 2>&1 && success "Deleted IAM role for $sa." \
             || info "$sa's IAM role already gone, continuing."
     done
 else
@@ -103,15 +104,46 @@ else
 fi
 
 step "[5/7] Deleting EKS cluster (10-15 minutes)..."
-eksctl delete cluster --region=us-east-1 --name=devops-cluster 2>/dev/null || info "Cluster already gone, continuing."
+# eksctl's own progress output is a wall of CloudFormation stack-wait lines -
+# logged to a temp file instead of the terminal, and only shown if something
+# actually goes wrong, so a normal run just prints one clean result line.
+if eksctl get cluster --name devops-cluster --region us-east-1 >/dev/null 2>&1; then
+    EKSCTL_LOG=$(mktemp)
+    if eksctl delete cluster --verbose 0 --region=us-east-1 --name=devops-cluster > "$EKSCTL_LOG" 2>&1; then
+        success "EKS cluster deleted."
+    else
+        cat "$EKSCTL_LOG"
+        fail "eksctl delete cluster failed - see output above."
+    fi
+    rm -f "$EKSCTL_LOG"
+else
+    info "Cluster already gone, continuing."
+fi
 
 step "[6/7] Destroying Terraform infrastructure (RDS, S3, SNS, IAM, VPC)..."
 cd terraform
-# db_password's real value is irrelevant for `destroy` (it's never re-sent to AWS
-# on delete), so a throwaway value avoids prompting for a secret we're about to
-# delete anyway - the real password is never stored on disk between runs.
+# None of these values affect what gets destroyed (destroy operates on
+# existing state, not on what the variables would have created) - they're
+# only set so the command never blocks on a variable prompt, whether or not
+# terraform.tfvars happens to exist right now.
 export TF_VAR_db_password="unused-during-teardown"
-terraform destroy -auto-approve
+export TF_VAR_bucket_name="unused-during-teardown"
+export TF_VAR_my_email="unused-during-teardown"
+# Same idea as eksctl above: terraform destroy narrates every single resource
+# as it goes, which is exactly the noise that's not useful on a normal run -
+# logged to a temp file, only surfaced in full if the destroy actually fails.
+# -input=false is the important part here: if a variable were ever still
+# missing, this makes it fail immediately with a clear error instead of
+# blocking on an interactive prompt that ends up hidden inside that log file.
+TF_LOG=$(mktemp)
+if terraform destroy -auto-approve -input=false > "$TF_LOG" 2>&1; then
+    grep -E "^(Destroy complete|No changes)" "$TF_LOG" || true
+    success "Terraform infrastructure destroyed."
+else
+    cat "$TF_LOG"
+    fail "terraform destroy failed - see output above."
+fi
+rm -f "$TF_LOG"
 cd ..
 
 step "[7/7] Removing locally-generated files..."
