@@ -1,8 +1,9 @@
 # Non-sensitive defaults, safe to commit. Anything that's real infrastructure
-# data (RDS endpoint, S3 bucket, AWS account ID) or a secret is left empty here
-# and supplied at install time by setup.sh via -f <generated-values-file>,
-# which is never written to a tracked path. See values-dynamic.example.yaml
-# for the shape of what gets filled in.
+# data (RDS endpoint, S3 bucket, AWS account ID) or a secret is left empty
+# here - setup.sh supplies the real values directly in the ArgoCD Application
+# it applies. See ../values-dynamic.example.yaml for the shape of what's
+# filled in, and how to supply it by hand instead. (TLS isn't part of this at
+# all - cert-manager issues that cert directly in-cluster.)
 
 image:
   # e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com - set at install time
@@ -55,6 +56,6 @@ config:
 secrets:
   dbPasswordB64: ""
 
-tls:
-  crtB64: ""
-  keyB64: ""
+# TLS isn't set here at all - cert-manager issues the frontend's certificate
+# directly in-cluster (see templates/certificate.yaml), so there's no value
+# to pass in for it.

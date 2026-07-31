@@ -1,5 +1,4 @@
-# ── Background Worker dependencies ───────────────────────────────────────────
-# Intentionally minimal — the worker has no HTTP server.
+# Minimal on purpose - the worker has no HTTP server.
 
 psycopg2-binary==2.9.9      # PostgreSQL driver
 boto3==1.34.131             # AWS SDK (SNS)

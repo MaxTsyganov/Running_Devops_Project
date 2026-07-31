@@ -19,8 +19,9 @@ step "[1/7] Deleting the app via ArgoCD, then removing ArgoCD itself..."
 # the app, not a `helm uninstall` (ArgoCD owns the release now, not us directly).
 kubectl delete application devops-app -n argocd --timeout=120s 2>/dev/null \
     || info "No ArgoCD Application found, nothing to cascade-delete here - continuing."
-# The Namespace was never a chart-managed resource (see helm/devops-app/templates/
-# serviceaccount.yaml for why), so it still needs deleting explicitly.
+# The Namespace is chart-managed now, so the Application delete above should
+# already be pruning it - this is a backstop that also blocks until it's fully
+# gone, which the next step (waiting for the load balancer to release) relies on.
 kubectl delete namespace devops-app --ignore-not-found=true 2>/dev/null \
     || info "No cluster reachable, nothing to delete here - continuing."
 # ArgoCD itself (the argocd namespace) is left alone here on purpose - it has
@@ -64,14 +65,10 @@ else
 fi
 
 step "[3/7] Revoking the RDS rule that references the EKS cluster's security group..."
-# setup.sh authorized RDS's security group to accept traffic FROM the EKS
-# cluster's auto-created "cluster security group". AWS refuses to delete a
-# security group that's still referenced by another group's rule - so if we
-# delete the cluster while that reference still exists, EKS's own cleanup of
-# its cluster security group silently fails and orphans it, which later blocks
-# `terraform destroy` from deleting the VPC (a VPC can't be deleted while any
-# non-default security group still lives in it). Revoking the rule first lets
-# EKS clean up after itself properly.
+# setup.sh authorized RDS's security group to accept traffic from the EKS
+# cluster's security group. AWS won't delete a security group that's still
+# referenced elsewhere, so without this the cluster's own cleanup leaves it
+# orphaned, and `terraform destroy` later fails trying to delete the VPC.
 RDS_SG_ID=$( (cd terraform && terraform output -raw rds_security_group_id 2>/dev/null) || true)
 if [ -n "$RDS_SG_ID" ] && eksctl get cluster --name devops-cluster --region us-east-1 >/dev/null 2>&1; then
     EKS_SG_ID=$(aws eks describe-cluster --name devops-cluster --region us-east-1 \
@@ -118,9 +115,6 @@ terraform destroy -auto-approve
 cd ..
 
 step "[7/7] Removing locally-generated files..."
-# The Helm dynamic-values file setup.sh generates is already a mktemp file
-# deleted within the same run, right after `helm upgrade` reads it - nothing
-# left over here to clean up for that.
 rm -f terraform/terraform.tfvars
 success "Removed terraform/terraform.tfvars (setup.sh recreates it, asking again, on the next run)."
 

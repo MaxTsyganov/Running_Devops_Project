@@ -1,0 +1,58 @@
+name: CI
+
+# Validates the code on every push/PR - no AWS credentials involved, nothing
+# here ever deploys anything. Actual deployment stays a deliberate, manual
+# `make k8s-deploy` run: this is a public repo, and wiring real cloud
+# credentials into Actions secrets so every push could touch live infra is a
+# different risk profile than read-only validation.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  terraform:
+    name: Terraform fmt + validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - run: terraform fmt -check -diff
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
+  helm:
+    name: Helm lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: "v3.16.2"
+      - run: helm lint helm/devops-app --strict
+      - run: |
+          helm template devops-app ./helm/devops-app \
+            --namespace devops-app \
+            --set image.registry=123456789012.dkr.ecr.us-east-1.amazonaws.com \
+            > /dev/null
+
+  images:
+    name: Build and scan images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [frontend, backend, worker]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t devops-${{ matrix.service }}:ci ./${{ matrix.service }}
+      - uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: devops-${{ matrix.service }}:ci
+          severity: HIGH,CRITICAL
+          exit-code: "0"

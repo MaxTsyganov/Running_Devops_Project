@@ -154,6 +154,9 @@ spec:
       containers:
       - name: worker
         image: {{ .Values.image.registry }}/devops-worker:{{ .Values.image.tag }}
+        # No ports: unlike frontend/backend, this container runs no server at
+        # all - it only opens outbound connections (DB, SNS), so there's no
+        # port for anything to declare or for a Service to target.
         envFrom:
         - configMapRef:
             name: app-config

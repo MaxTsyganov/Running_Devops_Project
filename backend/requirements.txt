@@ -1,5 +1,4 @@
-# ── Backend API dependencies ─────────────────────────────────────────────────
-# Pin exact versions for reproducible builds in production.
+# Pinned to exact versions for reproducible builds.
 
 flask==3.0.3
 flask-cors==4.0.2           # 4.0.1 has CVE-2024-6221 (Access-Control-Allow-Private-Network mishandling)

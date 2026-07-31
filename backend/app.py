@@ -46,7 +46,6 @@ AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "") or None
 
 
 def get_db_connection():
-    """Create a connection to the PostgreSQL database."""
     return psycopg2.connect(
         host=DB_HOST,
         port=int(DB_PORT),
@@ -58,11 +57,9 @@ def get_db_connection():
 
 
 def init_db():
-    """Create the necessary database tables if they do not exist yet."""
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            # Create the table for storing application tasks
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS items (
                     id           SERIAL       PRIMARY KEY,
@@ -73,7 +70,6 @@ def init_db():
                     processed_at TIMESTAMP
                 );
             """)
-            # Create the table for tracking file uploads
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS uploads (
                     id         SERIAL       PRIMARY KEY,
@@ -103,7 +99,6 @@ def _aws_kwargs():
 
 
 def publish_sns(subject: str, message: str):
-    """Send an email notification using AWS SNS."""
     if not SNS_TOPIC_ARN:
         logger.warning("SNS topic is missing. Notification skipped.")
         return
@@ -121,7 +116,6 @@ def publish_sns(subject: str, message: str):
 
 
 def _row_to_dict(row: dict) -> dict:
-    """Convert a database row into a dictionary format suitable for JSON."""
     out = {}
     for k, v in row.items():
         out[k] = v.isoformat() if isinstance(v, datetime) else v
@@ -130,7 +124,6 @@ def _row_to_dict(row: dict) -> dict:
 
 @app.get("/api/health")
 def health():
-    """Check if the API and database are running correctly."""
     try:
         conn = get_db_connection()
         conn.close()
@@ -141,7 +134,6 @@ def health():
 
 @app.get("/api/items")
 def list_items():
-    """Fetch all items from the database and sort them by the newest first."""
     try:
         conn = get_db_connection()
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -156,7 +148,6 @@ def list_items():
 
 @app.post("/api/items")
 def create_item():
-    """Add a new item to the database and send a notification."""
     body = request.get_json(silent=True) or {}
     name = (body.get("name") or "").strip()
     if not name:
@@ -183,7 +174,6 @@ def create_item():
         logger.exception("Failed to save item to database")
         return jsonify({"error": str(exc)}), 500
 
-    # Send an email alert that a new item was added
     publish_sns(
         subject=f"[App] New item created: {name}",
         message=(
@@ -207,7 +197,6 @@ def create_item():
 
 @app.post("/api/upload")
 def upload_file():
-    """Upload a file to an S3 bucket and save the record in the database."""
     if "file" not in request.files:
         return jsonify({"error": "No file included in the request"}), 400
 
@@ -222,7 +211,6 @@ def upload_file():
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     s3_key = f"uploads/{ts}_{f.filename}"
 
-    # Upload the file to AWS S3
     try:
         s3 = boto3.client("s3", **_aws_kwargs())
         s3.upload_fileobj(
@@ -237,7 +225,6 @@ def upload_file():
         logger.exception("Failed to upload file to S3")
         return jsonify({"error": "S3 upload failed"}), 500
 
-    # Save the upload details in the database
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
@@ -254,7 +241,6 @@ def upload_file():
 
     s3_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
 
-    # Send an email alert that a file was uploaded
     publish_sns(
         subject=f"[App] New file uploaded: {f.filename}",
         message=(

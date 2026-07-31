@@ -13,9 +13,9 @@ resource "aws_iam_policy" "app_least_privilege_policy" {
     Statement = [
       {
         # Restrict S3 to ONLY the bucket created by Terraform, and ONLY allow uploading files
-        Sid      = "S3UploadAccess"
-        Effect   = "Allow"
-        Action   = [
+        Sid    = "S3UploadAccess"
+        Effect = "Allow"
+        Action = [
           "s3:PutObject",
           "s3:ListBucket"
         ]
@@ -26,9 +26,9 @@ resource "aws_iam_policy" "app_least_privilege_policy" {
       },
       {
         # Restrict SNS to ONLY publishing to the exact Topic created by Terraform
-        Sid      = "SNSPublishAccess"
-        Effect   = "Allow"
-        Action   = [
+        Sid    = "SNSPublishAccess"
+        Effect = "Allow"
+        Action = [
           "sns:Publish"
         ]
         Resource = [

@@ -6,9 +6,8 @@ resource "aws_vpc" "main_vpc" {
   tags = { Name = "DevOps-Project-VPC" }
 }
 
-# ── Public subnets ──
-# Two, in different AZs: EKS requires the cluster to span at least 2
-# Availability Zones, even for a single-nodegroup setup like this one.
+# Two public subnets, in different AZs: EKS requires the cluster to span at
+# least 2 Availability Zones, even for a single-nodegroup setup like this one.
 resource "aws_subnet" "public_subnet" {
   vpc_id                  = aws_vpc.main_vpc.id
   cidr_block              = "10.0.1.0/24"
@@ -27,9 +26,8 @@ resource "aws_subnet" "public_subnet_2" {
   tags = { Name = "DevOps-Public-Subnet-2" }
 }
 
-# ── Private subnets ──
-# Also two, for the same reason - RDS additionally requires a subnet group
-# spanning 2+ AZs, which private_subnet_2 also satisfies.
+# Also two private subnets, for the same reason - RDS additionally requires
+# a subnet group spanning 2+ AZs, which private_subnet_2 also satisfies.
 resource "aws_subnet" "private_subnet_1" {
   vpc_id            = aws_vpc.main_vpc.id
   cidr_block        = "10.0.2.0/24"
@@ -70,9 +68,9 @@ resource "aws_route_table_association" "public_association_2" {
   route_table_id = aws_route_table.public_rt.id
 }
 
-# ── NAT Gateway and private routing ──
-# Lets EKS nodes and pods in the private subnets reach the internet (to pull
-# images, reach the EKS API, etc.) without being directly internet-facing.
+# NAT Gateway: lets EKS nodes and pods in the private subnets reach the
+# internet (to pull images, reach the EKS API, etc.) without being directly
+# internet-facing themselves.
 resource "aws_eip" "nat_eip" {
   domain = "vpc"
   tags   = { Name = "DevOps-NAT-EIP" }

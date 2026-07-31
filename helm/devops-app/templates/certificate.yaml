@@ -1,0 +1,20 @@
+# cert-manager issues this and writes the result into a Secret named
+# frontend-tls-cert - same Secret name the frontend Deployment already mounts,
+# so nothing else in the chart needs to change. Requires the cert-manager
+# CRDs and a ClusterIssuer named selfsigned-issuer to already exist in the
+# cluster (installed by setup.sh, not part of this chart - see README §3).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: frontend-tls-cert
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: frontend-tls-cert
+  commonName: devops-app
+  dnsNames:
+    - devops-app
+  duration: 2160h    # 90 days
+  renewBefore: 360h  # 15 days
+  issuerRef:
+    name: selfsigned-issuer
+    kind: ClusterIssuer

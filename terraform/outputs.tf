@@ -1,4 +1,4 @@
-# ── Read by setup.sh to configure the Kubernetes ConfigMap/Secret and eksctl ──
+# Read by setup.sh to configure the Kubernetes ConfigMap/Secret and eksctl.
 
 output "rds_endpoint" {
   description = "The RDS connection endpoint"
@@ -15,7 +15,7 @@ output "sns_topic_arn" {
   value       = aws_sns_topic.alerts.arn
 }
 
-# ── VPC info needed to put the EKS cluster in the same network as RDS ──
+# VPC info needed to put the EKS cluster in the same network as RDS.
 
 output "vpc_id" {
   description = "The VPC that RDS lives in - EKS must be created inside this same VPC"

@@ -1,13 +1,17 @@
-# Template for manual `helm install`/`upgrade` use. setup.sh generates the
-# real version of this file itself (from Terraform outputs, a freshly
-# generated TLS cert, and the password you type in) and passes it via
-# `-f <generated-file>` - that generated file is never written to a tracked
-# path. To fill this in and deploy by hand instead:
+# Template for deploying the chart by hand with `helm upgrade`, bypassing
+# ArgoCD. setup.sh doesn't use this file at all - it builds the same values
+# from Terraform outputs and embeds them directly into the ArgoCD Application
+# it applies. To deploy manually instead:
 #   cp helm/values-dynamic.example.yaml helm/values-dynamic.yaml
 #   (edit the placeholders below, then:)
 #   helm upgrade --install devops-app ./helm/devops-app \
 #     --namespace devops-app --create-namespace \
 #     -f helm/devops-app/values.yaml -f helm/values-dynamic.yaml
+#
+# The chart's Certificate resource (templates/certificate.yaml) also needs
+# cert-manager and a selfsigned-issuer ClusterIssuer to already exist in the
+# cluster - see setup.sh step 6 for the exact commands if setting these up
+# by hand too.
 
 image:
   registry: "123456789012.dkr.ecr.us-east-1.amazonaws.com"
@@ -17,14 +21,6 @@ config:
   s3BucketName: "your-s3-bucket-name"
   snsTopicArn: "arn:aws:sns:us-east-1:123456789012:your-topic"
 
-# base64-encode these yourself, e.g.: echo -n 'your-password' | base64
+# base64-encode this yourself, e.g.: echo -n 'your-password' | base64
 secrets:
   dbPasswordB64: "eW91ci1kYi1wYXNzd29yZA=="
-
-# base64-encode a real cert/key pair, e.g.:
-#   openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout tls.key -out tls.crt -subj "/CN=devops-app"
-#   base64 -w0 tls.crt
-#   base64 -w0 tls.key
-tls:
-  crtB64: "your-base64-encoded-certificate"
-  keyB64: "your-base64-encoded-private-key"

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# ── Friendly output helpers ──────────────────────────────────────────────
+# output helpers
 BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; RESET='\033[0m'
 step()    { echo -e "\n${BOLD}${YELLOW}==> $1${RESET}"; }
 info()    { echo "    $1"; }
@@ -20,11 +20,9 @@ step "[0/8] Running pre-flight checks..."
 
 info "Checking required CLI tools..."
 
-# aws and docker are never auto-installed. aws-cli is often managed inside a
-# venv/pip environment (`pip install awscli`) - auto-installing a second,
-# different copy system-wide could create a confusing version conflict with
-# whichever one the user actually intends to use. docker on Windows/WSL is
-# normally Docker Desktop, a GUI installer this script has no safe way to drive.
+# aws and docker are never auto-installed: aws-cli is often already managed
+# inside a venv (pip install awscli), and docker is usually Docker Desktop,
+# a GUI installer this script can't drive.
 for tool in aws docker; do
     command -v "$tool" >/dev/null 2>&1 \
         || fail "'$tool' is not installed or not on your PATH. Install it yourself and re-run this script."
@@ -184,18 +182,18 @@ aws ec2 authorize-security-group-ingress \
     || info "Rule already exists, skipping."
 
 step "[5/8] Setting up IRSA so backend/worker get AWS access without static keys..."
-# IRSA (IAM Roles for Service Accounts) lets a pod assume a real IAM role via a
-# short-lived, auto-rotated token instead of a long-lived access key sitting in
-# a Secret. It needs: (a) an OIDC identity provider associated with the cluster,
-# and (b) an IAM role, trusted only by a specific Kubernetes ServiceAccount, with
-# the same least-privilege S3/SNS policy Terraform already created for the old
-# EC2 instances (terraform/iam.tf). frontend-sa is left alone - it never needs
-# AWS access at all, so it gets no role.
-# IRSA's iamserviceaccount creation needs the namespace to already exist;
-# Helm creates it too later (via --create-namespace), which is a harmless
-# no-op if it's already there - Helm only checks for existence, it doesn't
-# try to "own" the namespace as a chart-managed resource.
-kubectl create namespace devops-app --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+# IRSA lets a pod assume an IAM role via a short-lived token instead of a
+# long-lived access key in a Secret. Needs an OIDC provider on the cluster
+# plus a role per ServiceAccount, trusted only by that SA, using the same
+# least-privilege policy from terraform/iam.tf. frontend-sa gets no role -
+# it never talks to AWS.
+# The namespace is templated in the chart (helm/devops-app/templates/namespace.yaml)
+# rather than created as a one-off raw manifest, so it stays defined in one place.
+# It still has to exist now, before ArgoCD ever runs: eksctl needs somewhere to
+# put backend-sa/worker-sa. Rendering just that one template keeps this in sync
+# with the chart instead of duplicating the Namespace definition here.
+helm template devops-app ./helm/devops-app --namespace devops-app \
+    --show-only templates/namespace.yaml | kubectl apply -f -
 
 eksctl utils associate-iam-oidc-provider \
     --cluster "$CLUSTER_NAME" --region "$AWS_REGION" --approve
@@ -211,39 +209,48 @@ for sa in backend-sa worker-sa; do
     success "$sa can now reach S3/SNS via IRSA - no AWS keys involved."
 done
 
-step "[6/8] Generating the TLS cert and the Helm values file for this run..."
-# Self-signed, not from a real CA - browsers will show a "not trusted" warning.
-# Getting a real trusted cert (ACM/cert-manager) needs a domain name pointed at
-# the load balancer, which is out of scope here. Regenerated fresh every run
-# rather than reused, since it's cheap and avoids needing to persist it anywhere.
-TLS_DIR=$(mktemp -d)
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-    -keyout "$TLS_DIR/tls.key" -out "$TLS_DIR/tls.crt" \
-    -subj "/CN=devops-app/O=devops-app" 2>/dev/null
-TLS_CRT_B64=$(base64 -w0 "$TLS_DIR/tls.crt")
-TLS_KEY_B64=$(base64 -w0 "$TLS_DIR/tls.key")
-rm -rf "$TLS_DIR"
+step "[6/8] Installing cert-manager and creating a self-signed TLS issuer..."
+# cert-manager issues and auto-renews the frontend's cert instead of a one-off
+# openssl script. Still self-signed - there's no domain pointed at the load
+# balancer to get a real CA-trusted cert from - but now issued and rotated
+# the way a production cert-manager + Let's Encrypt setup would work, just
+# with a SelfSigned issuer instead of an ACME one.
+if ! kubectl get deployment cert-manager -n cert-manager >/dev/null 2>&1; then
+    info "Installing cert-manager (first run only)..."
+    # --server-side: same reason as ArgoCD below - cert-manager's CRDs are
+    # too large for client-side apply's last-applied-configuration annotation.
+    kubectl apply --server-side --force-conflicts \
+        -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml >/dev/null
+else
+    info "cert-manager already installed, reusing it."
+fi
+kubectl rollout status deployment/cert-manager -n cert-manager --timeout=180s
+kubectl rollout status deployment/cert-manager-webhook -n cert-manager --timeout=180s
+kubectl rollout status deployment/cert-manager-cainjector -n cert-manager --timeout=180s
+success "cert-manager is ready."
+
+# The webhook can take a few seconds to finish its own TLS bootstrap after its
+# Deployment reports ready, so this is retried instead of failing the whole
+# deploy over a transient timing issue.
+CLUSTERISSUER=$(mktemp)
+cat <<EOF > "$CLUSTERISSUER"
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-issuer
+spec:
+  selfSigned: {}
+EOF
+ISSUER_READY=false
+for i in 1 2 3 4 5; do
+    kubectl apply -f "$CLUSTERISSUER" >/dev/null 2>&1 && { ISSUER_READY=true; break; }
+    sleep 5
+done
+rm -f "$CLUSTERISSUER"
+[ "$ISSUER_READY" = true ] || fail "Could not create the ClusterIssuer after 5 attempts - check 'kubectl get pods -n cert-manager'."
+success "Self-signed ClusterIssuer ready."
 
 B64_DB_PASS=$(echo -n "$DB_PASSWORD" | base64 | tr -d '\n')
-
-# All the values that differ per run (real infra data, the password, the cert)
-# live only in this temp file - never written to a tracked path, deleted the
-# moment `helm upgrade` has read it.
-HELM_DYNAMIC_VALUES=$(mktemp)
-cat <<EOF > "$HELM_DYNAMIC_VALUES"
-image:
-  registry: "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-config:
-  dbHost: "${DB_HOST}"
-  s3BucketName: "${S3_BUCKET}"
-  snsTopicArn: "${SNS_TOPIC}"
-secrets:
-  dbPasswordB64: "${B64_DB_PASS}"
-tls:
-  crtB64: "${TLS_CRT_B64}"
-  keyB64: "${TLS_KEY_B64}"
-EOF
-success "Helm values ready (TLS cert, DB endpoint, S3/SNS details, password)."
 
 step "[7/8] Building, scanning, tagging, and pushing Docker images to ECR..."
 aws ecr get-login-password --region "$AWS_REGION" | \
@@ -277,27 +284,21 @@ done
 success "All 3 images built, scanned, and pushed as :v1.0.0."
 
 step "[8/8] Installing ArgoCD and deploying via GitOps..."
-# From here on, the app is deployed and kept in sync by ArgoCD watching this
-# GitHub repo - not by a direct `helm upgrade` call. This is the actual GitOps
-# behavior: if the chart in git changes and someone re-runs setup.sh (or just
-# waits for ArgoCD's own poll cycle), ArgoCD reconciles the cluster to match,
-# and with selfHeal enabled it will also revert any manual `kubectl edit`
-# drift back to what's declared in git.
+# From here on the app is kept in sync by ArgoCD watching this repo, not by a
+# direct `helm upgrade` call. Push a chart change to git (or wait for ArgoCD's
+# poll cycle) and it reconciles the cluster to match; selfHeal also reverts
+# any manual kubectl edit back to what's in git.
 REPO_URL="https://github.com/MaxTsyganov/Running_Devops_Project.git"
 REPO_BRANCH="main"
 
 if ! kubectl get deployment argocd-server -n argocd >/dev/null 2>&1; then
     info "Installing ArgoCD (first run only - this takes a couple of minutes)..."
-    # Idempotent even if the namespace already exists from a previous, partial
-    # attempt - only the actual argocd-server deployment above is treated as
-    # proof that ArgoCD is really installed.
+    # Checking the deployment, not just the namespace, keeps this idempotent
+    # even after a previous run failed partway through the install.
     kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-    # --server-side: ArgoCD's CRDs (applicationsets.argoproj.io especially) embed
-    # a large OpenAPI schema. Regular client-side apply stores the whole applied
-    # manifest in a kubectl.kubernetes.io/last-applied-configuration annotation
-    # for 3-way diffing, which blows past etcd's 256KB annotation size limit on
-    # a CRD this big. Server-side apply lets the API server track field
-    # ownership itself instead, so no such annotation is needed.
+    # --server-side: plain `kubectl apply` stores the whole manifest in an
+    # annotation for diffing, and ArgoCD's CRDs are big enough to blow past
+    # etcd's 256KB annotation limit. Server-side apply avoids that annotation.
     kubectl apply -n argocd --server-side --force-conflicts \
         -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml >/dev/null
 else
@@ -307,12 +308,10 @@ kubectl rollout status statefulset/argocd-application-controller -n argocd --tim
 kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
 success "ArgoCD is ready."
 
-# The dynamic values (real RDS endpoint, S3 bucket, password, TLS cert) can't
-# live in git - they're embedded directly into this Application resource
-# instead, which itself is generated fresh and applied via kubectl, never
-# committed. ArgoCD only ever reads the chart *templates* from git; the
-# per-run secrets are injected here, the same role setup.sh's temp Helm
-# values file played before.
+# Dynamic values (RDS host, S3/SNS names, password, TLS cert) can't live in
+# git, so they're embedded straight into this Application object instead,
+# generated fresh here and applied via kubectl - never committed. ArgoCD
+# only reads the chart templates from git.
 ARGOCD_APP=$(mktemp)
 cat <<EOF > "$ARGOCD_APP"
 apiVersion: argoproj.io/v1alpha1
@@ -338,9 +337,6 @@ spec:
           snsTopicArn: "${SNS_TOPIC}"
         secrets:
           dbPasswordB64: "${B64_DB_PASS}"
-        tls:
-          crtB64: "${TLS_CRT_B64}"
-          keyB64: "${TLS_KEY_B64}"
   destination:
     server: https://kubernetes.default.svc
     namespace: devops-app
@@ -352,7 +348,7 @@ spec:
     - CreateNamespace=true
 EOF
 kubectl apply -f "$ARGOCD_APP"
-rm -f "$ARGOCD_APP" "$HELM_DYNAMIC_VALUES"
+rm -f "$ARGOCD_APP"
 success "ArgoCD Application created - watching $REPO_URL ($REPO_BRANCH) at helm/devops-app."
 
 info "Waiting for ArgoCD to sync (first sync of a new Application is usually quick)..."

@@ -53,7 +53,6 @@ def touch_heartbeat():
 
 
 def get_db_connection():
-    """Establish a connection to the PostgreSQL database."""
     return psycopg2.connect(
         host=DB_HOST,
         port=int(DB_PORT),
@@ -65,7 +64,6 @@ def get_db_connection():
 
 
 def publish_sns(subject: str, message: str):
-    """Publish a message to the configured AWS SNS topic."""
     if not SNS_TOPIC_ARN:
         logger.warning("SNS topic missing. Notification skipped.")
         return
@@ -87,7 +85,6 @@ def publish_sns(subject: str, message: str):
 
 
 def fetch_pending_items(conn) -> list[dict]:
-    """Retrieve all database items with a 'pending' status."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("""
             SELECT id, name, description, created_at
@@ -99,7 +96,6 @@ def fetch_pending_items(conn) -> list[dict]:
 
 
 def mark_item_done(conn, item_id: int):
-    """Update an item's status to 'done' and set the processing timestamp."""
     with conn.cursor() as cur:
         cur.execute("""
             UPDATE items
@@ -118,7 +114,6 @@ def process_item(item: dict):
 
 
 def run_one_cycle():
-    """Execute a single polling cycle to process pending items."""
     try:
         conn = get_db_connection()
     except Exception:
@@ -160,7 +155,6 @@ def run_one_cycle():
 
 
 def main():
-    """Run the worker polling loop continuously."""
     logger.info("Worker service started.")
     logger.info(f"Target database: {DB_HOST}:{DB_PORT}/{DB_NAME}")
     logger.info(f"Polling interval: {POLL_INTERVAL_SECONDS} seconds.")
