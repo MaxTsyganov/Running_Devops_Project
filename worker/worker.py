@@ -32,6 +32,10 @@ DB_PASSWORD = os.environ.get("DB_PASSWORD", "changeme")
 # AWS Configuration
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
+
+# Normally unset in Kubernetes: the pod's IAM role (IRSA) supplies credentials
+# automatically through boto3's default credential chain. These only matter
+# when running outside the cluster with manually exported AWS keys.
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "") or None
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "") or None
 

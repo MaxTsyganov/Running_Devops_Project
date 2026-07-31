@@ -1,4 +1,4 @@
-# 1. Database Subnet Group (Required by RDS to know where it can live)
+# RDS requires a subnet group spanning at least 2 Availability Zones.
 resource "aws_db_subnet_group" "db_subnet_group" {
   name       = "devops-db-subnet-group"
   subnet_ids = [aws_subnet.private_subnet_1.id, aws_subnet.private_subnet_2.id]
@@ -8,7 +8,6 @@ resource "aws_db_subnet_group" "db_subnet_group" {
   }
 }
 
-# 2. RDS PostgreSQL Database
 resource "aws_db_instance" "postgres" {
   identifier        = "appdb-instance"
   engine            = "postgres"
@@ -18,27 +17,27 @@ resource "aws_db_instance" "postgres" {
 
   db_name  = "appdb"
   username = "postgres"
-  password = var.db_password # Pulled securely from variables
+  password = var.db_password
 
   db_subnet_group_name   = aws_db_subnet_group.db_subnet_group.name
   vpc_security_group_ids = [aws_security_group.rds_sg.id]
 
-  skip_final_snapshot = true  # Allows us to easily delete the DB later
-  publicly_accessible = false # Strict security: No internet access
+  skip_final_snapshot = true  # no production data to preserve on delete
+  publicly_accessible = false # only reachable from inside the VPC
 
   tags = {
     Name = "DevOps-RDS-Postgres"
   }
 }
 
-# Generate a random 6-character string to guarantee S3 uniqueness
+# S3 bucket names are globally unique across all AWS accounts, so a random
+# suffix is appended to the name you choose to avoid collisions.
 resource "random_string" "bucket_suffix" {
   length  = 6
   special = false
   upper   = false
 }
 
-# 3. S3 Bucket
 resource "aws_s3_bucket" "app_bucket" {
   bucket        = "${var.bucket_name}-${random_string.bucket_suffix.result}"
   force_destroy = true
@@ -48,20 +47,17 @@ resource "aws_s3_bucket" "app_bucket" {
   }
 }
 
-# 4. SNS Topic
 resource "aws_sns_topic" "alerts" {
   name = "devops-project-alerts"
 }
 
-# 5. SNS Email Subscription
 resource "aws_sns_topic_subscription" "email_sub" {
   topic_arn = aws_sns_topic.alerts.arn
   protocol  = "email"
-  endpoint  = var.my_email # Pulled from variables
+  endpoint  = var.my_email
 }
 
-# Automatically fetch available availability zones for the current region -
-# used by network.tf to spread subnets across 2 AZs (EKS requirement)
+# Used by network.tf to spread subnets across 2 Availability Zones (EKS requirement).
 data "aws_availability_zones" "available" {
   state = "available"
 }

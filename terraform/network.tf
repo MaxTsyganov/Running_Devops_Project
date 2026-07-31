@@ -1,4 +1,3 @@
-# 1. Create the main VPC
 resource "aws_vpc" "main_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
@@ -7,7 +6,9 @@ resource "aws_vpc" "main_vpc" {
   tags = { Name = "DevOps-Project-VPC" }
 }
 
-# 2. Create the Public Subnet (For Frontend/Nginx & NAT Gateway)
+# ── Public subnets ──
+# Two, in different AZs: EKS requires the cluster to span at least 2
+# Availability Zones, even for a single-nodegroup setup like this one.
 resource "aws_subnet" "public_subnet" {
   vpc_id                  = aws_vpc.main_vpc.id
   cidr_block              = "10.0.1.0/24"
@@ -17,25 +18,6 @@ resource "aws_subnet" "public_subnet" {
   tags = { Name = "DevOps-Public-Subnet" }
 }
 
-# 3. Create Private Subnet 1 (For Backend/Worker)
-resource "aws_subnet" "private_subnet_1" {
-  vpc_id            = aws_vpc.main_vpc.id
-  cidr_block        = "10.0.2.0/24"
-  availability_zone = data.aws_availability_zones.available.names[0]
-
-  tags = { Name = "DevOps-Private-Subnet-1" }
-}
-
-# 4. Create Private Subnet 2 (Required for RDS Subnet Group)
-resource "aws_subnet" "private_subnet_2" {
-  vpc_id            = aws_vpc.main_vpc.id
-  cidr_block        = "10.0.3.0/24"
-  availability_zone = data.aws_availability_zones.available.names[1]
-
-  tags = { Name = "DevOps-DevOps-Private-Subnet-2" } # Keep your tag structure consistent
-}
-
-# 2b. Second Public Subnet (EKS requires the cluster to span >= 2 Availability Zones)
 resource "aws_subnet" "public_subnet_2" {
   vpc_id                  = aws_vpc.main_vpc.id
   cidr_block              = "10.0.4.0/24"
@@ -45,23 +27,39 @@ resource "aws_subnet" "public_subnet_2" {
   tags = { Name = "DevOps-Public-Subnet-2" }
 }
 
-# 5. Create the Internet Gateway (The Front Door)
+# ── Private subnets ──
+# Also two, for the same reason - RDS additionally requires a subnet group
+# spanning 2+ AZs, which private_subnet_2 also satisfies.
+resource "aws_subnet" "private_subnet_1" {
+  vpc_id            = aws_vpc.main_vpc.id
+  cidr_block        = "10.0.2.0/24"
+  availability_zone = data.aws_availability_zones.available.names[0]
+
+  tags = { Name = "DevOps-Private-Subnet-1" }
+}
+
+resource "aws_subnet" "private_subnet_2" {
+  vpc_id            = aws_vpc.main_vpc.id
+  cidr_block        = "10.0.3.0/24"
+  availability_zone = data.aws_availability_zones.available.names[1]
+
+  tags = { Name = "DevOps-Private-Subnet-2" }
+}
+
 resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.main_vpc.id
   tags   = { Name = "DevOps-Internet-Gateway" }
 }
 
-# 6. Create the Public Route Table
 resource "aws_route_table" "public_rt" {
   vpc_id = aws_vpc.main_vpc.id
   route {
-    cidr_block = "0.0.0.0/0"     
-    gateway_id = aws_internet_gateway.igw.id 
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
   }
   tags = { Name = "DevOps-Public-Route-Table" }
 }
 
-# 7. Associate the Route Table with the Public Subnets
 resource "aws_route_table_association" "public_association" {
   subnet_id      = aws_subnet.public_subnet.id
   route_table_id = aws_route_table.public_rt.id
@@ -72,17 +70,14 @@ resource "aws_route_table_association" "public_association_2" {
   route_table_id = aws_route_table.public_rt.id
 }
 
-# =======================================================
-# NEW: NAT GATEWAY AND PRIVATE ROUTING
-# =======================================================
-
-# 8. Create an Elastic IP for the NAT Gateway
+# ── NAT Gateway and private routing ──
+# Lets EKS nodes and pods in the private subnets reach the internet (to pull
+# images, reach the EKS API, etc.) without being directly internet-facing.
 resource "aws_eip" "nat_eip" {
   domain = "vpc"
   tags   = { Name = "DevOps-NAT-EIP" }
 }
 
-# 9. Create the NAT Gateway in the Public Subnet
 resource "aws_nat_gateway" "nat_gw" {
   allocation_id = aws_eip.nat_eip.id
   subnet_id     = aws_subnet.public_subnet.id
@@ -90,7 +85,6 @@ resource "aws_nat_gateway" "nat_gw" {
   depends_on    = [aws_internet_gateway.igw]
 }
 
-# 10. Create the Private Route Table (Routes to the NAT)
 resource "aws_route_table" "private_rt" {
   vpc_id = aws_vpc.main_vpc.id
   route {
@@ -100,7 +94,6 @@ resource "aws_route_table" "private_rt" {
   tags = { Name = "DevOps-Private-Route-Table" }
 }
 
-# 11. Associate Private Subnets with the Private Route Table (so both can reach the NAT Gateway)
 resource "aws_route_table_association" "private_association_1" {
   subnet_id      = aws_subnet.private_subnet_1.id
   route_table_id = aws_route_table.private_rt.id

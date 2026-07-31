@@ -16,5 +16,5 @@ USER appuser
 
 EXPOSE 5000
 
-# Fix: Initialize DB tables before starting the server
+# Create tables on startup, then hand off to gunicorn for the actual server.
 CMD python -c "import app; app.init_db()" && gunicorn -b 0.0.0.0:5000 app:app

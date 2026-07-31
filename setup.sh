@@ -66,7 +66,6 @@ if grep -q '^db_password' terraform/terraform.tfvars 2>/dev/null; then
     info "Removed db_password from terraform.tfvars - it's supplied securely below instead, never stored on disk."
 fi
 
-
 step "[1/9] Enter the database password for this run (kept in memory only, never written to disk)"
 # No AWS Access Key / Secret prompt anymore - backend-sa and worker-sa get AWS
 # permissions via IRSA (step 5) instead of long-lived static credentials.

@@ -1,4 +1,5 @@
-# 1. Frontend Policy: Allow incoming internet traffic, allow outgoing to Backend
+# Allows all inbound traffic (it's the public entry point) but restricts
+# outbound to just the backend service and DNS.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -12,7 +13,7 @@ spec:
   - Ingress
   - Egress
   ingress:
-  - {} # Allow all incoming traffic to Frontend
+  - {} # allow all inbound
   egress:
   - to:
     - podSelector:
@@ -23,10 +24,11 @@ spec:
       port: 5000
   - ports:
     - protocol: UDP
-      port: 53 # Allow DNS resolution
+      port: 53 # DNS resolution
 
 ---
-# 2. Backend Policy: Only allow incoming traffic from Frontend
+# Only accepts traffic from frontend; no egress restriction since backend
+# needs to reach RDS, S3, and SNS out on the internet.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -48,7 +50,8 @@ spec:
       port: 5000
 
 ---
-# 3. Worker Policy: Deny ALL incoming traffic (worker only pulls data)
+# Worker only makes outbound calls (DB, SNS) and accepts no inbound
+# connections from anywhere, including other pods in this cluster.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -60,4 +63,4 @@ spec:
       app: worker
   policyTypes:
   - Ingress
-  ingress: [] # Empty brackets mean explicitly DENY all incoming
+  ingress: [] # empty list = deny all inbound

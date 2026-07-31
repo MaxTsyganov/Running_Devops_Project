@@ -37,6 +37,10 @@ DB_PASSWORD = os.environ.get("DB_PASSWORD", "changeme")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "")
 SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
+
+# Normally unset in Kubernetes: the pod's IAM role (IRSA) supplies credentials
+# automatically through boto3's default credential chain. These only matter
+# when running outside the cluster with manually exported AWS keys.
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "") or None
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "") or None
 
@@ -89,7 +93,8 @@ def init_db():
 
 
 def _aws_kwargs():
-    """Provide AWS credentials if they are set manually in the environment."""
+    """Return explicit AWS credentials if set, otherwise None so boto3 falls
+    back to its default credential chain (IRSA in the cluster)."""
     return dict(
         region_name=AWS_REGION,
         aws_access_key_id=AWS_ACCESS_KEY_ID,

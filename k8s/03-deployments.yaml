@@ -174,12 +174,16 @@ spec:
         volumeMounts:
         - name: tmp
           mountPath: /tmp
+        # No HTTP port to probe, so both probes check a heartbeat file that
+        # worker.py touches at startup and after every poll cycle instead.
         readinessProbe:
           exec:
             command: ["sh", "-c", "test -f /tmp/worker_heartbeat"]
           initialDelaySeconds: 10
           periodSeconds: 15
         livenessProbe:
+          # Fails if the heartbeat is older than 90s (3x the 30s poll interval),
+          # meaning the loop is stuck.
           exec:
             command:
             - sh

@@ -1,4 +1,4 @@
-# Internal Service for Backend (Private to Cluster)
+# ClusterIP: reachable only from inside the cluster, never from the internet.
 apiVersion: v1
 kind: Service
 metadata:
@@ -15,7 +15,7 @@ spec:
     targetPort: 5000
 
 ---
-# Public Service for Frontend (AWS Load Balancer)
+# LoadBalancer: the only component in this app exposed to the internet.
 apiVersion: v1
 kind: Service
 metadata:
