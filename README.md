@@ -11,6 +11,8 @@ on EC2 instances, configured with Ansible. That setup is gone now - `terraform/`
 the managed AWS backing services (RDS, S3, SNS, IAM), and all compute happens inside the cluster.
 See [History](#history) at the bottom for what changed and why.
 
+Built solo, not in a pair.
+
 ---
 
 ## Contents
@@ -223,13 +225,19 @@ creating anything.
 
 ```bash
 kubectl get nodes
+kubectl get namespaces
 kubectl get pods -n devops-app
 kubectl get deployments -n devops-app
 kubectl get services -n devops-app
+kubectl get ingress -n devops-app
 kubectl describe pod <pod-name> -n devops-app
 kubectl logs <pod-name> -n devops-app
 kubectl get application devops-app -n argocd
 ```
+
+`kubectl get ingress` will correctly show no resources - this project exposes the app through a
+`LoadBalancer` Service instead of a Kubernetes `Ingress` object (see §8), which is one of the
+options this assignment allows, not a missing piece.
 
 Functional checks:
 
