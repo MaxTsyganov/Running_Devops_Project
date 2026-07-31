@@ -40,19 +40,23 @@ This diagram is written in [Mermaid](https://mermaid.js.org/) and renders direct
 Markdown preview - no exported image to keep in sync with the code, it's just text that changes
 in the same commit as the architecture it describes.
 
+Colors group nodes by who owns them: AWS-orange for managed AWS services, Kubernetes-blue for
+workloads defined in the Helm chart, purple for GitOps tooling, grey for anything outside our AWS
+account.
+
 ```mermaid
 flowchart TB
-    Internet((Internet))
-    GH["GitHub repo<br/>helm/devops-app chart"]
+    Internet(("🌐 Internet"))
+    GH["📦 GitHub repo<br/>helm/devops-app chart"]
 
     subgraph AWS["AWS Account, us-east-1"]
         subgraph VPC["VPC 10.0.0.0/16, 2 Availability Zones"]
-            LB["frontend-service<br/>LoadBalancer, public subnets"]
-            NAT["NAT Gateway<br/>public subnets"]
+            LB["⚖️ frontend-service<br/>LoadBalancer, public subnets"]
+            NAT["🔀 NAT Gateway<br/>public subnets"]
 
             subgraph EKS["EKS: devops-cluster, 3x t3.small nodes, private subnets"]
                 subgraph NsArgo["namespace: argocd"]
-                    ArgoCD["ArgoCD"]
+                    ArgoCD["🔄 ArgoCD"]
                 end
                 subgraph NsApp["namespace: devops-app"]
                     FE["frontend Deployment<br/>nginx, 2 pods"]
@@ -62,11 +66,11 @@ flowchart TB
                 end
             end
 
-            RDS[("RDS PostgreSQL<br/>private subnets")]
+            RDS[("🐘 RDS PostgreSQL<br/>private subnets")]
         end
 
-        S3[("S3 bucket")]
-        SNS(["SNS topic"])
+        S3[("🪣 S3 bucket")]
+        SNS(["📧 SNS topic"])
     end
 
     Internet -- HTTP/HTTPS --> LB
@@ -79,6 +83,16 @@ flowchart TB
     WK --> SNS
     GH -. watched + synced .-> ArgoCD
     ArgoCD -. applies .-> NsApp
+
+    classDef aws fill:#FF9900,stroke:#232F3E,color:#232F3E,stroke-width:1.5px
+    classDef k8s fill:#326CE5,stroke:#16305e,color:#ffffff,stroke-width:1.5px
+    classDef tooling fill:#6f42c1,stroke:#4c2d8a,color:#ffffff,stroke-width:1.5px
+    classDef external fill:#e8e8e8,stroke:#666666,color:#232F3E,stroke-width:1.5px
+
+    class RDS,S3,SNS,NAT aws
+    class FE,BE,WK,CFG,LB k8s
+    class ArgoCD tooling
+    class Internet,GH external
 ```
 
 The worker has no inbound arrow on purpose - it only makes outbound calls (to RDS and SNS) and
