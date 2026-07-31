@@ -11,8 +11,9 @@ fail()    { echo -e "${RED}✘ $1${RESET}"; exit 1; }
 echo -e "${BOLD}=================================================================="
 echo "  DevOps App - Kubernetes Deployment"
 echo "  This will: apply Terraform (RDS/S3/SNS), create or reuse an EKS"
-echo "  cluster, build & push images, and deploy the app to Kubernetes."
-echo "  Total time: ~15-25 minutes on a first run (mostly EKS cluster boot)."
+echo "  cluster, build & push images, install ArgoCD, and deploy the app"
+echo "  via GitOps (ArgoCD watching this repo's Helm chart)."
+echo "  Total time: ~20-30 minutes on a first run (mostly EKS cluster boot)."
 echo -e "==================================================================${RESET}"
 
 step "[0/8] Running pre-flight checks..."
@@ -275,16 +276,98 @@ for service in frontend backend worker; do
 done
 success "All 3 images built, scanned, and pushed as :v1.0.0."
 
-step "[8/8] Deploying with Helm and waiting for rollout..."
-# --create-namespace: safe to pass even though the namespace already exists
-# (created in step 5, for IRSA) - it only creates if missing, it never tries
-# to "adopt" or manage the namespace as a chart resource.
-helm upgrade --install devops-app ./helm/devops-app \
-    --namespace devops-app --create-namespace \
-    -f ./helm/devops-app/values.yaml \
-    -f "$HELM_DYNAMIC_VALUES"
-rm -f "$HELM_DYNAMIC_VALUES"
-success "Helm release 'devops-app' installed/upgraded."
+step "[8/8] Installing ArgoCD and deploying via GitOps..."
+# From here on, the app is deployed and kept in sync by ArgoCD watching this
+# GitHub repo - not by a direct `helm upgrade` call. This is the actual GitOps
+# behavior: if the chart in git changes and someone re-runs setup.sh (or just
+# waits for ArgoCD's own poll cycle), ArgoCD reconciles the cluster to match,
+# and with selfHeal enabled it will also revert any manual `kubectl edit`
+# drift back to what's declared in git.
+REPO_URL="https://github.com/MaxTsyganov/Running_Devops_Project.git"
+REPO_BRANCH="main"
+
+if ! kubectl get deployment argocd-server -n argocd >/dev/null 2>&1; then
+    info "Installing ArgoCD (first run only - this takes a couple of minutes)..."
+    # Idempotent even if the namespace already exists from a previous, partial
+    # attempt - only the actual argocd-server deployment above is treated as
+    # proof that ArgoCD is really installed.
+    kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+    # --server-side: ArgoCD's CRDs (applicationsets.argoproj.io especially) embed
+    # a large OpenAPI schema. Regular client-side apply stores the whole applied
+    # manifest in a kubectl.kubernetes.io/last-applied-configuration annotation
+    # for 3-way diffing, which blows past etcd's 256KB annotation size limit on
+    # a CRD this big. Server-side apply lets the API server track field
+    # ownership itself instead, so no such annotation is needed.
+    kubectl apply -n argocd --server-side --force-conflicts \
+        -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml >/dev/null
+else
+    info "ArgoCD already installed, reusing it."
+fi
+kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout=180s
+kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
+success "ArgoCD is ready."
+
+# The dynamic values (real RDS endpoint, S3 bucket, password, TLS cert) can't
+# live in git - they're embedded directly into this Application resource
+# instead, which itself is generated fresh and applied via kubectl, never
+# committed. ArgoCD only ever reads the chart *templates* from git; the
+# per-run secrets are injected here, the same role setup.sh's temp Helm
+# values file played before.
+ARGOCD_APP=$(mktemp)
+cat <<EOF > "$ARGOCD_APP"
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: devops-app
+  namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: ${REPO_URL}
+    targetRevision: ${REPO_BRANCH}
+    path: helm/devops-app
+    helm:
+      valuesObject:
+        image:
+          registry: "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        config:
+          dbHost: "${DB_HOST}"
+          s3BucketName: "${S3_BUCKET}"
+          snsTopicArn: "${SNS_TOPIC}"
+        secrets:
+          dbPasswordB64: "${B64_DB_PASS}"
+        tls:
+          crtB64: "${TLS_CRT_B64}"
+          keyB64: "${TLS_KEY_B64}"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: devops-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+EOF
+kubectl apply -f "$ARGOCD_APP"
+rm -f "$ARGOCD_APP" "$HELM_DYNAMIC_VALUES"
+success "ArgoCD Application created - watching $REPO_URL ($REPO_BRANCH) at helm/devops-app."
+
+info "Waiting for ArgoCD to sync (first sync of a new Application is usually quick)..."
+WAITED=0
+while true; do
+    SYNC=$(kubectl get application devops-app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
+    HEALTH=$(kubectl get application devops-app -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
+    [ "$SYNC" = "Synced" ] && [ "$HEALTH" = "Healthy" ] && break
+    if [ "$WAITED" -ge 300 ]; then
+        fail "ArgoCD didn't reach Synced/Healthy within 5 minutes (last seen: sync=$SYNC health=$HEALTH). Check 'kubectl describe application devops-app -n argocd'."
+    fi
+    sleep 10
+    WAITED=$((WAITED + 10))
+done
+success "ArgoCD reports the app as Synced and Healthy."
 
 kubectl rollout status deployment/frontend-deployment -n devops-app --timeout=180s
 kubectl rollout status deployment/backend-deployment -n devops-app --timeout=180s
@@ -298,6 +381,8 @@ while [ -z "$EXTERNAL_IP" ]; do
   EXTERNAL_IP=$(kubectl get svc frontend-service -n devops-app --template="{{range .status.loadBalancer.ingress}}{{.hostname}}{{end}}")
 done
 
+ARGOCD_PASSWORD=$(kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
+
 echo -e "\n${GREEN}${BOLD}=================================================================="
 echo "  DEPLOYMENT COMPLETE"
 echo -e "==================================================================${RESET}"
@@ -306,5 +391,12 @@ echo "  App URL (HTTPS):  https://$EXTERNAL_IP  (self-signed cert - browser will
 echo "  Check pods:      kubectl get pods -n devops-app"
 echo "  Check services:  kubectl get svc -n devops-app"
 echo "  Tail logs:       kubectl logs -f deployment/backend-deployment -n devops-app"
+echo ""
+echo "  ArgoCD UI (not exposed to the internet - port-forward to reach it):"
+echo "    kubectl port-forward svc/argocd-server -n argocd 8080:443"
+echo "    then open https://localhost:8080  (self-signed cert, browser will warn)"
+echo "    username: admin"
+echo "    password: ${ARGOCD_PASSWORD}"
+echo ""
 echo "  Tear everything down when you're done: make k8s-teardown"
 echo -e "${GREEN}${BOLD}==================================================================${RESET}"

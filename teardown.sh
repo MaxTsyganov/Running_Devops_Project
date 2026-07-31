@@ -12,11 +12,21 @@ echo "  This deletes Kubernetes workloads, the EKS cluster, and every"
 echo "  Terraform-managed AWS resource (RDS, S3, SNS, IAM, networking)."
 echo -e "==================================================================${RESET}"
 
-step "[1/7] Deleting Kubernetes workloads..."
-helm uninstall devops-app -n devops-app 2>/dev/null || info "No Helm release found, nothing to uninstall here - continuing."
-# Helm never deletes the namespace, even one it created via --create-namespace -
-# it only ever manages the resources actually templated in the chart.
-kubectl delete namespace devops-app --ignore-not-found=true 2>/dev/null || info "No cluster reachable, nothing to delete here - continuing."
+step "[1/7] Deleting the app via ArgoCD, then removing ArgoCD itself..."
+# The Application was created with a resources-finalizer, so deleting it makes
+# ArgoCD prune every resource it manages (Deployments, Services, etc.) before
+# the Application object itself is removed - this is what actually tears down
+# the app, not a `helm uninstall` (ArgoCD owns the release now, not us directly).
+kubectl delete application devops-app -n argocd --timeout=120s 2>/dev/null \
+    || info "No ArgoCD Application found, nothing to cascade-delete here - continuing."
+# The Namespace was never a chart-managed resource (see helm/devops-app/templates/
+# serviceaccount.yaml for why), so it still needs deleting explicitly.
+kubectl delete namespace devops-app --ignore-not-found=true 2>/dev/null \
+    || info "No cluster reachable, nothing to delete here - continuing."
+# ArgoCD itself (the argocd namespace) is left alone here on purpose - it has
+# no AWS resources of its own (no LoadBalancer, no IAM role), so it disappears
+# for free when `eksctl delete cluster` runs in step [5/7]. Deleting it here
+# would just make the script wait on ~7 components terminating for no benefit.
 
 step "[2/7] Waiting for the AWS Load Balancer to fully release..."
 # kubectl delete only removes the Service object immediately - the actual AWS
