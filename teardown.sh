@@ -25,10 +25,13 @@ kubectl delete application devops-app -n argocd --timeout=120s 2>/dev/null \
 # gone, which the next step (waiting for the load balancer to release) relies on.
 kubectl delete namespace devops-app --ignore-not-found=true 2>/dev/null \
     || info "No cluster reachable, nothing to delete here - continuing."
-# ArgoCD itself (the argocd namespace) is left alone here on purpose - it has
-# no AWS resources of its own (no LoadBalancer, no IAM role), so it disappears
-# for free when `eksctl delete cluster` runs in step [5/7]. Deleting it here
-# would just make the script wait on ~7 components terminating for no benefit.
+# ArgoCD, cert-manager, and Fluent Bit (the argocd/cert-manager/amazon-cloudwatch
+# namespaces) are all left alone here on purpose - none of them own AWS
+# resources directly (their IAM roles are deleted separately in step [4/7],
+# the CloudWatch log group by `terraform destroy` in step [6/7]), so they all
+# disappear for free when `eksctl delete cluster` runs in step [5/7]. Deleting
+# them here would just make the script wait on components terminating for no
+# real benefit.
 
 step "[2/7] Waiting for the AWS Load Balancer to fully release..."
 # kubectl delete only removes the Service object immediately - the actual AWS
@@ -85,7 +88,7 @@ else
     info "No RDS security group or no live cluster found - nothing to revoke."
 fi
 
-step "[4/7] Deleting IRSA IAM service accounts (backend-sa, worker-sa)..."
+step "[4/7] Deleting IRSA IAM service accounts (backend-sa, worker-sa, fluent-bit-sa)..."
 # Same lesson as the security-group rule above: these were created by `eksctl
 # create iamserviceaccount` as their own CloudFormation stacks, separate from
 # the main cluster stack. Deleting them explicitly first (rather than assuming
@@ -99,6 +102,12 @@ if eksctl get cluster --name devops-cluster --region us-east-1 >/dev/null 2>&1; 
             --wait >/dev/null 2>&1 && success "Deleted IAM role for $sa." \
             || info "$sa's IAM role already gone, continuing."
     done
+    # Different namespace than the two above, so it can't share that loop.
+    eksctl delete iamserviceaccount --verbose 0 \
+        --cluster devops-cluster --region us-east-1 \
+        --namespace amazon-cloudwatch --name fluent-bit-sa \
+        --wait >/dev/null 2>&1 && success "Deleted IAM role for fluent-bit-sa." \
+        || info "fluent-bit-sa's IAM role already gone, continuing."
 else
     info "No live cluster found - nothing to delete here."
 fi

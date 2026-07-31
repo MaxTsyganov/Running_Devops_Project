@@ -11,12 +11,13 @@ fail()    { echo -e "${RED}✘ $1${RESET}"; exit 1; }
 echo -e "${BOLD}=================================================================="
 echo "  DevOps App - Kubernetes Deployment"
 echo "  This will: apply Terraform (RDS/S3/SNS), create or reuse an EKS"
-echo "  cluster, build & push images, install ArgoCD, and deploy the app"
-echo "  via GitOps (ArgoCD watching this repo's Helm chart)."
+echo "  cluster, build & push images, install ArgoCD, cert-manager, and"
+echo "  Fluent Bit, then deploy the app via GitOps (ArgoCD watching this"
+echo "  repo's Helm chart)."
 echo "  Total time: ~20-30 minutes on a first run (mostly EKS cluster boot)."
 echo -e "==================================================================${RESET}"
 
-step "[0/8] Running pre-flight checks..."
+step "[0/9] Running pre-flight checks..."
 
 info "Checking required CLI tools..."
 
@@ -112,7 +113,7 @@ if grep -q '^db_password' terraform/terraform.tfvars 2>/dev/null; then
     info "Removed db_password from terraform.tfvars - it's supplied securely below instead, never stored on disk."
 fi
 
-step "[1/8] Enter the database password for this run (kept in memory only, never written to disk)"
+step "[1/9] Enter the database password for this run (kept in memory only, never written to disk)"
 # No AWS Access Key / Secret prompt anymore - backend-sa and worker-sa get AWS
 # permissions via IRSA (step 5) instead of long-lived static credentials.
 set +e
@@ -127,7 +128,7 @@ set -e
 export TF_VAR_db_password="$DB_PASSWORD"
 success "Database password captured for this run."
 
-step "[2/8] Applying Terraform (RDS, S3, SNS, IAM, networking)..."
+step "[2/9] Applying Terraform (RDS, S3, SNS, IAM, networking)..."
 cd terraform
 terraform init -input=false
 # -auto-approve: this script already stops (set -e) on any Terraform error,
@@ -144,6 +145,7 @@ RDS_ENDPOINT_FULL=$(terraform output -raw rds_endpoint)
 DB_HOST=$(echo "$RDS_ENDPOINT_FULL" | cut -d':' -f1)
 S3_BUCKET=$(terraform output -raw s3_bucket_name)
 SNS_TOPIC=$(terraform output -raw sns_topic_arn)
+CLOUDWATCH_LOG_GROUP=$(terraform output -raw cloudwatch_log_group_name)
 cd ..
 success "AWS infrastructure ready (RDS: $DB_HOST)."
 
@@ -155,7 +157,7 @@ if [ -n "$PENDING_EMAIL" ]; then
     echo "      (the app will still work and report success either way)."
 fi
 
-step "[3/8] Ensuring EKS cluster '$CLUSTER_NAME' exists inside VPC $VPC_ID..."
+step "[3/9] Ensuring EKS cluster '$CLUSTER_NAME' exists inside VPC $VPC_ID..."
 if eksctl get cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
     info "Cluster already exists, reusing it."
 else
@@ -177,7 +179,7 @@ fi
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
 success "kubectl is now pointed at '$CLUSTER_NAME'."
 
-step "[4/8] Allowing the EKS cluster to reach RDS on port 5432..."
+step "[4/9] Allowing the EKS cluster to reach RDS on port 5432..."
 EKS_SG_ID=$(aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" \
     --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
 aws ec2 authorize-security-group-ingress \
@@ -187,7 +189,7 @@ aws ec2 authorize-security-group-ingress \
     --region "$AWS_REGION" 2>/dev/null && success "Firewall rule added." \
     || info "Rule already exists, skipping."
 
-step "[5/8] Setting up IRSA so backend/worker get AWS access without static keys..."
+step "[5/9] Setting up IRSA so backend/worker get AWS access without static keys..."
 # IRSA lets a pod assume an IAM role via a short-lived token instead of a
 # long-lived access key in a Secret. Needs an OIDC provider on the cluster
 # plus a role per ServiceAccount, trusted only by that SA, using the same
@@ -215,7 +217,7 @@ for sa in backend-sa worker-sa; do
     success "$sa can now reach S3/SNS via IRSA - no AWS keys involved."
 done
 
-step "[6/8] Installing cert-manager and creating a self-signed TLS issuer..."
+step "[6/9] Installing cert-manager and creating a self-signed TLS issuer..."
 # cert-manager issues and auto-renews the frontend's cert instead of a one-off
 # openssl script. Still self-signed - there's no domain pointed at the load
 # balancer to get a real CA-trusted cert from - but now issued and rotated
@@ -258,7 +260,38 @@ success "Self-signed ClusterIssuer ready."
 
 B64_DB_PASS=$(echo -n "$DB_PASSWORD" | base64 | tr -d '\n')
 
-step "[7/8] Building, scanning, tagging, and pushing Docker images to ECR..."
+step "[7/9] Installing Fluent Bit to ship container logs to CloudWatch..."
+# Fluent Bit is cluster infrastructure, not part of the app - same category as
+# ArgoCD and cert-manager, so it's installed directly here rather than folded
+# into helm/devops-app. The log group itself is Terraform-managed (logging.tf),
+# not auto-created by Fluent Bit, so IRSA only grants it permission to write
+# into that one already-existing group - never to create new ones.
+kubectl create namespace amazon-cloudwatch --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
+FLUENTBIT_POLICY_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:policy/DevOps-FluentBit-Logging-Policy"
+eksctl create iamserviceaccount \
+    --cluster "$CLUSTER_NAME" --region "$AWS_REGION" \
+    --namespace amazon-cloudwatch --name fluent-bit-sa \
+    --attach-policy-arn "$FLUENTBIT_POLICY_ARN" \
+    --approve --override-existing-serviceaccounts
+success "fluent-bit-sa can now write to CloudWatch Logs via IRSA - no AWS keys involved."
+
+helm repo add eks-charts https://aws.github.io/eks-charts >/dev/null 2>&1 || true
+helm repo update eks-charts >/dev/null
+# serviceAccount.create=false: fluent-bit-sa already exists (created above,
+# with the IRSA role annotation) - letting the chart create its own would
+# mean a plain ServiceAccount with no AWS permissions at all.
+helm upgrade --install aws-for-fluent-bit eks-charts/aws-for-fluent-bit --version 0.2.0 \
+    --namespace amazon-cloudwatch \
+    --set serviceAccount.create=false \
+    --set serviceAccount.name=fluent-bit-sa \
+    --set cloudWatchLogs.region="$AWS_REGION" \
+    --set cloudWatchLogs.logGroupName="$CLOUDWATCH_LOG_GROUP" \
+    --set cloudWatchLogs.autoCreateGroup=false \
+    --wait --timeout=180s
+success "Fluent Bit is shipping container logs to CloudWatch Logs ($CLOUDWATCH_LOG_GROUP)."
+
+step "[8/9] Building, scanning, tagging, and pushing Docker images to ECR..."
 aws ecr get-login-password --region "$AWS_REGION" | \
     docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com" >/dev/null
 
@@ -289,7 +322,7 @@ for service in frontend backend worker; do
 done
 success "All 3 images built, scanned, and pushed as :v1.0.0."
 
-step "[8/8] Installing ArgoCD and deploying via GitOps..."
+step "[9/9] Installing ArgoCD and deploying via GitOps..."
 # From here on the app is kept in sync by ArgoCD watching this repo, not by a
 # direct `helm upgrade` call. Push a chart change to git (or wait for ArgoCD's
 # poll cycle) and it reconciles the cluster to match; selfHeal also reverts
@@ -399,6 +432,9 @@ echo "    kubectl port-forward svc/argocd-server -n argocd 8080:443"
 echo "    then open https://localhost:8080  (self-signed cert, browser will warn)"
 echo "    username: admin"
 echo "    password: ${ARGOCD_PASSWORD}"
+echo ""
+echo "  Container logs (CloudWatch Logs console):"
+echo "    https://$AWS_REGION.console.aws.amazon.com/cloudwatch/home?region=$AWS_REGION#logsV2:log-groups/log-group/\$252Fdevops-app\$252Fcontainers"
 echo ""
 echo "  Tear everything down when you're done: make k8s-teardown"
 echo -e "${GREEN}${BOLD}==================================================================${RESET}"

@@ -15,6 +15,11 @@ output "sns_topic_arn" {
   value       = aws_sns_topic.alerts.arn
 }
 
+output "cloudwatch_log_group_name" {
+  description = "The CloudWatch Log Group Fluent Bit ships container logs to"
+  value       = aws_cloudwatch_log_group.app_logs.name
+}
+
 # VPC info needed to put the EKS cluster in the same network as RDS.
 
 output "vpc_id" {

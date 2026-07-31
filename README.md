@@ -26,10 +26,11 @@ Built solo, not in a pair.
 7. [Tearing it down: `make k8s-teardown`](#7-tearing-it-down-make-k8s-teardown)
 8. [Security](#8-security)
 9. [Reliability](#9-reliability)
-10. [Trade-offs](#10-trade-offs)
-11. [EKS and RDS network connectivity](#11-eks-and-rds-network-connectivity)
-12. [Repository layout](#12-repository-layout)
-13. [History](#history)
+10. [Logging](#10-logging)
+11. [Trade-offs](#11-trade-offs)
+12. [EKS and RDS network connectivity](#12-eks-and-rds-network-connectivity)
+13. [Repository layout](#13-repository-layout)
+14. [History](#history)
 
 ---
 
@@ -98,8 +99,10 @@ or has no Service object at all.
 |---|---|
 | frontend, backend, worker pods | RDS PostgreSQL instance |
 | ArgoCD (own `argocd` namespace) | S3 bucket |
-| ConfigMap / Secret / ServiceAccounts | SNS topic + email subscription |
-| NetworkPolicies, Services, HPA, PDB | IAM policy for S3/SNS access, VPC/subnets |
+| cert-manager (own `cert-manager` namespace) | SNS topic + email subscription |
+| Fluent Bit (own `amazon-cloudwatch` namespace) | CloudWatch Logs log group |
+| ConfigMap / Secret / ServiceAccounts | IAM policies for S3/SNS/CloudWatch access, VPC/subnets |
+| NetworkPolicies, Services, HPA, PDB | |
 
 We use **RDS** instead of running PostgreSQL as a pod because it already existed from the earlier
 assignments, and because a managed database with real backups doesn't tie the data's lifetime to
@@ -122,7 +125,7 @@ Each service has its own `Dockerfile`:
 * Pushed to ECR with a pinned tag (`v1.0.0`), never `latest`.
 
 `setup.sh` handles build, scan, tag, and push for all three images as part of the full deploy
-(step 7 of 8, see [§5](#5-deploying-make-k8s-deploy)). The EKS worker nodes pull from ECR using the
+(step 8 of 9, see [§5](#5-deploying-make-k8s-deploy)). The EKS worker nodes pull from ECR using the
 node's own IAM role, so no `imagePullSecrets` are needed.
 
 ---
@@ -210,10 +213,12 @@ make k8s-deploy      # runs setup.sh
    and `worker-sa`, each bound to the same least-privilege IAM policy Terraform already created.
 7. **cert-manager** - installs cert-manager if needed and creates a self-signed `ClusterIssuer`.
    The chart's `Certificate` resource uses this later to issue the frontend's TLS cert.
-8. **Images** - builds, scans (Trivy, if available), tags, and pushes all three images to ECR.
-9. **ArgoCD** - installs ArgoCD if needed, creates the `Application`, waits for it to report
-   `Synced`/`Healthy`, waits for all three Deployments to roll out, then prints the app URL and
-   ArgoCD's admin credentials.
+8. **Fluent Bit** - creates `fluent-bit-sa` (IRSA, scoped to just this project's CloudWatch log
+   group) and installs Fluent Bit, which starts shipping container logs to CloudWatch immediately.
+9. **Images** - builds, scans (Trivy, if available), tags, and pushes all three images to ECR.
+10. **ArgoCD** - installs ArgoCD if needed, creates the `Application`, waits for it to report
+    `Synced`/`Healthy`, waits for all three Deployments to roll out, then prints the app URL,
+    ArgoCD's admin credentials, and a link to the CloudWatch log group.
 
 The whole run takes roughly 20-30 minutes on a first run, most of it waiting for the EKS cluster
 to boot. Re-running it is safe: every step checks whether its target already exists before
@@ -294,7 +299,9 @@ it never needs any. `backend-sa` and `worker-sa` each get their own IAM role via
 for Service Accounts): short-lived, auto-rotated tokens instead of long-lived access keys sitting
 in a Kubernetes Secret. Both roles use the same least-privilege policy, scoped to exactly two
 actions - `s3:PutObject`/`s3:ListBucket` on the one bucket this project owns, and `sns:Publish` on
-the one topic - nothing broader. No workload has any Kubernetes RBAC permissions beyond the
+the one topic - nothing broader. `fluent-bit-sa` (cluster infrastructure, not part of the app - see
+[§10](#10-logging)) gets its own separate role too, scoped to writing into this project's one
+CloudWatch log group and nothing else. No workload has any Kubernetes RBAC permissions beyond the
 defaults; nothing here calls the Kubernetes API.
 
 **Secrets.** The only thing in the Kubernetes `Secret` is `DB_PASSWORD`. AWS credentials never
@@ -359,7 +366,31 @@ load balancer.
 
 ---
 
-## 10. Trade-offs
+## 10. Logging
+
+Container logs (all three services) are shipped to **CloudWatch Logs** by **Fluent Bit**, running
+as a DaemonSet via AWS's own `aws-for-fluent-bit` chart. Like ArgoCD and cert-manager, this is
+cluster infrastructure installed directly by `setup.sh`, not part of `helm/devops-app` - it isn't
+application logic, and none of the three services need to know it exists.
+
+* **The log group is Terraform-managed** (`terraform/logging.tf`), not auto-created by Fluent Bit.
+  That keeps its lifecycle tied to `terraform destroy` like every other piece of infrastructure in
+  this project, rather than becoming a resource that only Fluent Bit knows how to clean up. A
+  7-day retention period keeps CloudWatch storage cost bounded.
+* **IRSA, same as everywhere else.** `fluent-bit-sa` gets its own IAM role, scoped to exactly
+  `logs:CreateLogStream`, `logs:PutLogEvents`, and `logs:DescribeLogStreams` on this project's one
+  log group - no `logs:CreateLogGroup`, since Fluent Bit never needs to create one itself.
+* **Where to look:** the CloudWatch Logs console, log group `/devops-app/containers` (`setup.sh`
+  prints a direct link at the end of a deploy), or `kubectl logs` for anything still running.
+
+This is deliberately basic - one shared log group for all three services, not scoped per-namespace
+or per-service, since that's what the assignment actually asks for. Splitting it further (per-app
+log groups, structured JSON parsing, log-based metrics) would be the natural next step for
+something closer to production.
+
+---
+
+## 11. Trade-offs
 
 | Decision | Why | Cost |
 |---|---|---|
@@ -371,10 +402,11 @@ load balancer.
 | cert-manager with a self-signed issuer, not a real CA | No domain name to get a real cert for; cert-manager itself is still real | Browser warning on every visit |
 | Kubernetes Secrets, no external secret store | Simplicity for a course project | Base64 only, not encrypted at rest |
 | 3 `t3.small` nodes instead of 2 | `t3.small`'s pod ceiling is 11/node (network interface IP limits, not CPU/memory) - kube-system + ArgoCD + cert-manager + this app need more than 2 nodes' worth of slots | Small added hourly node cost |
+| One shared CloudWatch log group, not per-service | This is basic logging, not a full observability stack | Harder to filter one service's logs out from the others |
 
 ---
 
-## 11. EKS and RDS network connectivity
+## 12. EKS and RDS network connectivity
 
 By default, `eksctl create cluster` builds its own new VPC, separate from the one Terraform
 creates for RDS. Two things make them work together:
@@ -392,13 +424,13 @@ creates for RDS. Two things make them work together:
 
 ---
 
-## 12. Repository layout
+## 13. Repository layout
 
 ```
 setup.sh, teardown.sh      Full deploy / full teardown automation
 Makefile                   make k8s-deploy / make k8s-teardown / raw terraform targets
 .github/workflows/ci.yml   terraform validate + helm lint + Trivy on every push/PR
-terraform/                 RDS, S3, SNS, IAM policy, VPC/subnets - no compute
+terraform/                 RDS, S3, SNS, CloudWatch log group, IAM policies, VPC/subnets - no compute
 helm/devops-app/           The Kubernetes side: one Helm chart, deployed via ArgoCD
 helm/values-dynamic.example.yaml   Template for deploying the chart by hand, bypassing ArgoCD
 frontend/                  nginx, static UI, reverse proxy to backend

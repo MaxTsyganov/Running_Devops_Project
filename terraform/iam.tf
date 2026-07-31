@@ -38,3 +38,30 @@ resource "aws_iam_policy" "app_least_privilege_policy" {
     ]
   })
 }
+
+# Separate policy for Fluent Bit (setup.sh attaches this to fluent-bit-sa via
+# IRSA, same pattern as above). No logs:CreateLogGroup here on purpose - the
+# log group is created by Terraform (logging.tf), not by Fluent Bit itself,
+# so it never needs permission to create one.
+resource "aws_iam_policy" "fluent_bit_logging_policy" {
+  name        = "DevOps-FluentBit-Logging-Policy"
+  description = "Minimal permissions for Fluent Bit to write container logs to this project's CloudWatch log group."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "WriteToOurLogGroupOnly"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams"
+        ]
+        Resource = [
+          "${aws_cloudwatch_log_group.app_logs.arn}:*"
+        ]
+      }
+    ]
+  })
+}
