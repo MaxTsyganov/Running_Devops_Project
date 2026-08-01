@@ -1,0 +1,34 @@
+Merged, chronologically-sorted logs from both backend-deployment replicas
+(backend-service is ClusterIP, requests are load-balanced across both pods,
+so activity is split between them - this file interleaves both by timestamp).
+
+Pod: backend-deployment-5dff64d6fb-4855j
+Pod: backend-deployment-5dff64d6fb-hswqs
+====================================================================
+
+[4855j] 2026-08-01 11:36:30,899 [INFO] backend - Database tables initialized successfully.
+[4855j] [2026-08-01 11:36:32 +0000] [8] [INFO] Starting gunicorn 22.0.0
+[4855j] [2026-08-01 11:36:32 +0000] [8] [INFO] Listening at: http://0.0.0.0:5000 (8)
+[4855j] [2026-08-01 11:36:32 +0000] [8] [INFO] Using worker: sync
+[4855j] [2026-08-01 11:36:32 +0000] [9] [INFO] Booting worker with pid: 9
+
+[hswqs] 2026-08-01 11:36:31,615 [INFO] backend - Database tables initialized successfully.
+[hswqs] [2026-08-01 11:36:33 +0000] [8] [INFO] Starting gunicorn 22.0.0
+[hswqs] [2026-08-01 11:36:33 +0000] [8] [INFO] Listening at: http://0.0.0.0:5000 (8)
+[hswqs] [2026-08-01 11:36:33 +0000] [8] [INFO] Using worker: sync
+[hswqs] [2026-08-01 11:36:33 +0000] [9] [INFO] Booting worker with pid: 9
+
+[4855j] 2026-08-01 12:03:39,982 [INFO] backend - Item created with ID 1
+[4855j] 2026-08-01 12:03:41,803 [INFO] backend - Notification sent successfully. Message ID: e88fed6f-e80a-5392-8210-8f880ad731c0
+
+[hswqs] 2026-08-01 12:03:50,334 [INFO] backend - File uploaded to S3 successfully: uploads/20260801_120349_DevOps on AWS - משימה שלישית- k8s & Docker.pdf
+[hswqs] 2026-08-01 12:03:50,410 [INFO] backend - Notification sent successfully. Message ID: f82d22e4-0772-5be3-8880-4003e5944129
+
+[4855j] 2026-08-01 12:04:16,566 [INFO] backend - Item created with ID 2
+[4855j] 2026-08-01 12:04:16,617 [INFO] backend - Notification sent successfully. Message ID: 01295502-d80f-5b72-9362-37e53b0f2612
+
+[hswqs] 2026-08-01 12:05:47,878 [INFO] backend - Item created with ID 3
+[hswqs] 2026-08-01 12:05:47,948 [INFO] backend - Notification sent successfully. Message ID: 1705e779-879a-5883-9039-859e64c15832
+
+[hswqs] 2026-08-01 12:06:05,021 [INFO] backend - File uploaded to S3 successfully: uploads/20260801_120604_DevOps on AWS - משימה שלישית- k8s & Docker.pdf
+[hswqs] 2026-08-01 12:06:05,093 [INFO] backend - Notification sent successfully. Message ID: 9be94415-4d53-5d28-8479-26f2ae3ebee3

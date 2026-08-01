@@ -1,0 +1,253 @@
+--- Event 1 ---
+{
+  "time": "2026-08-01T11:36:31.615462095Z",
+  "stream": "stderr",
+  "_p": "F",
+  "log": "2026-08-01 11:36:31,615 [INFO] backend - Database tables initialized successfully.",
+  "kubernetes": {
+    "pod_name": "backend-deployment-5dff64d6fb-hswqs",
+    "namespace_name": "devops-app",
+    "pod_id": "9b7232f1-070b-4f6a-9ad6-194bea983969",
+    "labels": {
+      "app": "backend",
+      "pod-template-hash": "5dff64d6fb"
+    },
+    "host": "ip-10-0-3-176.ec2.internal",
+    "pod_ip": "10.0.3.166",
+    "container_name": "backend",
+    "docker_id": "228b7c580e1e422db351c72d9d11bf8f4ac80699bb7cd3df31c4d5dd483a2609",
+    "container_hash": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:73d3ee974ac5aaefec50fd703348ddcbba412781f5828ec68f1ba6902d73e865",
+    "container_image": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:v1.0.0"
+  }
+}
+
+--- Event 2 ---
+{
+  "time": "2026-08-01T11:36:33.507811431Z",
+  "stream": "stderr",
+  "_p": "F",
+  "log": "[2026-08-01 11:36:33 +0000] [8] [INFO] Starting gunicorn 22.0.0",
+  "kubernetes": {
+    "pod_name": "backend-deployment-5dff64d6fb-hswqs",
+    "namespace_name": "devops-app",
+    "pod_id": "9b7232f1-070b-4f6a-9ad6-194bea983969",
+    "labels": {
+      "app": "backend",
+      "pod-template-hash": "5dff64d6fb"
+    },
+    "host": "ip-10-0-3-176.ec2.internal",
+    "pod_ip": "10.0.3.166",
+    "container_name": "backend",
+    "docker_id": "228b7c580e1e422db351c72d9d11bf8f4ac80699bb7cd3df31c4d5dd483a2609",
+    "container_hash": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:73d3ee974ac5aaefec50fd703348ddcbba412781f5828ec68f1ba6902d73e865",
+    "container_image": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:v1.0.0"
+  }
+}
+
+--- Event 3 ---
+{
+  "time": "2026-08-01T11:36:33.508473314Z",
+  "stream": "stderr",
+  "_p": "F",
+  "log": "[2026-08-01 11:36:33 +0000] [8] [INFO] Listening at: http://0.0.0.0:5000 (8)",
+  "kubernetes": {
+    "pod_name": "backend-deployment-5dff64d6fb-hswqs",
+    "namespace_name": "devops-app",
+    "pod_id": "9b7232f1-070b-4f6a-9ad6-194bea983969",
+    "labels": {
+      "app": "backend",
+      "pod-template-hash": "5dff64d6fb"
+    },
+    "host": "ip-10-0-3-176.ec2.internal",
+    "pod_ip": "10.0.3.166",
+    "container_name": "backend",
+    "docker_id": "228b7c580e1e422db351c72d9d11bf8f4ac80699bb7cd3df31c4d5dd483a2609",
+    "container_hash": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:73d3ee974ac5aaefec50fd703348ddcbba412781f5828ec68f1ba6902d73e865",
+    "container_image": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:v1.0.0"
+  }
+}
+
+--- Event 4 ---
+{
+  "time": "2026-08-01T11:36:33.508733022Z",
+  "stream": "stderr",
+  "_p": "F",
+  "log": "[2026-08-01 11:36:33 +0000] [8] [INFO] Using worker: sync",
+  "kubernetes": {
+    "pod_name": "backend-deployment-5dff64d6fb-hswqs",
+    "namespace_name": "devops-app",
+    "pod_id": "9b7232f1-070b-4f6a-9ad6-194bea983969",
+    "labels": {
+      "app": "backend",
+      "pod-template-hash": "5dff64d6fb"
+    },
+    "host": "ip-10-0-3-176.ec2.internal",
+    "pod_ip": "10.0.3.166",
+    "container_name": "backend",
+    "docker_id": "228b7c580e1e422db351c72d9d11bf8f4ac80699bb7cd3df31c4d5dd483a2609",
+    "container_hash": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:73d3ee974ac5aaefec50fd703348ddcbba412781f5828ec68f1ba6902d73e865",
+    "container_image": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:v1.0.0"
+  }
+}
+
+--- Event 5 ---
+{
+  "time": "2026-08-01T11:36:33.511953619Z",
+  "stream": "stderr",
+  "_p": "F",
+  "log": "[2026-08-01 11:36:33 +0000] [9] [INFO] Booting worker with pid: 9",
+  "kubernetes": {
+    "pod_name": "backend-deployment-5dff64d6fb-hswqs",
+    "namespace_name": "devops-app",
+    "pod_id": "9b7232f1-070b-4f6a-9ad6-194bea983969",
+    "labels": {
+      "app": "backend",
+      "pod-template-hash": "5dff64d6fb"
+    },
+    "host": "ip-10-0-3-176.ec2.internal",
+    "pod_ip": "10.0.3.166",
+    "container_name": "backend",
+    "docker_id": "228b7c580e1e422db351c72d9d11bf8f4ac80699bb7cd3df31c4d5dd483a2609",
+    "container_hash": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:73d3ee974ac5aaefec50fd703348ddcbba412781f5828ec68f1ba6902d73e865",
+    "container_image": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:v1.0.0"
+  }
+}
+
+--- Event 6 ---
+{
+  "time": "2026-08-01T12:03:50.335031101Z",
+  "stream": "stderr",
+  "_p": "F",
+  "log": "2026-08-01 12:03:50,334 [INFO] backend - File uploaded to S3 successfully: uploads/20260801_120349_DevOps on AWS - משימה שלישית- k8s & Docker.pdf",
+  "kubernetes": {
+    "pod_name": "backend-deployment-5dff64d6fb-hswqs",
+    "namespace_name": "devops-app",
+    "pod_id": "9b7232f1-070b-4f6a-9ad6-194bea983969",
+    "labels": {
+      "app": "backend",
+      "pod-template-hash": "5dff64d6fb"
+    },
+    "host": "ip-10-0-3-176.ec2.internal",
+    "pod_ip": "10.0.3.166",
+    "container_name": "backend",
+    "docker_id": "228b7c580e1e422db351c72d9d11bf8f4ac80699bb7cd3df31c4d5dd483a2609",
+    "container_hash": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:73d3ee974ac5aaefec50fd703348ddcbba412781f5828ec68f1ba6902d73e865",
+    "container_image": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:v1.0.0"
+  }
+}
+
+--- Event 7 ---
+{
+  "time": "2026-08-01T12:03:50.410516498Z",
+  "stream": "stderr",
+  "_p": "F",
+  "log": "2026-08-01 12:03:50,410 [INFO] backend - Notification sent successfully. Message ID: f82d22e4-0772-5be3-8880-4003e5944129",
+  "kubernetes": {
+    "pod_name": "backend-deployment-5dff64d6fb-hswqs",
+    "namespace_name": "devops-app",
+    "pod_id": "9b7232f1-070b-4f6a-9ad6-194bea983969",
+    "labels": {
+      "app": "backend",
+      "pod-template-hash": "5dff64d6fb"
+    },
+    "host": "ip-10-0-3-176.ec2.internal",
+    "pod_ip": "10.0.3.166",
+    "container_name": "backend",
+    "docker_id": "228b7c580e1e422db351c72d9d11bf8f4ac80699bb7cd3df31c4d5dd483a2609",
+    "container_hash": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:73d3ee974ac5aaefec50fd703348ddcbba412781f5828ec68f1ba6902d73e865",
+    "container_image": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:v1.0.0"
+  }
+}
+
+--- Event 8 ---
+{
+  "time": "2026-08-01T12:05:47.878389411Z",
+  "stream": "stderr",
+  "_p": "F",
+  "log": "2026-08-01 12:05:47,878 [INFO] backend - Item created with ID 3",
+  "kubernetes": {
+    "pod_name": "backend-deployment-5dff64d6fb-hswqs",
+    "namespace_name": "devops-app",
+    "pod_id": "9b7232f1-070b-4f6a-9ad6-194bea983969",
+    "labels": {
+      "app": "backend",
+      "pod-template-hash": "5dff64d6fb"
+    },
+    "host": "ip-10-0-3-176.ec2.internal",
+    "pod_ip": "10.0.3.166",
+    "container_name": "backend",
+    "docker_id": "228b7c580e1e422db351c72d9d11bf8f4ac80699bb7cd3df31c4d5dd483a2609",
+    "container_hash": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:73d3ee974ac5aaefec50fd703348ddcbba412781f5828ec68f1ba6902d73e865",
+    "container_image": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:v1.0.0"
+  }
+}
+
+--- Event 9 ---
+{
+  "time": "2026-08-01T12:05:47.948515281Z",
+  "stream": "stderr",
+  "_p": "F",
+  "log": "2026-08-01 12:05:47,948 [INFO] backend - Notification sent successfully. Message ID: 1705e779-879a-5883-9039-859e64c15832",
+  "kubernetes": {
+    "pod_name": "backend-deployment-5dff64d6fb-hswqs",
+    "namespace_name": "devops-app",
+    "pod_id": "9b7232f1-070b-4f6a-9ad6-194bea983969",
+    "labels": {
+      "app": "backend",
+      "pod-template-hash": "5dff64d6fb"
+    },
+    "host": "ip-10-0-3-176.ec2.internal",
+    "pod_ip": "10.0.3.166",
+    "container_name": "backend",
+    "docker_id": "228b7c580e1e422db351c72d9d11bf8f4ac80699bb7cd3df31c4d5dd483a2609",
+    "container_hash": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:73d3ee974ac5aaefec50fd703348ddcbba412781f5828ec68f1ba6902d73e865",
+    "container_image": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:v1.0.0"
+  }
+}
+
+--- Event 10 ---
+{
+  "time": "2026-08-01T12:06:05.021672721Z",
+  "stream": "stderr",
+  "_p": "F",
+  "log": "2026-08-01 12:06:05,021 [INFO] backend - File uploaded to S3 successfully: uploads/20260801_120604_DevOps on AWS - משימה שלישית- k8s & Docker.pdf",
+  "kubernetes": {
+    "pod_name": "backend-deployment-5dff64d6fb-hswqs",
+    "namespace_name": "devops-app",
+    "pod_id": "9b7232f1-070b-4f6a-9ad6-194bea983969",
+    "labels": {
+      "app": "backend",
+      "pod-template-hash": "5dff64d6fb"
+    },
+    "host": "ip-10-0-3-176.ec2.internal",
+    "pod_ip": "10.0.3.166",
+    "container_name": "backend",
+    "docker_id": "228b7c580e1e422db351c72d9d11bf8f4ac80699bb7cd3df31c4d5dd483a2609",
+    "container_hash": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:73d3ee974ac5aaefec50fd703348ddcbba412781f5828ec68f1ba6902d73e865",
+    "container_image": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:v1.0.0"
+  }
+}
+
+--- Event 11 ---
+{
+  "time": "2026-08-01T12:06:05.094031694Z",
+  "stream": "stderr",
+  "_p": "F",
+  "log": "2026-08-01 12:06:05,093 [INFO] backend - Notification sent successfully. Message ID: 9be94415-4d53-5d28-8479-26f2ae3ebee3",
+  "kubernetes": {
+    "pod_name": "backend-deployment-5dff64d6fb-hswqs",
+    "namespace_name": "devops-app",
+    "pod_id": "9b7232f1-070b-4f6a-9ad6-194bea983969",
+    "labels": {
+      "app": "backend",
+      "pod-template-hash": "5dff64d6fb"
+    },
+    "host": "ip-10-0-3-176.ec2.internal",
+    "pod_ip": "10.0.3.166",
+    "container_name": "backend",
+    "docker_id": "228b7c580e1e422db351c72d9d11bf8f4ac80699bb7cd3df31c4d5dd483a2609",
+    "container_hash": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:73d3ee974ac5aaefec50fd703348ddcbba412781f5828ec68f1ba6902d73e865",
+    "container_image": "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:v1.0.0"
+  }
+}
+

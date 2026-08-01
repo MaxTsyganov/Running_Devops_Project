@@ -1,0 +1,79 @@
+Name:             backend-deployment-5dff64d6fb-4855j
+Namespace:        devops-app
+Priority:         0
+Service Account:  backend-sa
+Node:             ip-10-0-2-167.ec2.internal/10.0.2.167
+Start Time:       Sat, 01 Aug 2026 14:36:21 +0300
+Labels:           app=backend
+                  pod-template-hash=5dff64d6fb
+Annotations:      <none>
+Status:           Running
+IP:               10.0.2.137
+IPs:
+  IP:           10.0.2.137
+Controlled By:  ReplicaSet/backend-deployment-5dff64d6fb
+Containers:
+  backend:
+    Container ID:   containerd://79a74256d639fac9a17e974b9dedcc3c2f6f72db992098db0bd3b7f21cd4be32
+    Image:          957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:v1.0.0
+    Image ID:       957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:73d3ee974ac5aaefec50fd703348ddcbba412781f5828ec68f1ba6902d73e865
+    Port:           5000/TCP
+    Host Port:      0/TCP
+    State:          Running
+      Started:      Sat, 01 Aug 2026 14:36:27 +0300
+    Ready:          True
+    Restart Count:  0
+    Limits:
+      cpu:     300m
+      memory:  512Mi
+    Requests:
+      cpu:      150m
+      memory:   256Mi
+    Liveness:   http-get http://:5000/api/health delay=20s timeout=1s period=30s #success=1 #failure=3
+    Readiness:  http-get http://:5000/api/health delay=10s timeout=1s period=10s #success=1 #failure=3
+    Environment Variables from:
+      app-config   ConfigMap  Optional: false
+      app-secrets  Secret     Optional: false
+    Environment:
+      AWS_STS_REGIONAL_ENDPOINTS:   regional
+      AWS_DEFAULT_REGION:           us-east-1
+      AWS_REGION:                   us-east-1
+      AWS_ROLE_ARN:                 arn:aws:iam::957905603240:role/eksctl-devops-cluster-addon-iamserviceaccount-Role1-zOTfWZCeIMtj
+      AWS_WEB_IDENTITY_TOKEN_FILE:  /var/run/secrets/eks.amazonaws.com/serviceaccount/token
+    Mounts:
+      /tmp from tmp (rw)
+      /var/run/secrets/eks.amazonaws.com/serviceaccount from aws-iam-token (ro)
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-d2kmg (ro)
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 
+  Initialized                 True 
+  Ready                       True 
+  ContainersReady             True 
+  PodScheduled                True 
+Volumes:
+  aws-iam-token:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  86400
+  tmp:
+    Type:       EmptyDir (a temporary directory that shares a pod's lifetime)
+    Medium:     
+    SizeLimit:  <unset>
+  kube-api-access-d2kmg:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    Optional:                false
+    DownwardAPI:             true
+QoS Class:                   Burstable
+Node-Selectors:              <none>
+Tolerations:                 node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                             node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type    Reason     Age   From               Message
+  ----    ------     ----  ----               -------
+  Normal  Scheduled  35m   default-scheduler  Successfully assigned devops-app/backend-deployment-5dff64d6fb-4855j to ip-10-0-2-167.ec2.internal
+  Normal  Pulling    35m   kubelet            spec.containers{backend}: Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:v1.0.0"
+  Normal  Pulled     35m   kubelet            spec.containers{backend}: Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:v1.0.0" in 4.726s (4.726s including waiting). Image size: 64550507 bytes.
+  Normal  Created    35m   kubelet            spec.containers{backend}: Created container: backend
+  Normal  Started    35m   kubelet            spec.containers{backend}: Started container backend
