@@ -275,8 +275,8 @@ Functional checks:
 7. **GitOps** - `kubectl get application devops-app -n argocd` should show `Synced`/`Healthy`. A
    manual `kubectl edit` to a Deployment gets reverted automatically within a few minutes (selfHeal).
 
-*(Screenshots of the commands above are in `Screenshots/` - some predate the move to Kubernetes and
-will be refreshed separately.)*
+*(Screenshots and text captures of the commands above are in `Screenshots+txt_Files/01-Required-Commands/`
+and `02-Functional-Checks/`.)*
 
 ---
 
@@ -465,7 +465,8 @@ helm/values-dynamic.example.yaml   Template for deploying the chart by hand, byp
 frontend/                  nginx, static UI, reverse proxy to backend
 backend/                   Flask + Gunicorn API (RDS, S3, SNS)
 worker/                    Background poller (RDS, SNS)
-Screenshots/               Captures of the verification commands in §6
+Screenshots+txt_Files/     Evidence captures: required commands, functional checks,
+                           resilience test, and bonus objectives (see §6)
 ```
 
 **CI** (`.github/workflows/ci.yml`) runs `terraform fmt`/`validate`, `helm lint` plus a full
