@@ -24,6 +24,7 @@ resource "aws_db_instance" "postgres" {
 
   skip_final_snapshot = true  # no production data to preserve on delete
   publicly_accessible = false # only reachable from inside the VPC
+  storage_encrypted   = true  # AWS-managed key, no extra cost
 
   tags = {
     Name = "DevOps-RDS-Postgres"
@@ -47,8 +48,38 @@ resource "aws_s3_bucket" "app_bucket" {
   }
 }
 
+# Nothing in this project ever needs public bucket access - the backend
+# talks to S3 through IRSA, not a public URL - so blocking it entirely has
+# no functional downside.
+resource "aws_s3_bucket_public_access_block" "app_bucket" {
+  bucket = aws_s3_bucket.app_bucket.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# SSE-S3 (AES256, AWS-managed key) - free. A customer-managed KMS key would
+# satisfy stricter scanners too, but costs ~$1/month for a key this project
+# doesn't otherwise need, for marginal benefit on data that isn't sensitive.
+# trivy:ignore:AWS-0132
+resource "aws_s3_bucket_server_side_encryption_configuration" "app_bucket" {
+  bucket = aws_s3_bucket.app_bucket.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# Same trade-off as the S3 bucket above: AWS-managed key is free, a
+# customer-managed one costs ~$1/month for marginal benefit here.
+# trivy:ignore:AWS-0136
 resource "aws_sns_topic" "alerts" {
-  name = "devops-project-alerts"
+  name              = "devops-project-alerts"
+  kms_master_key_id = "alias/aws/sns" # AWS-managed key, no extra cost
 }
 
 resource "aws_sns_topic_subscription" "email_sub" {

@@ -8,6 +8,12 @@ resource "aws_vpc" "main_vpc" {
 
 # Two public subnets, in different AZs: EKS requires the cluster to span at
 # least 2 Availability Zones, even for a single-nodegroup setup like this one.
+# map_public_ip_on_launch is what makes a subnet "public" in the first place -
+# the NAT Gateway's own EIP needs to attach here. It doesn't mean anything
+# actually gets a public IP: nothing is launched into these subnets except
+# the NAT Gateway itself. EKS nodes specifically are kept out via
+# --node-private-networking in setup.sh, not by anything at the subnet level.
+# trivy:ignore:AWS-0164
 resource "aws_subnet" "public_subnet" {
   vpc_id                  = aws_vpc.main_vpc.id
   cidr_block              = "10.0.1.0/24"
@@ -17,6 +23,7 @@ resource "aws_subnet" "public_subnet" {
   tags = { Name = "DevOps-Public-Subnet" }
 }
 
+# trivy:ignore:AWS-0164
 resource "aws_subnet" "public_subnet_2" {
   vpc_id                  = aws_vpc.main_vpc.id
   cidr_block              = "10.0.4.0/24"

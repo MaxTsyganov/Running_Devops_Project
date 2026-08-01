@@ -167,11 +167,17 @@ else
     # how much compute is actually free. With kube-system, CoreDNS, ArgoCD,
     # cert-manager, and this app all scheduled, 2 nodes (22 slots) isn't
     # enough headroom; 3 nodes (33 slots) is, for a small added cost.
+    # --node-private-networking: passing both public and private subnets only
+    # tells eksctl which subnets exist - without this flag it can still place
+    # the managed node group in the public ones, which (since map_public_ip_on_launch
+    # is true there) hands every node a real public IP. This forces the node
+    # group into the private subnets only, with no public IP at all.
     eksctl create cluster \
         --name "$CLUSTER_NAME" \
         --region "$AWS_REGION" \
         --vpc-public-subnets="$PUBLIC_SUBNET_IDS" \
         --vpc-private-subnets="$PRIVATE_SUBNET_IDS" \
+        --node-private-networking \
         --nodes 3 \
         --node-type t3.small \
         --managed

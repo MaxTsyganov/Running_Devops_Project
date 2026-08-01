@@ -131,6 +131,12 @@ fi
 
 step "[6/7] Destroying Terraform infrastructure (RDS, S3, SNS, IAM, VPC)..."
 cd terraform
+# Never assume the local .terraform/ cache is already correctly pointed at
+# the real S3 backend - init is cheap and idempotent when it's already
+# right, and this is what actually fixes it on the rare occasion it's
+# fallen out of sync (e.g. someone ran a local `terraform init -backend=false`
+# in this same directory for a one-off test and never reconfigured back).
+terraform init -input=false
 # None of these values affect what gets destroyed (destroy operates on
 # existing state, not on what the variables would have created) - they're
 # only set so the command never blocks on a variable prompt, whether or not

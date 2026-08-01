@@ -56,3 +56,25 @@ jobs:
           image-ref: devops-${{ matrix.service }}:ci
           severity: HIGH,CRITICAL
           exit-code: "0"
+
+  config:
+    name: Scan IaC for misconfigurations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Unlike the image scan above, this one is blocking (no exit-code
+      # override): every finding Trivy currently knows about in this repo
+      # has already been fixed or explicitly suppressed with a documented
+      # reason (see terraform/data.tf, terraform/network.tf). A clean run
+      # should always pass - if this fails, something genuinely new needs
+      # looking at, not silent tolerance.
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: terraform
+          severity: HIGH,CRITICAL
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: helm/devops-app
+          severity: HIGH,CRITICAL

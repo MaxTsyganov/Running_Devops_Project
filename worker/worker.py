@@ -150,6 +150,12 @@ def run_one_cycle():
                 ),
             )
 
+    except Exception:
+        # Covers fetch_pending_items and publish_sns - e.g. the items table
+        # not existing yet if this pod's first cycle races backend's own
+        # startup (backend creates it, worker doesn't). Log and retry next
+        # cycle instead of crashing the process over what's usually transient.
+        logger.exception("Poll cycle failed")
     finally:
         conn.close()
 

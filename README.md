@@ -350,6 +350,14 @@ heartbeat file.
 **Images.** Built from this repo's own Dockerfiles (nothing pulled pre-built from Docker Hub),
 pinned base images and tags, scanned with Trivy before push.
 
+**AWS resource security.** RDS storage and the SNS topic are both encrypted at rest with
+AWS-managed KMS keys; the S3 bucket has SSE-S3 encryption and a full public access block (nothing
+in this project ever needs a public S3 URL - the backend talks to it through IRSA). All of this,
+plus the two public subnets' `map_public_ip_on_launch`, is checked automatically by `trivy config`
+in CI - see [§13](#13-repository-layout). Customer-managed KMS keys would satisfy stricter
+scanners too, but cost ~$1/month each for marginal benefit on data that isn't sensitive, so that
+specific finding is suppressed with a documented reason rather than fixed (`terraform/data.tf`).
+
 **Ingress/TLS.** Exposure is a plain `Service` of `type: LoadBalancer`, not a Kubernetes `Ingress`
 resource - there's only one public route, so an ingress controller would be overhead without
 benefit here. HTTPS is served with a certificate issued by **cert-manager**, from a `Certificate`
@@ -417,6 +425,7 @@ something closer to production.
 | Kubernetes Secrets, no external secret store | Simplicity for a course project | Base64 only, not encrypted at rest |
 | 3 `t3.small` nodes instead of 2 | `t3.small`'s pod ceiling is 11/node (network interface IP limits, not CPU/memory) - kube-system + ArgoCD + cert-manager + this app need more than 2 nodes' worth of slots | Small added hourly node cost |
 | One shared CloudWatch log group, not per-service | This is basic logging, not a full observability stack | Harder to filter one service's logs out from the others |
+| AWS-managed KMS keys, not customer-managed | S3/SNS encrypted at rest either way | Doesn't satisfy scanners requiring CMKs; ~$1/month each to fix |
 
 ---
 
@@ -435,6 +444,12 @@ creates for RDS. Two things make them work together:
    alone, since the cluster (and its security group) doesn't exist yet at `terraform apply` time.
    `terraform/security.tf` marks that security group's `ingress`/`egress` as `ignore_changes`, so
    a later `terraform apply` doesn't wipe out the rule `setup.sh` added out of band.
+3. **`--node-private-networking`.** Passing both subnet types to `eksctl` only tells it which
+   subnets exist in the VPC - without this flag, the managed node group can still land in the
+   public ones, and since `map_public_ip_on_launch` is `true` there, every node would get a real
+   public IP. This flag forces the node group into the private subnets specifically, with no
+   public IP at all; the NAT Gateway (already routed from the private route table) still gives
+   them outbound internet access for pulling images and reaching the EKS API.
 
 ---
 
@@ -454,10 +469,16 @@ Screenshots/               Captures of the verification commands in §6
 ```
 
 **CI** (`.github/workflows/ci.yml`) runs `terraform fmt`/`validate`, `helm lint` plus a full
-`helm template` render, and builds + Trivy-scans all three images, on every push and pull request
-to `main`. It's validation only, deliberately - this repo is public, and wiring real AWS
-credentials into Actions secrets so every push could deploy to live infrastructure is a different
-risk profile than read-only checks. Actual deployment stays a manual `make k8s-deploy`.
+`helm template` render, builds + Trivy-scans all three images, and runs `trivy config` against
+both `terraform/` and `helm/devops-app/` for misconfigurations - on every push and pull request to
+`main`. It's validation only, deliberately - this repo is public, and wiring real AWS credentials
+into Actions secrets so every push could deploy to live infrastructure is a different risk profile
+than read-only checks. Actual deployment stays a manual `make k8s-deploy`.
+
+The `trivy config` job is the one job here that's actually blocking (the image scan isn't, since
+some base-image CVEs aren't fixable from this project alone - see §2). Every misconfiguration
+Trivy currently knows about in this repo has already been fixed or explicitly suppressed with a
+documented reason in the code itself; a clean run should always pass.
 
 ---
 
