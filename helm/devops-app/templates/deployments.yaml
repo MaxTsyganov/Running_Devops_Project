@@ -42,6 +42,8 @@ spec:
           mountPath: /var/cache/nginx
         - name: nginx-pid
           mountPath: /var/run
+        - name: nginx-tmp
+          mountPath: /tmp
         - name: tls-cert
           mountPath: /etc/nginx/tls
           readOnly: true
@@ -61,6 +63,8 @@ spec:
       - name: nginx-cache
         emptyDir: {}
       - name: nginx-pid
+        emptyDir: {}
+      - name: nginx-tmp
         emptyDir: {}
       - name: tls-cert
         secret:
