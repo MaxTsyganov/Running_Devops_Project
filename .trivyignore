@@ -1,0 +1,11 @@
+# Accepted-risk / unfixable CVE allowlist for image vulnerability scanning.
+# Every entry needs a comment directly above it with a reason and a
+# review-by date, so an accepted risk from months ago doesn't sit here
+# silently forever. Format:
+#
+# # <CVE-ID> - <why it's accepted> - review by YYYY-MM-DD
+# CVE-XXXX-XXXXX
+#
+# Currently empty - nothing has needed an exception yet. CI (see
+# .github/workflows/ci.yml) fails on fixable CRITICAL findings; unfixed CVEs
+# are already excluded via --ignore-unfixed rather than needing an entry here.

@@ -129,31 +129,39 @@ you actually care about.
 
 Each service has its own `Dockerfile`:
 
-* Base images are pinned (`python:3.11-slim`, `nginx:1.30.4-alpine`), never `latest`.
-* Every container runs as a **non-root user**: `appuser` (backend/worker), nginx's built-in
-  non-root user (frontend) - reinforced again at the Pod level with `runAsUser`.
+* Base images are pinned (`python:3.11-slim`, `nginxinc/nginx-unprivileged:1.30.4-alpine`), never
+  `latest`.
+* Every container runs as a **non-root user**: `appuser` (backend/worker), `USER 101` (frontend).
+  The frontend uses `nginxinc/nginx-unprivileged` specifically, not the standard `nginx` image
+  with a Kubernetes-level `runAsUser` override - the unprivileged image is non-root and listens on
+  unprivileged ports (`8080`/`8443`) unconditionally, so it behaves identically whether it's run
+  under Kubernetes or with a bare `docker run`, instead of only being safe because of an EKS host
+  kernel setting.
 * `.dockerignore` keeps `.git`, `.env`, `venv/`, `__pycache__` out of the build context.
-* Images are scanned with **Trivy** (`--severity HIGH,CRITICAL`) during the build step, if it's
-  installed. Scanning doesn't block the deploy (`--exit-code 0`) since some OS-level CVEs in a
-  base image aren't something this project alone can fix.
+* Images are scanned with **Trivy** locally during `setup.sh` (`--severity HIGH,CRITICAL`,
+  non-blocking, `--exit-code 0`) if it's installed, purely for visibility during development. CI
+  runs the same report *and* a second, blocking scan that fails the build on fixable `CRITICAL`
+  findings (`--ignore-unfixed`, with `.trivyignore` for any documented exceptions) - see
+  [§13](#13-repository-layout).
 * Pushed to ECR with a pinned tag (`v1.0.0`), never `latest`.
 
 `setup.sh` handles build, scan, tag, and push for all three images as part of the full deploy
-(step 8 of 9, see [§5](#5-deploying-make-k8s-deploy)). The EKS worker nodes pull from ECR using the
-node's own IAM role, so no `imagePullSecrets` are needed.
+(step 10 of 11, see [§5](#5-deploying-make-k8s-deploy)). The EKS worker nodes pull from ECR using
+the node's own IAM role, so no `imagePullSecrets` are needed.
 
 ---
 
 ## 3. The Helm chart
 
 The Kubernetes side lives entirely under `helm/devops-app/` - one chart, one release, no raw
-manifests applied by hand. Templates cover: `Namespace`, `ConfigMap`, `Secret`, `Certificate`,
-`ServiceAccount`, `Deployment` x3, `Service` x2, `NetworkPolicy` x3, `PodDisruptionBudget` x2,
-`HorizontalPodAutoscaler` x2.
+manifests applied by hand. Templates cover: `Namespace`, `ConfigMap`, `SecretStore`,
+`ExternalSecret`, `Certificate`, `ServiceAccount`, `Deployment` x3, `Service` x2, `NetworkPolicy`
+x3, `PodDisruptionBudget` x2, `HorizontalPodAutoscaler` x2.
 
 `values.yaml` only holds non-sensitive defaults (replica counts, resource requests/limits, HPA
-thresholds). Anything that's real infrastructure data or a secret - the RDS endpoint, the S3
-bucket name, the DB password - is left blank there and supplied at deploy time (see
+thresholds). Anything that's real infrastructure data - the RDS endpoint, the S3 bucket name, the
+Secrets Manager secret *name* holding the DB password (never the password itself, see
+[§8](#8-security)) - is left blank there and supplied at deploy time (see
 [§4](#4-gitops-with-argocd)). `helm/values-dynamic.example.yaml` shows the shape of those values,
 for anyone who wants to `helm upgrade` by hand instead of going through ArgoCD. TLS isn't part of
 this at all - cert-manager issues the frontend's certificate directly in-cluster (see §8).
@@ -164,12 +172,13 @@ A couple of deliberate choices worth calling out:
   They're created separately by `eksctl create iamserviceaccount` before the chart is installed,
   because IRSA needs to annotate them with an IAM role ARN that only exists once the cluster's
   OIDC provider is set up - something a chart template can't know in advance.
-* **The password is pre-base64-encoded before it ever reaches the template**, rather than using
-  Helm's `b64enc` filter on a raw value. A password containing a quote character could otherwise
-  break the generated YAML.
+* **There's no `Secret` template at all.** `app-secrets` is created entirely by External Secrets
+  Operator (`SecretStore` + `ExternalSecret`), which reads the real password directly from AWS
+  Secrets Manager at sync time - the value never passes through this chart, Helm, or the ArgoCD
+  `Application` object. See [§8](#8-security) for why this replaced an earlier, simpler approach.
 * **The `Namespace` is templated in the chart, but also applied once by itself before the chart's
   first real install** (`helm template --show-only templates/namespace.yaml | kubectl apply -f -`,
-  in `setup.sh` step 5). IRSA needs the namespace to exist before `eksctl create iamserviceaccount`
+  in `setup.sh` step 6). IRSA needs the namespace to exist before `eksctl create iamserviceaccount`
   can put `backend-sa`/`worker-sa` inside it - which happens before ArgoCD ever runs.
 
 ---
@@ -188,11 +197,14 @@ syncPolicy:
     selfHeal: true    # revert manual kubectl edits back to what git says
 ```
 
-Real per-run values (RDS endpoint, S3 bucket name, DB password) can't live in git, so they're
-embedded directly into the generated `Application` object's `spec.source.helm.valuesObject`
-instead - applied with `kubectl`, never committed. ArgoCD only ever reads the chart *templates*
-from git. The TLS certificate never goes through this path at all - cert-manager issues it
-directly inside the cluster once the chart's `Certificate` resource is applied.
+Real per-run values (RDS endpoint, S3 bucket name, the Secrets Manager secret *name* holding the
+DB password) can't live in git, so they're embedded directly into the generated `Application`
+object's `spec.source.helm.valuesObject` instead - applied with `kubectl`, never committed. Note
+that this is a resource *name*, not the password itself: the actual value is read straight from
+AWS Secrets Manager by External Secrets Operator, so it's never present anywhere in this
+`Application` object, readable or not (see [§8](#8-security)). ArgoCD only ever reads the chart
+*templates* from git. The TLS certificate never goes through this path at all - cert-manager
+issues it directly inside the cluster once the chart's `Certificate` resource is applied.
 
 The `Application` also carries a `resources-finalizer.argocd.argoproj.io` finalizer, so deleting
 it cascades: ArgoCD prunes every resource it manages before the `Application` object itself goes
@@ -217,20 +229,29 @@ make k8s-deploy      # runs setup.sh
    the Docker daemon is running and AWS credentials are valid. Creates `terraform/terraform.tfvars`
    on first run, asking only for a non-sensitive S3 bucket prefix and an email address.
 2. **Database password** - prompted once, with confirmation, kept in memory only. Never written
-   to `terraform.tfvars` or any other file on disk.
-3. **Terraform apply** - provisions RDS, S3, SNS, IAM, and the VPC/subnets.
+   to `terraform.tfvars` or any other file on disk. The same value flows to both RDS and its
+   Secrets Manager copy (next step) from this one prompt.
+3. **Terraform apply** - provisions RDS, S3, SNS, IAM, the DB password's Secrets Manager secret,
+   and the VPC/subnets.
 4. **EKS cluster** - created inside that same VPC (if it doesn't already exist), so RDS is
    reachable without VPC peering.
-5. **Firewall rule** - opens the RDS security group to the EKS cluster's security group on 5432.
-6. **IRSA** - renders and applies just the chart's `Namespace` template (so it exists before
-   anything needs it), associates an OIDC provider with the cluster, then creates `backend-sa`
-   and `worker-sa`, each bound to the same least-privilege IAM policy Terraform already created.
-7. **cert-manager** - installs cert-manager if needed and creates a self-signed `ClusterIssuer`.
+5. **VPC CNI NetworkPolicy enforcement** - enabled explicitly on the `vpc-cni` addon
+   (`enableNetworkPolicy: true`). Off by default on EKS - without this, the chart's `NetworkPolicy`
+   objects would exist as API objects but nothing in the cluster would actually enforce them.
+6. **Firewall rule** - opens the RDS security group to the EKS cluster's security group on 5432.
+7. **IRSA** - renders and applies just the chart's `Namespace` template (so it exists before
+   anything needs it), associates an OIDC provider with the cluster, then creates `backend-sa` and
+   `worker-sa`, each bound to its own least-privilege IAM policy (backend: S3 + SNS; worker: SNS
+   only - see [§8](#8-security)).
+8. **External Secrets Operator** - creates `external-secrets-sa` (IRSA, scoped to `GetSecretValue`
+   on exactly the one Secrets Manager secret from step 3) and installs ESO, which the chart's
+   `SecretStore`/`ExternalSecret` templates depend on to populate `app-secrets`.
+9. **cert-manager** - installs cert-manager if needed and creates a self-signed `ClusterIssuer`.
    The chart's `Certificate` resource uses this later to issue the frontend's TLS cert.
-8. **Fluent Bit** - creates `fluent-bit-sa` (IRSA, scoped to just this project's CloudWatch log
-   group) and installs Fluent Bit, which starts shipping container logs to CloudWatch immediately.
-9. **Images** - builds, scans (Trivy, if available), tags, and pushes all three images to ECR.
-10. **ArgoCD** - installs ArgoCD if needed, creates the `Application`, waits for it to report
+10. **Fluent Bit** - creates `fluent-bit-sa` (IRSA, scoped to just this project's CloudWatch log
+    group) and installs Fluent Bit, which starts shipping container logs to CloudWatch immediately.
+11. **Images** - builds, scans (Trivy, if available), tags, and pushes all three images to ECR.
+12. **ArgoCD** - installs ArgoCD if needed, creates the `Application`, waits for it to report
     `Synced`/`Healthy`, waits for all three Deployments to roll out, then prints the app URL,
     ArgoCD's admin credentials, and a link to the CloudWatch log group.
 
@@ -274,6 +295,14 @@ Functional checks:
    serving throughout since it has 2 replicas.
 7. **GitOps** - `kubectl get application devops-app -n argocd` should show `Synced`/`Healthy`. A
    manual `kubectl edit` to a Deployment gets reverted automatically within a few minutes (selfHeal).
+8. **NetworkPolicy is actually enforced, not just defined** - with VPC CNI NetworkPolicy support
+   enabled (step 4 of `setup.sh`), a pod without the `app: frontend` label should be refused when
+   it tries to reach the backend directly:
+   ```bash
+   kubectl run netpol-test -n devops-app --rm -it --image=busybox --restart=Never -- \
+     wget -qO- --timeout=5 http://backend-service:5000/api/health
+   ```
+   This should time out. The same request from a pod labeled `app: frontend` succeeds.
 
 *(Screenshots and text captures of the commands above are in `Screenshots+txt_Files/01-Required-Commands/`
 and `02-Functional-Checks/`.)*
@@ -298,8 +327,8 @@ all bill hourly. Order matters here more than it looks:
    cluster, and deleting the cluster too early orphans it.
 3. Revoke the RDS security-group rule that references the EKS cluster's security group, so EKS
    can clean up its own security group properly.
-4. Delete the IRSA IAM roles for `backend-sa`/`worker-sa` (separate CloudFormation stacks from
-   the cluster itself).
+4. Delete the IRSA IAM roles for `backend-sa`/`worker-sa`/`fluent-bit-sa`/`external-secrets-sa`
+   (separate CloudFormation stacks from the cluster itself).
 5. Delete the EKS cluster.
 6. `terraform destroy` - removes RDS, S3, SNS, IAM, and the VPC.
 7. Remove the local `terraform.tfvars` (recreated on the next `setup.sh` run).
@@ -311,44 +340,62 @@ all bill hourly. Order matters here more than it looks:
 **ServiceAccounts and IRSA.** `frontend-sa` is a plain ServiceAccount with no AWS access at all -
 it never needs any. `backend-sa` and `worker-sa` each get their own IAM role via IRSA (IAM Roles
 for Service Accounts): short-lived, auto-rotated tokens instead of long-lived access keys sitting
-in a Kubernetes Secret. Both roles use the same least-privilege policy, scoped to exactly two
-actions - `s3:PutObject`/`s3:ListBucket` on the one bucket this project owns, and `sns:Publish` on
-the one topic - nothing broader. `fluent-bit-sa` (cluster infrastructure, not part of the app - see
-[§10](#10-logging)) gets its own separate role too, scoped to writing into this project's one
-CloudWatch log group and nothing else. No workload has any Kubernetes RBAC permissions beyond the
-defaults; nothing here calls the Kubernetes API.
+in a Kubernetes Secret. The two roles use **separate**, workload-scoped policies rather than one
+shared policy - `backend-sa` gets `s3:PutObject`/`s3:ListBucket` on this project's one bucket plus
+`sns:Publish` on its one topic; `worker-sa` gets `sns:Publish` only, since `worker.py` never
+touches S3 at all. `fluent-bit-sa` (cluster infrastructure, not part of the app - see
+[§10](#10-logging)) and `external-secrets-sa` (below) each get their own separate roles too, scoped
+to exactly one thing each: writing to this project's one CloudWatch log group, and reading this
+project's one Secrets Manager secret, respectively. No workload has any Kubernetes RBAC
+permissions beyond the defaults; none of them call the Kubernetes API.
 
-**Secrets.** The only thing in the Kubernetes `Secret` is `DB_PASSWORD`. AWS credentials never
-touch a Secret at all, since IRSA replaces them entirely. The Secret's value is generated fresh
-per deploy and passed straight into the ArgoCD `Application`, never written to a tracked file.
-There's no external secret store (Sealed Secrets, External Secrets Operator) - values are only
-base64-encoded, not encrypted at rest, which is the simplest option but not what you'd want for
-anything beyond a course project.
+**Secrets.** The only thing in the Kubernetes `Secret` is `DB_PASSWORD`, and it's no longer
+created directly at all - **External Secrets Operator** reads the real value straight from **AWS
+Secrets Manager** and writes the `app-secrets` Secret itself. The chart's `SecretStore` (points ESO
+at Secrets Manager, authenticating as the ESO controller's own IRSA-bound `external-secrets-sa` -
+no per-store credential needed) and `ExternalSecret` (syncs one key, `DB_PASSWORD`, on a 1-hour
+refresh interval) replace what used to be a plain `Secret` template fed a pre-base64-encoded value
+through the ArgoCD `Application` spec.
 
-`helm/devops-app/secret.example.yaml` shows the shape of the real Secret with a placeholder
-value, so it's obvious what gets created without having to mentally render the Helm template. To
-create the real one by hand instead of through `setup.sh`/ArgoCD:
+That earlier approach had a real gap: the password was embedded in the `Application` object's
+`spec.source.helm.valuesObject`, which persists as a live, readable cluster object - anyone with
+permission to `kubectl get application devops-app -n argocd -o yaml` could read it directly,
+base64 decoding being trivial. Now the `Application` object only ever holds a Secrets Manager
+secret *name*, never a value; the actual password is fetched by ESO at sync time and never passes
+through Helm, ArgoCD, or this repository at any point. `terraform/secrets.tf` provisions the
+Secrets Manager secret from the same `db_password` Terraform variable already used for RDS - one
+password prompt in `setup.sh`, flowing to both places.
 
-```bash
-kubectl create secret generic app-secrets -n devops-app \
-  --from-literal=DB_PASSWORD='your-real-password'
-```
+AWS credentials never touch a Kubernetes Secret at all in this project, in either the old or new
+approach - IRSA replaces them entirely, everywhere.
+
+`helm/devops-app/secret.example.yaml` documents the resulting Secret's shape and where its value
+actually comes from, since there's no `kubectl create secret` step to point at anymore - ESO
+creates and refreshes it automatically once the `ExternalSecret` exists.
 
 **Network policies.** Frontend accepts ingress from anywhere (it's the public entry point) but
 egress only to the backend and DNS. Backend accepts ingress only from pods labeled `app: frontend`.
-Worker denies all ingress - it only ever makes outbound calls. RDS isn't a Kubernetes object, so
-it's protected at the AWS layer instead: its security group only allows inbound `5432` from the
-EKS cluster's own security group, never `0.0.0.0/0`, and the instance itself is not publicly
+Worker denies all ingress - it only ever makes outbound calls. These are enforced, not just
+defined: EKS ships the VPC CNI with `NetworkPolicy` enforcement **disabled** by default, so
+`setup.sh` explicitly enables it on the `vpc-cni` addon (`enableNetworkPolicy: true`, step 4)
+before anything else gets deployed. Without that, these three `NetworkPolicy` objects would exist
+as API objects with no effect at all - see [§6](#6-verifying-the-system-works) for the negative
+connectivity test proving enforcement is actually active. RDS isn't a Kubernetes object, so it's
+protected at the AWS layer instead: its security group only allows inbound `5432` from the EKS
+cluster's own security group, never `0.0.0.0/0`, and the instance itself is not publicly
 accessible.
 
 **Containers.** Every container sets `runAsNonRoot`, `allowPrivilegeEscalation: false`,
 `readOnlyRootFilesystem: true`, and drops all Linux capabilities. Wherever a container needs to
 write at runtime, it gets an explicit writable `emptyDir` instead of a writable root filesystem -
 nginx's cache/pid directories, and a `/tmp` for the backend's upload spooling and the worker's
-heartbeat file.
+heartbeat file. The frontend's non-root behavior isn't only a Kubernetes-level override either:
+its image is `nginxinc/nginx-unprivileged`, which is non-root and listens on unprivileged ports by
+default, so the same guarantee holds under a bare `docker run` too (see [§2](#2-building-and-pushing-images)).
 
 **Images.** Built from this repo's own Dockerfiles (nothing pulled pre-built from Docker Hub),
-pinned base images and tags, scanned with Trivy before push.
+pinned base images and tags, scanned with Trivy before push - locally for visibility only, in CI
+also as a blocking gate on fixable `CRITICAL` findings (see [§13](#13-repository-layout)).
 
 **AWS resource security.** RDS storage and the SNS topic are both encrypted at rest with
 AWS-managed KMS keys; the S3 bucket has SSE-S3 encryption and a full public access block (nothing
@@ -373,9 +420,16 @@ load balancer.
 
 ## 9. Reliability
 
-* **Readiness/liveness probes** on all three Deployments. Frontend and backend probe over HTTP;
-  the worker has no HTTP port, so it probes a heartbeat file it touches at startup and after every
-  poll cycle - liveness fails if that file goes stale for more than 3x the poll interval.
+* **Readiness/liveness probes** on all three Deployments, deliberately not identical between the
+  two where it matters. Backend's *readiness* probe hits `/api/health`, which opens a real RDS
+  connection - if RDS is briefly unreachable, the pod should stop receiving traffic. Its
+  *liveness* probe hits a separate `/healthz` instead, which checks nothing but "is the Flask
+  process still serving requests" - a transient RDS blip shouldn't get a perfectly healthy pod
+  killed and restarted over a dependency outage that isn't its fault. The worker has no HTTP port,
+  so it probes a heartbeat file it touches at startup and after every poll cycle; liveness fails if
+  that file goes stale for more than 3x `POLL_INTERVAL_SECONDS` - read from the same environment
+  variable `worker.py` itself uses, not a hardcoded number, so the threshold can't silently drift
+  out of sync if the poll interval ever changes.
 * **HorizontalPodAutoscaler** on frontend and backend (2-4 replicas, scaling on CPU utilization).
   The worker has no HPA - it's a single background poller by design, not something that needs to
   scale with request load.
@@ -422,10 +476,11 @@ something closer to production.
 | ArgoCD instead of `helm upgrade` in the script | Real GitOps: drift correction, auditable history | Another component running in the cluster |
 | `LoadBalancer` Service instead of Ingress | Only one public route, no controller needed | No path-based routing |
 | cert-manager with a self-signed issuer, not a real CA | No domain name to get a real cert for; cert-manager itself is still real | Browser warning on every visit |
-| Kubernetes Secrets, no external secret store | Simplicity for a course project | Base64 only, not encrypted at rest |
+| External Secrets Operator + AWS Secrets Manager, not a plain Kubernetes Secret | The password never has to pass through Helm, ArgoCD, or this repo at any point, and gets real encryption at rest | Another operator running in the cluster, another IAM role to manage |
 | 3 `t3.small` nodes instead of 2 | `t3.small`'s pod ceiling is 11/node (network interface IP limits, not CPU/memory) - kube-system + ArgoCD + cert-manager + this app need more than 2 nodes' worth of slots | Small added hourly node cost |
 | One shared CloudWatch log group, not per-service | This is basic logging, not a full observability stack | Harder to filter one service's logs out from the others |
 | AWS-managed KMS keys, not customer-managed | S3/SNS encrypted at rest either way | Doesn't satisfy scanners requiring CMKs; ~$1/month each to fix |
+| CI fails only on fixable `CRITICAL` image findings, not `HIGH` too | `HIGH` findings are still reported (non-blocking) for visibility; failing on every `HIGH` finding would block the pipeline on OS-level CVEs this project alone can't fix | A fixable `HIGH` vulnerability won't block a merge on its own |
 
 ---
 
@@ -459,10 +514,12 @@ creates for RDS. Two things make them work together:
 setup.sh, teardown.sh      Full deploy / full teardown automation
 Makefile                   make k8s-deploy / make k8s-teardown / raw terraform targets
 .github/workflows/ci.yml   terraform validate + helm lint + Trivy on every push/PR
-terraform/                 RDS, S3, SNS, CloudWatch log group, IAM policies, VPC/subnets - no compute
+.trivyignore               Accepted-risk CVE allowlist for image scanning (empty - nothing needed yet)
+terraform/                 RDS, S3, SNS, Secrets Manager, CloudWatch log group, IAM policies,
+                           VPC/subnets - no compute
 helm/devops-app/           The Kubernetes side: one Helm chart, deployed via ArgoCD
 helm/values-dynamic.example.yaml   Template for deploying the chart by hand, bypassing ArgoCD
-frontend/                  nginx, static UI, reverse proxy to backend
+frontend/                  nginx (unprivileged), static UI, reverse proxy to backend
 backend/                   Flask + Gunicorn API (RDS, S3, SNS)
 worker/                    Background poller (RDS, SNS)
 Screenshots+txt_Files/     Evidence captures: required commands, functional checks,
@@ -476,10 +533,13 @@ both `terraform/` and `helm/devops-app/` for misconfigurations - on every push a
 into Actions secrets so every push could deploy to live infrastructure is a different risk profile
 than read-only checks. Actual deployment stays a manual `make k8s-deploy`.
 
-The `trivy config` job is the one job here that's actually blocking (the image scan isn't, since
-some base-image CVEs aren't fixable from this project alone - see §2). Every misconfiguration
-Trivy currently knows about in this repo has already been fixed or explicitly suppressed with a
-documented reason in the code itself; a clean run should always pass.
+The `trivy config` job, and now the image scan too, are both blocking. Image scanning runs twice:
+once reporting `HIGH`+`CRITICAL` non-blocking (saved as a build artifact for each service, purely
+for visibility - unfixable CVEs included), and once scoped to fixable `CRITICAL` findings only
+(`--ignore-unfixed`) that fails the build if it finds one. Accepted-risk exceptions go in
+`.trivyignore` with a documented reason, not a blanket `exit-code` override. Every misconfiguration
+`trivy config` currently knows about in this repo has already been fixed or explicitly suppressed
+with a documented reason in the code itself; a clean run should always pass.
 
 ---
 
@@ -496,3 +556,13 @@ this repository entirely - `terraform/` now only provisions the managed AWS serv
 Kubernetes deployment still depends on (RDS, S3, SNS, the IAM policy, and the networking). Compute
 moved to EKS, and deployment moved from a hand-run Ansible playbook to a Helm chart kept in sync
 by ArgoCD.
+
+A later hardening pass, prompted by an external technical review of this same submission,
+addressed: NetworkPolicy objects that existed but weren't actually enforced (VPC CNI policy
+support is off by default on EKS); the DB password being readable from the ArgoCD `Application`
+object (replaced with External Secrets Operator + AWS Secrets Manager); a shared IAM policy
+between backend and worker (split by actual least-privilege need); the frontend image having no
+non-root user of its own (switched to `nginxinc/nginx-unprivileged`); backend's liveness probe
+failing on RDS outages instead of just its readiness probe; a non-blocking CI image scan; and a
+few smaller code-quality fixes (a connection-leak pattern, a tuple-instead-of-scalar bug, pinned
+`eksctl`/ArgoCD versions instead of `latest`/`stable`).

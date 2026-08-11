@@ -23,8 +23,8 @@ spec:
       - name: frontend
         image: {{ .Values.image.registry }}/devops-frontend:{{ .Values.image.tag }}
         ports:
-        - containerPort: 80
-        - containerPort: 443
+        - containerPort: 8080
+        - containerPort: 8443
         resources:
           requests:
             cpu: {{ .Values.frontend.resources.requests.cpu | quote }}
@@ -48,13 +48,13 @@ spec:
         readinessProbe:
           httpGet:
             path: /
-            port: 80
+            port: 8080
           initialDelaySeconds: 5
           periodSeconds: 10
         livenessProbe:
           httpGet:
             path: /
-            port: 80
+            port: 8080
           initialDelaySeconds: 15
           periodSeconds: 20
       volumes:
@@ -121,7 +121,7 @@ spec:
           periodSeconds: 10
         livenessProbe:
           httpGet:
-            path: /api/health
+            path: /healthz
             port: 5000
           initialDelaySeconds: 20
           periodSeconds: 30
@@ -185,13 +185,15 @@ spec:
           initialDelaySeconds: 10
           periodSeconds: 15
         livenessProbe:
-          # Fails if the heartbeat is older than 90s (3x the 30s poll interval),
-          # meaning the loop is stuck.
+          # Fails if the heartbeat is older than 3x POLL_INTERVAL_SECONDS,
+          # meaning the loop is stuck. Reads the env var at check time (same
+          # one worker.py reads, via app-config) instead of a hardcoded
+          # number, so it stays correct if the poll interval ever changes.
           exec:
             command:
             - sh
             - -c
-            - "test $(( $(date +%s) - $(stat -c %Y /tmp/worker_heartbeat 2>/dev/null || echo 0) )) -lt 90"
+            - "test $(( $(date +%s) - $(stat -c %Y /tmp/worker_heartbeat 2>/dev/null || echo 0) )) -lt $(( ${POLL_INTERVAL_SECONDS:-30} * 3 ))"
           initialDelaySeconds: 20
           periodSeconds: 30
       volumes:

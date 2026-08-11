@@ -48,13 +48,13 @@ config:
   s3BucketName: ""
   snsTopicArn: ""
 
-# Sensitive values - always empty here, always supplied via a separate,
-# git-ignored values file at install time. Never set these in this file.
-# Already base64-encoded (matching what a Kubernetes Secret's data: field
-# expects directly) rather than encoded by the template, so a stray quote or
-# special character in the password can never break the generated YAML.
+# Not a secret value at all - just the NAME of the AWS Secrets Manager
+# secret that holds the real password. External Secrets Operator (see
+# templates/externalsecret.yaml) reads the actual value directly from AWS at
+# sync time; the password itself never passes through this chart, Helm, or
+# the ArgoCD Application object.
 secrets:
-  dbPasswordB64: ""
+  dbPasswordSecretName: ""
 
 # TLS isn't set here at all - cert-manager issues the frontend's certificate
 # directly in-cluster (see templates/certificate.yaml), so there's no value

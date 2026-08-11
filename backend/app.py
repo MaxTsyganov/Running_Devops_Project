@@ -132,18 +132,31 @@ def health():
         return jsonify({"status": "error", "detail": str(exc)}), 503
 
 
+@app.get("/healthz")
+def healthz():
+    # Liveness only: the process can serve a request, nothing more. A
+    # transient RDS outage should make the pod not-ready (via /api/health,
+    # used for readinessProbe), not get it killed and restarted (this is
+    # what livenessProbe uses instead) over a dependency that isn't the
+    # process itself being stuck.
+    return jsonify({"status": "alive"}), 200
+
+
 @app.get("/api/items")
 def list_items():
+    conn = None
     try:
         conn = get_db_connection()
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SELECT * FROM items ORDER BY created_at DESC;")
             rows = cur.fetchall()
-        conn.close()
         return jsonify({"items": [_row_to_dict(r) for r in rows]}), 200
     except Exception as exc:
         logger.exception("Failed to fetch items")
         return jsonify({"error": str(exc)}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 @app.post("/api/items")
@@ -155,6 +168,7 @@ def create_item():
 
     description = (body.get("description") or "").strip()
 
+    conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
@@ -168,11 +182,13 @@ def create_item():
             )
             row_id, status, created_at = cur.fetchone()
         conn.commit()
-        conn.close()
         logger.info(f"Item created with ID {row_id}")
     except Exception as exc:
         logger.exception("Failed to save item to database")
         return jsonify({"error": str(exc)}), 500
+    finally:
+        if conn:
+            conn.close()
 
     publish_sns(
         subject=f"[App] New item created: {name}",
@@ -225,6 +241,7 @@ def upload_file():
         logger.exception("Failed to upload file to S3")
         return jsonify({"error": "S3 upload failed"}), 500
 
+    conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
@@ -232,12 +249,14 @@ def upload_file():
                 "INSERT INTO uploads (filename, s3_key) VALUES (%s, %s) RETURNING id;",
                 (f.filename, s3_key),
             )
-            upload_id = cur.fetchone()
+            upload_id = cur.fetchone()[0]
         conn.commit()
-        conn.close()
     except Exception as exc:
         logger.exception("Failed to save upload record in database")
         return jsonify({"error": str(exc)}), 500
+    finally:
+        if conn:
+            conn.close()
 
     s3_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
 

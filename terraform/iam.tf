@@ -1,12 +1,14 @@
-# Least-Privilege IAM Policy
+# Least-Privilege IAM Policies
 #
-# This is the ONE thing in this file the Kubernetes side still depends on:
-# setup.sh attaches this exact policy (by its fixed name below) to the
+# Split by workload instead of one shared policy: backend is the only service
+# that touches S3 (file uploads), worker only ever calls SNS Publish. This is
+# the ONE thing in this file the Kubernetes side still depends on: setup.sh
+# attaches these exact policies (by their fixed names below) to the
 # backend-sa/worker-sa IAM roles it creates via `eksctl create iamserviceaccount`
-# (IRSA). Don't rename it without also updating the POLICY_ARN line in setup.sh.
-resource "aws_iam_policy" "app_least_privilege_policy" {
-  name        = "DevOps-App-Least-Privilege-Policy"
-  description = "Minimal permissions required for the app to access its specific S3 bucket and SNS topic."
+# (IRSA). Don't rename them without also updating the POLICY_ARN lines in setup.sh.
+resource "aws_iam_policy" "backend_least_privilege_policy" {
+  name        = "DevOps-Backend-Least-Privilege-Policy"
+  description = "Minimal permissions required for the backend to access its specific S3 bucket and SNS topic."
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -34,6 +36,48 @@ resource "aws_iam_policy" "app_least_privilege_policy" {
         Resource = [
           aws_sns_topic.alerts.arn
         ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy" "worker_least_privilege_policy" {
+  name        = "DevOps-Worker-Least-Privilege-Policy"
+  description = "Minimal permissions required for the worker to publish to its specific SNS topic. No S3 access - worker.py never touches S3."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "SNSPublishAccess"
+        Effect = "Allow"
+        Action = [
+          "sns:Publish"
+        ]
+        Resource = [
+          aws_sns_topic.alerts.arn
+        ]
+      }
+    ]
+  })
+}
+
+# Separate policy for External Secrets Operator (setup.sh attaches this to
+# external-secrets-sa via IRSA). Scoped to GetSecretValue on exactly the one
+# secret it needs to read - it has no reason to see anything else in this
+# AWS account's Secrets Manager.
+resource "aws_iam_policy" "external_secrets_policy" {
+  name        = "DevOps-ExternalSecrets-Policy"
+  description = "Minimal permissions for External Secrets Operator to read the DB password from Secrets Manager - nothing else."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "ReadDbPasswordOnly"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [aws_secretsmanager_secret.db_password.arn]
       }
     ]
   })

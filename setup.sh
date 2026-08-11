@@ -8,6 +8,12 @@ info()    { echo "    $1"; }
 success() { echo -e "${GREEN}✔ $1${RESET}"; }
 fail()    { echo -e "${RED}✘ $1${RESET}"; exit 1; }
 
+# Pinned versions for tools installed straight from GitHub releases (not a
+# package manager) - reviewed and bumped deliberately, instead of always
+# pulling whatever "latest"/"stable" happens to resolve to on a given run.
+EKSCTL_VERSION="v0.229.0"
+ARGOCD_VERSION="v3.5.0"
+
 echo -e "${BOLD}=================================================================="
 echo "  DevOps App - Kubernetes Deployment"
 echo "  This will: apply Terraform (RDS/S3/SNS), create or reuse an EKS"
@@ -17,7 +23,7 @@ echo "  repo's Helm chart)."
 echo "  Total time: ~20-30 minutes on a first run (mostly EKS cluster boot)."
 echo -e "==================================================================${RESET}"
 
-step "[0/9] Running pre-flight checks..."
+step "[0/11] Running pre-flight checks..."
 
 info "Checking required CLI tools..."
 
@@ -42,7 +48,7 @@ install_kubectl() {
     sudo mv /tmp/kubectl /usr/local/bin/kubectl
 }
 install_eksctl() {
-    curl -fsSL -o /tmp/eksctl.tar.gz "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz"
+    curl -fsSL -o /tmp/eksctl.tar.gz "https://github.com/eksctl-io/eksctl/releases/download/${EKSCTL_VERSION}/eksctl_$(uname -s)_amd64.tar.gz"
     tar -xzf /tmp/eksctl.tar.gz -C /tmp && rm -f /tmp/eksctl.tar.gz
     sudo mv /tmp/eksctl /usr/local/bin/eksctl
 }
@@ -76,6 +82,12 @@ docker info >/dev/null 2>&1 \
 success "Docker daemon is reachable."
 
 info "Checking AWS credentials..."
+# Most aws-cli calls below have their output captured into a variable, which
+# never triggers a pager - but a few (like the security-group rule further
+# down) print straight to the terminal, and aws-cli defaults to piping that
+# through `less`, silently blocking the script on a keypress. Disabling the
+# pager globally avoids that for every call, not just the ones caught so far.
+export AWS_PAGER=""
 export AWS_REGION="us-east-1"
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text) \
     || fail "Could not reach AWS. Run 'aws configure' first and make sure your credentials are valid."
@@ -113,9 +125,9 @@ if grep -q '^db_password' terraform/terraform.tfvars 2>/dev/null; then
     info "Removed db_password from terraform.tfvars - it's supplied securely below instead, never stored on disk."
 fi
 
-step "[1/9] Enter the database password for this run (kept in memory only, never written to disk)"
+step "[1/11] Enter the database password for this run (kept in memory only, never written to disk)"
 # No AWS Access Key / Secret prompt anymore - backend-sa and worker-sa get AWS
-# permissions via IRSA (step 5) instead of long-lived static credentials.
+# permissions via IRSA (step 6) instead of long-lived static credentials.
 set +e
 while true; do
     read -rs -p "    Database password (min 8 characters): " DB_PASSWORD; echo
@@ -128,7 +140,7 @@ set -e
 export TF_VAR_db_password="$DB_PASSWORD"
 success "Database password captured for this run."
 
-step "[2/9] Applying Terraform (RDS, S3, SNS, IAM, networking)..."
+step "[2/11] Applying Terraform (RDS, S3, SNS, IAM, networking)..."
 cd terraform
 terraform init -input=false
 # -auto-approve: this script already stops (set -e) on any Terraform error,
@@ -146,6 +158,7 @@ DB_HOST=$(echo "$RDS_ENDPOINT_FULL" | cut -d':' -f1)
 S3_BUCKET=$(terraform output -raw s3_bucket_name)
 SNS_TOPIC=$(terraform output -raw sns_topic_arn)
 CLOUDWATCH_LOG_GROUP=$(terraform output -raw cloudwatch_log_group_name)
+DB_PASSWORD_SECRET_NAME=$(terraform output -raw db_password_secret_name)
 cd ..
 success "AWS infrastructure ready (RDS: $DB_HOST)."
 
@@ -157,7 +170,7 @@ if [ -n "$PENDING_EMAIL" ]; then
     echo "      (the app will still work and report success either way)."
 fi
 
-step "[3/9] Ensuring EKS cluster '$CLUSTER_NAME' exists inside VPC $VPC_ID..."
+step "[3/11] Ensuring EKS cluster '$CLUSTER_NAME' exists inside VPC $VPC_ID..."
 if eksctl get cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
     info "Cluster already exists, reusing it."
 else
@@ -185,7 +198,21 @@ fi
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
 success "kubectl is now pointed at '$CLUSTER_NAME'."
 
-step "[4/9] Allowing the EKS cluster to reach RDS on port 5432..."
+step "[4/11] Enabling VPC CNI NetworkPolicy enforcement..."
+# Off by default on EKS - AWS ships the VPC CNI with policy enforcement
+# disabled unless explicitly turned on. Without this, the NetworkPolicy
+# objects the Helm chart creates are inert: they exist as API objects, but
+# nothing in the cluster actually reads or enforces them.
+aws eks update-addon \
+    --cluster-name "$CLUSTER_NAME" --region "$AWS_REGION" \
+    --addon-name vpc-cni \
+    --configuration-values '{"enableNetworkPolicy":"true"}' \
+    --resolve-conflicts OVERWRITE >/dev/null
+aws eks wait addon-active --cluster-name "$CLUSTER_NAME" --region "$AWS_REGION" --addon-name vpc-cni
+kubectl rollout status daemonset/aws-node -n kube-system --timeout=180s
+success "VPC CNI NetworkPolicy enforcement enabled - NetworkPolicy objects are now actually enforced."
+
+step "[5/11] Allowing the EKS cluster to reach RDS on port 5432..."
 EKS_SG_ID=$(aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" \
     --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
 aws ec2 authorize-security-group-ingress \
@@ -195,7 +222,7 @@ aws ec2 authorize-security-group-ingress \
     --region "$AWS_REGION" 2>/dev/null && success "Firewall rule added." \
     || info "Rule already exists, skipping."
 
-step "[5/9] Setting up IRSA so backend/worker get AWS access without static keys..."
+step "[6/11] Setting up IRSA so backend/worker get AWS access without static keys..."
 # IRSA lets a pod assume an IAM role via a short-lived token instead of a
 # long-lived access key in a Secret. Needs an OIDC provider on the cluster
 # plus a role per ServiceAccount, trusted only by that SA, using the same
@@ -213,17 +240,53 @@ eksctl utils associate-iam-oidc-provider \
     --cluster "$CLUSTER_NAME" --region "$AWS_REGION" --approve
 success "Cluster has an OIDC provider (required for IRSA)."
 
-POLICY_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:policy/DevOps-App-Least-Privilege-Policy"
-for sa in backend-sa worker-sa; do
-    eksctl create iamserviceaccount \
-        --cluster "$CLUSTER_NAME" --region "$AWS_REGION" \
-        --namespace devops-app --name "$sa" \
-        --attach-policy-arn "$POLICY_ARN" \
-        --approve --override-existing-serviceaccounts
-    success "$sa can now reach S3/SNS via IRSA - no AWS keys involved."
-done
+# Separate policies per workload: backend needs S3 + SNS, worker only ever
+# calls SNS Publish (worker.py never touches S3) - see terraform/iam.tf.
+BACKEND_POLICY_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:policy/DevOps-Backend-Least-Privilege-Policy"
+WORKER_POLICY_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:policy/DevOps-Worker-Least-Privilege-Policy"
 
-step "[6/9] Installing cert-manager and creating a self-signed TLS issuer..."
+eksctl create iamserviceaccount \
+    --cluster "$CLUSTER_NAME" --region "$AWS_REGION" \
+    --namespace devops-app --name backend-sa \
+    --attach-policy-arn "$BACKEND_POLICY_ARN" \
+    --approve --override-existing-serviceaccounts
+success "backend-sa can now reach S3/SNS via IRSA - no AWS keys involved."
+
+eksctl create iamserviceaccount \
+    --cluster "$CLUSTER_NAME" --region "$AWS_REGION" \
+    --namespace devops-app --name worker-sa \
+    --attach-policy-arn "$WORKER_POLICY_ARN" \
+    --approve --override-existing-serviceaccounts
+success "worker-sa can now reach SNS via IRSA - no AWS keys involved."
+
+step "[7/11] Installing External Secrets Operator to sync the DB password from Secrets Manager..."
+# Replaces passing the password through the ArgoCD Application's
+# valuesObject (which persisted it, base64-only, as a readable live cluster
+# object). The chart's SecretStore/ExternalSecret templates read the real
+# value directly from AWS at sync time instead; the ESO controller's own
+# IRSA-bound ServiceAccount is the only thing with permission to read it,
+# scoped to exactly this one secret (terraform/iam.tf).
+kubectl create namespace external-secrets --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
+ESO_POLICY_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:policy/DevOps-ExternalSecrets-Policy"
+eksctl create iamserviceaccount \
+    --cluster "$CLUSTER_NAME" --region "$AWS_REGION" \
+    --namespace external-secrets --name external-secrets-sa \
+    --attach-policy-arn "$ESO_POLICY_ARN" \
+    --approve --override-existing-serviceaccounts
+success "external-secrets-sa can now read the DB password from Secrets Manager via IRSA."
+
+helm repo add external-secrets https://charts.external-secrets.io >/dev/null
+helm repo update >/dev/null
+helm upgrade --install external-secrets external-secrets/external-secrets \
+    --namespace external-secrets \
+    --set installCRDs=true \
+    --set serviceAccount.create=false \
+    --set serviceAccount.name=external-secrets-sa \
+    --wait --timeout 180s
+success "External Secrets Operator installed."
+
+step "[8/11] Installing cert-manager and creating a self-signed TLS issuer..."
 # cert-manager issues and auto-renews the frontend's cert instead of a one-off
 # openssl script. Still self-signed - there's no domain pointed at the load
 # balancer to get a real CA-trusted cert from - but now issued and rotated
@@ -264,9 +327,7 @@ rm -f "$CLUSTERISSUER"
 [ "$ISSUER_READY" = true ] || fail "Could not create the ClusterIssuer after 5 attempts - check 'kubectl get pods -n cert-manager'."
 success "Self-signed ClusterIssuer ready."
 
-B64_DB_PASS=$(echo -n "$DB_PASSWORD" | base64 | tr -d '\n')
-
-step "[7/9] Installing Fluent Bit to ship container logs to CloudWatch..."
+step "[9/11] Installing Fluent Bit to ship container logs to CloudWatch..."
 # Fluent Bit is cluster infrastructure, not part of the app - same category as
 # ArgoCD and cert-manager, so it's installed directly here rather than folded
 # into helm/devops-app. The log group itself is Terraform-managed (logging.tf),
@@ -297,7 +358,7 @@ helm upgrade --install aws-for-fluent-bit eks-charts/aws-for-fluent-bit --versio
     --wait --timeout=180s
 success "Fluent Bit is shipping container logs to CloudWatch Logs ($CLOUDWATCH_LOG_GROUP)."
 
-step "[8/9] Building, scanning, tagging, and pushing Docker images to ECR..."
+step "[10/11] Building, scanning, tagging, and pushing Docker images to ECR..."
 aws ecr get-login-password --region "$AWS_REGION" | \
     docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com" >/dev/null
 
@@ -328,7 +389,7 @@ for service in frontend backend worker; do
 done
 success "All 3 images built, scanned, and pushed as :v1.0.0."
 
-step "[9/9] Installing ArgoCD and deploying via GitOps..."
+step "[11/11] Installing ArgoCD and deploying via GitOps..."
 # From here on the app is kept in sync by ArgoCD watching this repo, not by a
 # direct `helm upgrade` call. Push a chart change to git (or wait for ArgoCD's
 # poll cycle) and it reconciles the cluster to match; selfHeal also reverts
@@ -345,7 +406,7 @@ if ! kubectl get deployment argocd-server -n argocd >/dev/null 2>&1; then
     # annotation for diffing, and ArgoCD's CRDs are big enough to blow past
     # etcd's 256KB annotation limit. Server-side apply avoids that annotation.
     kubectl apply -n argocd --server-side --force-conflicts \
-        -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml >/dev/null
+        -f "https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml" >/dev/null
 else
     info "ArgoCD already installed, reusing it."
 fi
@@ -381,7 +442,7 @@ spec:
           s3BucketName: "${S3_BUCKET}"
           snsTopicArn: "${SNS_TOPIC}"
         secrets:
-          dbPasswordB64: "${B64_DB_PASS}"
+          dbPasswordSecretName: "${DB_PASSWORD_SECRET_NAME}"
   destination:
     server: https://kubernetes.default.svc
     namespace: devops-app

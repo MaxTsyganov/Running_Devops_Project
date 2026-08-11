@@ -14,7 +14,7 @@ on:
 jobs:
   terraform:
     name: Terraform fmt + validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: terraform
@@ -29,7 +29,7 @@ jobs:
 
   helm:
     name: Helm lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
@@ -44,22 +44,46 @@ jobs:
 
   images:
     name: Build and scan images
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         service: [frontend, backend, worker]
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t devops-${{ matrix.service }}:ci ./${{ matrix.service }}
+
+      # Full report (HIGH+CRITICAL, including unfixed) - non-blocking, kept
+      # purely for visibility. Saved as a build artifact so scan results are
+      # actually retrievable instead of only living in the workflow log.
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: devops-${{ matrix.service }}:ci
           severity: HIGH,CRITICAL
           exit-code: "0"
+          format: json
+          output: trivy-${{ matrix.service }}.json
+          trivyignores: .trivyignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trivy-scan-${{ matrix.service }}
+          path: trivy-${{ matrix.service }}.json
+
+      # The actual gate: fails the build on fixable CRITICAL findings.
+      # --ignore-unfixed excludes CVEs with no available patch (nothing
+      # actionable to do about those from this project alone); accepted-risk
+      # exceptions go in .trivyignore with a documented reason, never a
+      # blanket exit-code override.
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: devops-${{ matrix.service }}:ci
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          trivyignores: .trivyignore
 
   config:
     name: Scan IaC for misconfigurations
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       # Unlike the image scan above, this one is blocking (no exit-code

@@ -20,6 +20,11 @@ output "cloudwatch_log_group_name" {
   value       = aws_cloudwatch_log_group.app_logs.name
 }
 
+output "db_password_secret_name" {
+  description = "Secrets Manager secret name holding the DB password - passed to the ExternalSecret as a reference, never the value itself"
+  value       = aws_secretsmanager_secret.db_password.name
+}
+
 # VPC info needed to put the EKS cluster in the same network as RDS.
 
 output "vpc_id" {

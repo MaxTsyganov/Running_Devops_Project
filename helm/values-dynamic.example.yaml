@@ -10,8 +10,13 @@
 #
 # The chart's Certificate resource (templates/certificate.yaml) also needs
 # cert-manager and a selfsigned-issuer ClusterIssuer to already exist in the
-# cluster - see setup.sh step 6 for the exact commands if setting these up
+# cluster - see setup.sh step 8 for the exact commands if setting these up
 # by hand too.
+#
+# The chart's SecretStore/ExternalSecret (templates/secretstore.yaml,
+# templates/externalsecret.yaml) need External Secrets Operator already
+# installed with an IRSA-bound external-secrets-sa ServiceAccount that can
+# read the Secrets Manager secret below - see setup.sh step 7 for that too.
 
 image:
   registry: "123456789012.dkr.ecr.us-east-1.amazonaws.com"
@@ -21,6 +26,7 @@ config:
   s3BucketName: "your-s3-bucket-name"
   snsTopicArn: "arn:aws:sns:us-east-1:123456789012:your-topic"
 
-# base64-encode this yourself, e.g.: echo -n 'your-password' | base64
+# Name of the AWS Secrets Manager secret holding the real DB password
+# (created by terraform/secrets.tf) - not the password itself.
 secrets:
-  dbPasswordB64: "eW91ci1kYi1wYXNzd29yZA=="
+  dbPasswordSecretName: "devops-app/db-password"

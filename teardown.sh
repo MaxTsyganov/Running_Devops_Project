@@ -88,7 +88,7 @@ else
     info "No RDS security group or no live cluster found - nothing to revoke."
 fi
 
-step "[4/7] Deleting IRSA IAM service accounts (backend-sa, worker-sa, fluent-bit-sa)..."
+step "[4/7] Deleting IRSA IAM service accounts (backend-sa, worker-sa, fluent-bit-sa, external-secrets-sa)..."
 # Same lesson as the security-group rule above: these were created by `eksctl
 # create iamserviceaccount` as their own CloudFormation stacks, separate from
 # the main cluster stack. Deleting them explicitly first (rather than assuming
@@ -102,12 +102,17 @@ if eksctl get cluster --name devops-cluster --region us-east-1 >/dev/null 2>&1; 
             --wait >/dev/null 2>&1 && success "Deleted IAM role for $sa." \
             || info "$sa's IAM role already gone, continuing."
     done
-    # Different namespace than the two above, so it can't share that loop.
+    # Different namespaces than the two above, so they can't share that loop.
     eksctl delete iamserviceaccount --verbose 0 \
         --cluster devops-cluster --region us-east-1 \
         --namespace amazon-cloudwatch --name fluent-bit-sa \
         --wait >/dev/null 2>&1 && success "Deleted IAM role for fluent-bit-sa." \
         || info "fluent-bit-sa's IAM role already gone, continuing."
+    eksctl delete iamserviceaccount --verbose 0 \
+        --cluster devops-cluster --region us-east-1 \
+        --namespace external-secrets --name external-secrets-sa \
+        --wait >/dev/null 2>&1 && success "Deleted IAM role for external-secrets-sa." \
+        || info "external-secrets-sa's IAM role already gone, continuing."
 else
     info "No live cluster found - nothing to delete here."
 fi
