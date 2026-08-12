@@ -165,6 +165,8 @@ def create_item():
     name = (body.get("name") or "").strip()
     if not name:
         return jsonify({"error": "Name is required"}), 400
+    if len(name) > 255:
+        return jsonify({"error": "Name must be 255 characters or fewer"}), 400
 
     description = (body.get("description") or "").strip()
 
