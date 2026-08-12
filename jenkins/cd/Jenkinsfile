@@ -100,8 +100,14 @@ pipeline {
                 container('deploy') {
                     sh '''
                         set -e
+                        # No --create-namespace: that makes Helm touch the
+                        # Namespace object itself, which is cluster-scoped -
+                        # no namespace-scoped Role can grant that without
+                        # widening cd-deploy-sa to a ClusterRole. devops-app
+                        # already exists from infra bring-up; CD deploys the
+                        # app into it, it doesn't own namespace lifecycle.
                         helm upgrade --install devops-app ./helm/devops-app \
-                            --namespace ${TARGET_NAMESPACE} --create-namespace \
+                            --namespace ${TARGET_NAMESPACE} \
                             --set image.registry=${ECR_REGISTRY} \
                             --set image.tag=${IMAGE_TAG} \
                             --set config.dbHost=${DB_HOST} \
