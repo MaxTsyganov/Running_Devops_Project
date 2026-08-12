@@ -107,6 +107,7 @@ controller:
   # that's the installer's job to solve, not ours.
   installPlugins:
     - "kubernetes"
+    - "kubernetes-credentials-provider"
     - "workflow-aggregator"
     - "git"
     - "github"

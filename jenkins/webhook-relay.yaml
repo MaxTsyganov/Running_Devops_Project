@@ -1,0 +1,67 @@
+# Gets GitHub push events to Jenkins without ever opening an inbound port on
+# Jenkins itself. The assignment requires both a real webhook trigger (not
+# polling) AND that the Jenkins UI/endpoints stay off the public internet -
+# a relay satisfies both at once: this pod holds an *outbound* connection to
+# a public smee.io channel and forwards whatever GitHub POSTs there straight
+# to Jenkins' internal ClusterIP service. Jenkins never gets an inbound port,
+# public IP, Ingress, or LoadBalancer of its own.
+#
+# Uses the official smee-client npm package (published by the probot org,
+# the same org that runs smee.io) via npx on the official node image, rather
+# than any of the several unofficial third-party Docker images floating
+# around for this - this pod has network reach to Jenkins, so it isn't
+# somewhere to trust an unverified rebuild.
+#
+# SMEE_URL comes from a ConfigMap that configure-jenkins.sh creates (a fresh
+# https://smee.io/<channel> generated once via `curl -sI https://smee.io/new`
+# and persisted, not committed - re-running configure.sh reuses the existing
+# channel instead of minting a new one each time).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook-relay
+  namespace: jenkins
+  labels:
+    app: webhook-relay
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webhook-relay
+  template:
+    metadata:
+      labels:
+        app: webhook-relay
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: smee-client
+          image: node:22.22-alpine3.24
+          command: ["npx"]
+          args:
+            - "--yes"
+            - "smee-client@5.0.0"
+            - "--url"
+            - "$(SMEE_URL)"
+            - "--target"
+            - "http://jenkins.jenkins.svc.cluster.local:8080/github-webhook/"
+          env:
+            - name: SMEE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: smee-channel
+                  key: url
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false # npx needs to write its package cache
+            capabilities:
+              drop: ["ALL"]
