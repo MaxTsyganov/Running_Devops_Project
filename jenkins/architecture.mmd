@@ -1,0 +1,47 @@
+%% Jenkins CI/CD architecture - Assignment 4
+%% Groundwork skeleton: structure only, matches the PDF's required-elements
+%% list (section 7). Styling/colors and exact resource names still TODO -
+%% will be polished the same way the Assignment 3 diagram was.
+
+flowchart TB
+    Dev[Developer] -->|push / PR| Git[Git repository]
+    Git -->|webhook| CIJob
+
+    subgraph AWS[AWS Account]
+        subgraph EKS[EKS Cluster]
+            subgraph JenkinsNS["jenkins namespace"]
+                Controller[Jenkins controller Pod\nfixed, never runs builds]
+                PVC[(PersistentVolumeClaim\nJenkins home)]
+                Controller --- PVC
+                CIJob[ci-application job]
+                CDJob[cd-application job]
+                CIAgent["CI agent Pod (ephemeral)\nci-build-sa"]
+                CDAgent["CD agent Pod (ephemeral)\ncd-deploy-sa"]
+                Controller -.spawns.-> CIAgent
+                Controller -.spawns.-> CDAgent
+                CIJob --> CIAgent
+                CDJob --> CDAgent
+            end
+
+            subgraph AppNS["devops-app namespace"]
+                Deployments[Deployments: frontend / backend / worker]
+                Services[Services]
+                Ingress[Ingress / LoadBalancer]
+            end
+
+            CDAgent -->|kubectl / helm\nvia cd-deploy-sa RBAC| Deployments
+        end
+
+        ECR[(ECR registry)]
+        CIAgent -->|push image\nvia IRSA| ECR
+        CDAgent -.reads tag/digest.-> ECR
+    end
+
+    User[End user] --> Ingress
+    Ingress --> Services --> Deployments
+
+    %% TODO once decisions are locked in:
+    %% - RDS / S3 / SNS boxes (reused from Assignment 3)
+    %% - public/private subnet boundaries, node groups
+    %% - ServiceAccount/RBAC/Secret boundaries drawn explicitly
+    %% - Jenkins UI exposure path (Ingress vs LoadBalancer vs port-forward)

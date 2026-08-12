@@ -1,0 +1,5 @@
+# Test-only dependencies - never baked into the production image
+# (backend/Dockerfile only installs requirements.txt). CI installs these
+# separately in the lint/test container.
+-r requirements.txt
+pytest==8.3.3

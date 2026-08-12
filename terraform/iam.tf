@@ -83,6 +83,46 @@ resource "aws_iam_policy" "external_secrets_policy" {
   })
 }
 
+# Separate policy for Jenkins CI (attached to ci-build-sa via IRSA). Scoped
+# to pushing images into exactly this project's three ECR repositories -
+# ecr:GetAuthorizationToken has to be Resource "*" (ECR doesn't support
+# resource-level restriction on that one action), but everything else is
+# locked to the specific repo ARNs below.
+data "aws_caller_identity" "current" {}
+
+resource "aws_iam_policy" "ci_ecr_push_policy" {
+  name        = "DevOps-CI-ECR-Push-Policy"
+  description = "Minimal permissions for Jenkins CI to push images to this project's ECR repositories - nothing else."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "ECRAuthToken"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = ["*"]
+      },
+      {
+        Sid    = "ECRPushToOurRepositoriesOnly"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+          "ecr:PutImage",
+        ]
+        Resource = [
+          "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/devops-frontend",
+          "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/devops-backend",
+          "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/devops-worker",
+        ]
+      }
+    ]
+  })
+}
+
 # Separate policy for Fluent Bit (setup.sh attaches this to fluent-bit-sa via
 # IRSA, same pattern as above). No logs:CreateLogGroup here on purpose - the
 # log group is created by Terraform (logging.tf), not by Fluent Bit itself,

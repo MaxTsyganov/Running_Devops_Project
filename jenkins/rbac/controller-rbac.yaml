@@ -1,0 +1,44 @@
+# RBAC for the Jenkins controller itself: scoped to the jenkins namespace
+# only, permissions limited to what's needed to launch/manage ephemeral agent
+# Pods. No cluster-admin, no access to devops-app resources.
+#
+# No ServiceAccount here on purpose - the Helm chart creates and owns
+# "jenkins-controller" itself (controller.serviceAccount.create=true). Trying
+# to also create it here would hit the same Helm ownership conflict as the
+# devops-app namespace did: Helm refuses to adopt a resource it didn't create.
+# rbac.create=false in jenkins/values.yaml disables the chart's own default
+# Role/RoleBinding so this one (more explicit, reviewable) is the only one in
+# effect.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jenkins-controller
+  namespace: jenkins
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec", "pods/log", "persistentvolumeclaims", "events"]
+    verbs: ["get", "list", "watch", "create", "delete", "update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]  # in-namespace only - the Kubernetes Credentials
+                             # Provider plugin reads Secrets here for credential
+                             # injection into pipelines
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]  # the chart's config-reload-init sidecar
+                                       # reads ConfigMaps in-namespace to load
+                                       # JCasC config onto the shared volume
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-controller
+  namespace: jenkins
+subjects:
+  - kind: ServiceAccount
+    name: jenkins-controller
+    namespace: jenkins
+roleRef:
+  kind: Role
+  name: jenkins-controller
+  apiGroup: rbac.authorization.k8s.io

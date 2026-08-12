@@ -1,0 +1,48 @@
+# RBAC for the CD agent Pod. The ServiceAccount object lives in the jenkins
+# namespace - CD agent Pods are scheduled there (same as the controller and
+# CI agents), and a Pod can only use a ServiceAccount from its own namespace.
+# The Role it's bound to grants access only in devops-app (where it actually
+# needs to act), via a cross-namespace RoleBinding - a normal, supported RBAC
+# pattern: the Role/RoleBinding live in devops-app, the subject they name
+# lives in jenkins.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cd-deploy-sa
+  namespace: jenkins
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cd-deploy
+  namespace: devops-app
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["services", "pods", "configmaps", "secrets", "serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cd-deploy
+  namespace: devops-app
+subjects:
+  - kind: ServiceAccount
+    name: cd-deploy-sa
+    namespace: jenkins
+roleRef:
+  kind: Role
+  name: cd-deploy
+  apiGroup: rbac.authorization.k8s.io

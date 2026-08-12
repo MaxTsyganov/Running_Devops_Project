@@ -1,0 +1,193 @@
+// CD pipeline: deploys an image that CI already built and pushed. Never
+// rebuilds an image, never touches application source. Runs on the
+// "cd-agent" Kubernetes pod template (jenkins/values.yaml, kubectl+helm), as
+// cd-deploy-sa - RBAC scoped to exactly the devops-app namespace and the
+// resource types Helm needs to touch, nothing broader (jenkins/rbac/cd-deploy-rbac.yaml).
+pipeline {
+    agent {
+        kubernetes {
+            label 'cd-agent'
+        }
+    }
+
+    parameters {
+        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Immutable tag built by ci-application - never "latest"')
+    }
+
+    options {
+        timestamps()
+        timeout(time: 15, unit: 'MINUTES')
+        disableConcurrentBuilds() // never two deploys to devops-app running at once
+    }
+
+    environment {
+        ECR_REGISTRY     = '957905603240.dkr.ecr.us-east-1.amazonaws.com'
+        TARGET_NAMESPACE = 'devops-app'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Input Validation') {
+            steps {
+                script {
+                    if (!params.IMAGE_TAG?.trim()) {
+                        error("IMAGE_TAG is required - this pipeline only deploys an image CI already built, it never builds one itself.")
+                    }
+                    if (params.IMAGE_TAG == 'latest') {
+                        error("IMAGE_TAG must be an immutable tag (commit SHA), not 'latest'.")
+                    }
+                }
+                // Traceability: who triggered this, which image, where it's
+                // going - the actual CI build/commit that produced this tag
+                // is recoverable from ci-application's build history (the
+                // tag itself IS the short commit SHA).
+                echo "=== Deployment request ==="
+                echo "Triggered by:     ${currentBuild.getBuildCauses()}"
+                echo "Image tag:        ${params.IMAGE_TAG}"
+                echo "Target namespace: ${env.TARGET_NAMESPACE}"
+                echo "Target cluster:   devops-cluster (in-cluster deploy via cd-deploy-sa ServiceAccount)"
+            }
+        }
+
+        stage('Load infra config') {
+            steps {
+                // Non-secret infra values (RDS host, S3 bucket, SNS topic,
+                // the Secrets Manager secret NAME) change every time
+                // terraform apply runs, so they're read from a ConfigMap
+                // instead of hardcoded here - keeps this file correct across
+                // redeploys without editing it.
+                container('deploy') {
+                    script {
+                        env.DB_HOST        = sh(script: "kubectl get configmap terraform-outputs -n ${env.TARGET_NAMESPACE} -o jsonpath='{.data.dbHost}'", returnStdout: true).trim()
+                        env.S3_BUCKET      = sh(script: "kubectl get configmap terraform-outputs -n ${env.TARGET_NAMESPACE} -o jsonpath='{.data.s3BucketName}'", returnStdout: true).trim()
+                        env.SNS_TOPIC      = sh(script: "kubectl get configmap terraform-outputs -n ${env.TARGET_NAMESPACE} -o jsonpath='{.data.snsTopicArn}'", returnStdout: true).trim()
+                        env.DB_SECRET_NAME = sh(script: "kubectl get configmap terraform-outputs -n ${env.TARGET_NAMESPACE} -o jsonpath='{.data.dbPasswordSecretName}'", returnStdout: true).trim()
+                    }
+                }
+            }
+        }
+
+        stage('Manifest Validation') {
+            steps {
+                container('deploy') {
+                    sh '''
+                        set -e
+                        helm lint helm/devops-app --strict
+                        helm template devops-app ./helm/devops-app \
+                            --namespace ${TARGET_NAMESPACE} \
+                            --set image.registry=${ECR_REGISTRY} \
+                            --set image.tag=${IMAGE_TAG} \
+                            --set config.dbHost=${DB_HOST} \
+                            --set config.s3BucketName=${S3_BUCKET} \
+                            --set config.snsTopicArn=${SNS_TOPIC} \
+                            --set secrets.dbPasswordSecretName=${DB_SECRET_NAME} \
+                            > /dev/null
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                container('deploy') {
+                    sh '''
+                        set -e
+                        helm upgrade --install devops-app ./helm/devops-app \
+                            --namespace ${TARGET_NAMESPACE} --create-namespace \
+                            --set image.registry=${ECR_REGISTRY} \
+                            --set image.tag=${IMAGE_TAG} \
+                            --set config.dbHost=${DB_HOST} \
+                            --set config.s3BucketName=${S3_BUCKET} \
+                            --set config.snsTopicArn=${SNS_TOPIC} \
+                            --set secrets.dbPasswordSecretName=${DB_SECRET_NAME} \
+                            --wait --timeout 5m
+                    '''
+                }
+            }
+        }
+
+        stage('Rollout') {
+            steps {
+                container('deploy') {
+                    sh '''
+                        set -e
+                        kubectl rollout status deployment/frontend-deployment -n ${TARGET_NAMESPACE} --timeout=180s
+                        kubectl rollout status deployment/backend-deployment -n ${TARGET_NAMESPACE} --timeout=180s
+                        kubectl rollout status deployment/worker-deployment -n ${TARGET_NAMESPACE} --timeout=180s
+                    '''
+                }
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                container('deploy') {
+                    sh '''
+                        set -e
+                        echo "=== Pods ==="
+                        kubectl get pods -n ${TARGET_NAMESPACE} -o wide
+                        echo "=== Services ==="
+                        kubectl get services -n ${TARGET_NAMESPACE}
+                        echo "=== Running image versions ==="
+                        kubectl get pods -n ${TARGET_NAMESPACE} -o custom-columns='NAME:.metadata.name,IMAGE:.spec.containers[0].image'
+
+                        WRONG_VERSION=$(kubectl get pods -n ${TARGET_NAMESPACE} \
+                            -o custom-columns='IMAGE:.spec.containers[0].image' --no-headers \
+                            | grep -v ":${IMAGE_TAG}$" || true)
+                        if [ -n "$WRONG_VERSION" ]; then
+                            echo "Pod(s) running an unexpected image tag (expected :${IMAGE_TAG}):"
+                            echo "$WRONG_VERSION"
+                            exit 1
+                        fi
+                        echo "Confirmed: every pod is running :${IMAGE_TAG}"
+                    '''
+                }
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                container('deploy') {
+                    sh '''
+                        set -e
+                        EXTERNAL_HOST=$(kubectl get svc frontend-service -n ${TARGET_NAMESPACE} \
+                            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+                        for i in $(seq 1 12); do
+                            if wget -q -O- --timeout=5 "http://${EXTERNAL_HOST}/" >/dev/null 2>&1; then
+                                echo "Smoke test passed: frontend responded on http://${EXTERNAL_HOST}/"
+                                exit 0
+                            fi
+                            echo "Waiting for LoadBalancer DNS to propagate... ($i/12)"
+                            sleep 10
+                        done
+                        echo "Smoke test FAILED: frontend never responded"
+                        exit 1
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo """
+=== DEPLOYMENT FAILED ===
+Rollback to the previous Helm revision:
+  helm rollback devops-app -n ${env.TARGET_NAMESPACE}
+
+Or investigate first:
+  kubectl get pods -n ${env.TARGET_NAMESPACE}
+  kubectl describe pod <pod-name> -n ${env.TARGET_NAMESPACE}
+  kubectl get events -n ${env.TARGET_NAMESPACE} --sort-by=.metadata.creationTimestamp
+"""
+        }
+        always {
+            cleanWs()
+        }
+    }
+}

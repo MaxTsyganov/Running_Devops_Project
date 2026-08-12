@@ -1,0 +1,124 @@
+# Values for the official Jenkins Helm chart (jenkinsci/jenkins).
+# Every version below was checked against the actual current release before
+# being pinned here (Docker Hub / plugins.jenkins.io / GitHub releases APIs),
+# not guessed - see the project's history of getting burned by guessed tags.
+
+controller:
+  image:
+    repository: "jenkins/jenkins"
+    tag: "2.541.3-lts-jdk17"
+
+  # Controller never runs builds itself - only ephemeral agent Pods do.
+  numExecutors: 0
+
+  JCasC:
+    defaultConfig: true
+    configScripts:
+      main: |
+        jenkins:
+          systemMessage: "DevOps on AWS - Assignment 4 (Jenkins CI/CD). Configured entirely as code (JCasC) - no manual UI setup."
+          # numExecutors is NOT set here - defaultConfig=true already generates
+          # it from controller.numExecutors above. Setting it in both places
+          # trips JCasC's ErrorOnConflictMergeStrategy (two sources defining
+          # the same key is treated as a hard error, not a silent override).
+          clouds:
+            - kubernetes:
+                name: "kubernetes"
+                serverUrl: "https://kubernetes.default.svc"
+                namespace: "jenkins"
+                jenkinsUrl: "http://jenkins.jenkins.svc.cluster.local:8080"
+                jenkinsTunnel: "jenkins-agent.jenkins.svc.cluster.local:50000"
+                containerCapStr: "10"
+                podRetention: "never"
+                templates:
+                  - name: "ci-agent"
+                    label: "ci-agent"
+                    namespace: "jenkins"
+                    serviceAccount: "ci-build-sa"
+                    idleMinutes: 5
+                    containers:
+                      # Lint/test tooling - same base image the app's own
+                      # Dockerfiles use, so results reflect the real runtime.
+                      - name: "python"
+                        image: "python:3.11-slim"
+                        command: "sleep"
+                        args: "99d"
+                        resourceRequestCpu: "250m"
+                        resourceRequestMemory: "512Mi"
+                        resourceLimitCpu: "500m"
+                        resourceLimitMemory: "1Gi"
+                      - name: "kaniko"
+                        image: "gcr.io/kaniko-project/executor:v1.24.0-debug"
+                        command: "sleep"
+                        args: "99d"
+                        resourceRequestCpu: "500m"
+                        resourceRequestMemory: "1Gi"
+                        resourceLimitCpu: "1"
+                        resourceLimitMemory: "2Gi"
+                  - name: "cd-agent"
+                    label: "cd-agent"
+                    namespace: "jenkins"
+                    serviceAccount: "cd-deploy-sa"
+                    idleMinutes: 5
+                    containers:
+                      - name: "deploy"
+                        image: "dtzar/helm-kubectl:3.16"
+                        command: "sleep"
+                        args: "99d"
+                        resourceRequestCpu: "250m"
+                        resourceRequestMemory: "512Mi"
+                        resourceLimitCpu: "500m"
+                        resourceLimitMemory: "1Gi"
+
+  # Job creation deliberately does NOT happen here. An earlier attempt tried
+  # bootstrapping a seed job through JCasC's own jobs: section (executed
+  # during Jenkins' startup sequence) - a syntax slip in that script crashed
+  # the entire controller boot, since job-creation and core startup shared
+  # the same failure path. jenkins/jobs/create-jobs.sh creates
+  # ci-application/cd-application afterwards instead, as a separate action
+  # against an already-running Jenkins (via its REST API) - a bug there now
+  # just fails that one script, not the whole controller.
+
+  # Plugin names only, no individual version pins. An earlier attempt pinned
+  # each plugin to whatever version plugins.jenkins.io reported at the
+  # moment it was checked - those versions turned out mutually incompatible
+  # (a snakeyaml/credentials ClassNotFoundException killed the controller on
+  # boot), because each plugin's dependency graph was verified in isolation,
+  # not as a set. Reproducibility instead comes from the pinned Jenkins core
+  # image tag above (controller.image.tag) - for the same core version, the
+  # plugin installer resolves the same mutually-compatible set every time,
+  # which is real reproducibility without hand-solving a dependency graph
+  # that's the installer's job to solve, not ours.
+  installPlugins:
+    - "kubernetes"
+    - "workflow-aggregator"
+    - "git"
+    - "github"
+    - "job-dsl"
+    - "configuration-as-code"
+    - "credentials-binding"
+    - "timestamper"
+    - "ws-cleanup"
+
+  serviceType: ClusterIP # not exposed publicly - reach it via port-forward for now
+
+persistence:
+  enabled: true
+  storageClass: "ebs-gp3"
+  size: 8Gi
+
+# Dynamic agents are defined above as JCasC Kubernetes cloud pod templates,
+# not the chart's own simplified default-agent mechanism.
+agent:
+  enabled: false
+
+rbac:
+  create: false # we supply our own Role/RoleBinding (jenkins/rbac/controller-rbac.yaml)
+
+# NOTE: serviceAccount is a top-level key in this chart, not nested under
+# controller - confirmed against the chart's actual default values (an
+# earlier attempt had it nested and the override was silently ignored,
+# leaving the pod on the chart's autogenerated SA name instead).
+serviceAccount:
+  create: true
+  name: jenkins-controller

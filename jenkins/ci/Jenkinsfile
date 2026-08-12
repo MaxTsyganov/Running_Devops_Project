@@ -1,0 +1,142 @@
+// CI pipeline: build, test, scan, push. Never deploys - that's
+// jenkins/cd/Jenkinsfile's job (see the CI/CD separation table in the
+// assignment brief). Runs on the "ci-agent" Kubernetes pod template
+// (jenkins/values.yaml), which has two containers: "python" for lint/test,
+// "kaniko" for the actual image build - kept separate from the controller
+// entirely, and never mounts the node's Docker socket (Kaniko builds OCI
+// images without a daemon at all).
+pipeline {
+    agent {
+        kubernetes {
+            label 'ci-agent'
+        }
+    }
+
+    environment {
+        // Non-secret - the registry hostname and repo names, not credentials.
+        // ECR auth itself goes through ci-build-sa's IRSA role automatically;
+        // Kaniko's ECR credential helper picks it up with no explicit
+        // credential ever appearing in this file.
+        ECR_REGISTRY = '957905603240.dkr.ecr.us-east-1.amazonaws.com'
+    }
+
+    options {
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    triggers {
+        githubPush()
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short=8 HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = env.GIT_COMMIT_SHORT
+                }
+                echo "Branch:       ${env.GIT_BRANCH ?: env.BRANCH_NAME}"
+                echo "Commit:       ${env.GIT_COMMIT_SHORT}"
+                echo "Build number: ${env.BUILD_NUMBER}"
+                echo "Image tag:    ${env.IMAGE_TAG}"
+            }
+        }
+
+        stage('Validation') {
+            steps {
+                sh '''
+                    set -e
+                    for svc in frontend backend worker; do
+                        test -f "$svc/Dockerfile" || { echo "Missing $svc/Dockerfile"; exit 1; }
+                        test -f "$svc/.dockerignore" || { echo "Missing $svc/.dockerignore"; exit 1; }
+                    done
+                    test -f helm/devops-app/Chart.yaml || { echo "Missing Helm chart"; exit 1; }
+                    test -f helm/devops-app/values.yaml || { echo "Missing chart values.yaml"; exit 1; }
+                '''
+            }
+        }
+
+        stage('Static Analysis / Lint') {
+            steps {
+                container('python') {
+                    sh '''
+                        set -e
+                        pip install --quiet --no-cache-dir pyflakes==3.2.0
+                        python -m pyflakes backend/app.py worker/worker.py
+                    '''
+                }
+            }
+        }
+
+        stage('Tests') {
+            steps {
+                container('python') {
+                    sh '''
+                        set -e
+                        cd backend
+                        pip install --quiet --no-cache-dir -r requirements-test.txt
+                        python -m pytest test_app.py -v --junitxml=test-results.xml
+                    '''
+                }
+            }
+            post {
+                always {
+                    junit 'backend/test-results.xml'
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                container('kaniko') {
+                    sh '''
+                        set -e
+                        for svc in frontend backend worker; do
+                            echo "Building devops-$svc:${IMAGE_TAG}..."
+                            /kaniko/executor \
+                                --context "dir://$(pwd)/$svc" \
+                                --dockerfile "$svc/Dockerfile" \
+                                --destination "${ECR_REGISTRY}/devops-$svc:${IMAGE_TAG}" \
+                                --digest-file "/workspace/$svc-digest.txt" \
+                                --cache=false
+                        done
+                    '''
+                }
+            }
+        }
+
+        stage('Publish Metadata') {
+            steps {
+                container('kaniko') {
+                    sh '''
+                        {
+                            echo "IMAGE_TAG=${IMAGE_TAG}"
+                            for svc in frontend backend worker; do
+                                echo "${svc}_DIGEST=$(cat /workspace/$svc-digest.txt)"
+                            done
+                        } > image-metadata.txt
+                        cat image-metadata.txt
+                    '''
+                }
+                archiveArtifacts artifacts: 'image-metadata.txt', fingerprint: true
+            }
+        }
+    }
+
+    post {
+        // Runs regardless of outcome - workspace (and any transient
+        // credentials the Kubernetes plugin injected for this build) is
+        // cleaned up whether the build passed or failed.
+        always {
+            cleanWs()
+        }
+        success {
+            echo "CI succeeded - triggering cd-application with IMAGE_TAG=${env.IMAGE_TAG}"
+            build job: 'cd-application',
+                  parameters: [string(name: 'IMAGE_TAG', value: env.IMAGE_TAG)],
+                  wait: false
+        }
+    }
+}
