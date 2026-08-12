@@ -47,22 +47,30 @@ controller:
                     containers:
                       # Lint/test tooling - same base image the app's own
                       # Dockerfiles use, so results reflect the real runtime.
+                      # Sized for a t3.small cluster with real headroom
+                      # constraints (~900Mi free per node with the app +
+                      # Jenkins controller already resident) - the original
+                      # 512Mi/1Gi + 1Gi/2Gi made this pod unschedulable on
+                      # any node regardless of bin-packing, confirmed via
+                      # `kubectl describe nodes`. These are small builds
+                      # (python-slim/nginx-alpine based images), so lower
+                      # requests are realistic, not just a workaround.
                       - name: "python"
                         image: "python:3.11-slim"
                         command: "sleep"
                         args: "99d"
-                        resourceRequestCpu: "250m"
-                        resourceRequestMemory: "512Mi"
+                        resourceRequestCpu: "150m"
+                        resourceRequestMemory: "200Mi"
                         resourceLimitCpu: "500m"
-                        resourceLimitMemory: "1Gi"
+                        resourceLimitMemory: "512Mi"
                       - name: "kaniko"
                         image: "gcr.io/kaniko-project/executor:v1.24.0-debug"
                         command: "sleep"
                         args: "99d"
-                        resourceRequestCpu: "500m"
-                        resourceRequestMemory: "1Gi"
+                        resourceRequestCpu: "250m"
+                        resourceRequestMemory: "400Mi"
                         resourceLimitCpu: "1"
-                        resourceLimitMemory: "2Gi"
+                        resourceLimitMemory: "800Mi"
                   - name: "cd-agent"
                     label: "cd-agent"
                     namespace: "jenkins"
