@@ -7,6 +7,19 @@ metadata:
     app: frontend
 spec:
   replicas: {{ .Values.frontend.replicas }}
+  # maxSurge: 0 - this cluster (t3.small nodes) is tight on both memory and
+  # per-node pod count; the default strategy needs room for old+new pods to
+  # coexist briefly, which this cluster can't reliably spare mid-rollout
+  # (confirmed: a 3-deployment rollout hit "Insufficient memory" AND "Too
+  # many pods" scheduling failures simultaneously). maxUnavailable: 1 frees
+  # an old pod before creating its replacement instead, trading a few
+  # seconds of reduced capacity for never needing surge headroom - a fine
+  # trade for a low-traffic demo app.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: frontend
@@ -80,6 +93,12 @@ metadata:
     app: backend
 spec:
   replicas: {{ .Values.backend.replicas }}
+  # See frontend-deployment above for why maxSurge: 0.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: backend
@@ -143,6 +162,14 @@ metadata:
     app: worker
 spec:
   replicas: {{ .Values.worker.replicas }}
+  # See frontend-deployment above for why maxSurge: 0. With a single replica
+  # this behaves like Recreate (old pod goes, then the new one comes up) -
+  # intentional, not just incidental.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: worker
