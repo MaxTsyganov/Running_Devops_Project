@@ -14,6 +14,10 @@ pipeline {
             // template's containers from the Kubernetes cloud config.
             // inheritFrom is what actually references the pre-defined
             // template (jenkins/values.yaml) and its python/kaniko containers.
+            // cloud is explicit too - there are two registered clouds (the
+            // chart auto-injects an empty one named "kubernetes"), and
+            // without naming which one to search, ci-agent wasn't resolving.
+            cloud 'devops-agents'
             inheritFrom 'ci-agent'
         }
     }

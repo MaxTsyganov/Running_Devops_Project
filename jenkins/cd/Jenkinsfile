@@ -7,6 +7,8 @@ pipeline {
     agent {
         kubernetes {
             // inheritFrom, not label - see jenkins/ci/Jenkinsfile for why.
+            // cloud is explicit too, for the same reason (two clouds exist).
+            cloud 'devops-agents'
             inheritFrom 'cd-agent'
         }
     }
