@@ -22,8 +22,16 @@ controller:
           # trips JCasC's ErrorOnConflictMergeStrategy (two sources defining
           # the same key is treated as a hard error, not a silent override).
           clouds:
+            # Named "devops-agents", not "kubernetes" - the Helm chart's own
+            # defaultConfig auto-injects a second, separate cloud already
+            # named "kubernetes" (empty, no templates, serverUrl without
+            # ".svc"). Two clouds sharing one name caused the scheduler to
+            # resolve the chart's empty one first and fall back to a bare
+            # jnlp-only pod, silently ignoring our ci-agent/cd-agent
+            # templates below - confirmed via the CasC "export" endpoint,
+            # which is the only way this was actually visible.
             - kubernetes:
-                name: "kubernetes"
+                name: "devops-agents"
                 serverUrl: "https://kubernetes.default.svc"
                 namespace: "jenkins"
                 jenkinsUrl: "http://jenkins.jenkins.svc.cluster.local:8080"

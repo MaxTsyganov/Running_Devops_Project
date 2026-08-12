@@ -8,7 +8,13 @@
 pipeline {
     agent {
         kubernetes {
-            label 'ci-agent'
+            // inheritFrom, not label: "label" alone creates a brand-new
+            // inline template (jnlp only, no containers) that just happens
+            // to share this string - it does NOT pull in the ci-agent
+            // template's containers from the Kubernetes cloud config.
+            // inheritFrom is what actually references the pre-defined
+            // template (jenkins/values.yaml) and its python/kaniko containers.
+            inheritFrom 'ci-agent'
         }
     }
 

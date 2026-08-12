@@ -6,7 +6,8 @@
 pipeline {
     agent {
         kubernetes {
-            label 'cd-agent'
+            // inheritFrom, not label - see jenkins/ci/Jenkinsfile for why.
+            inheritFrom 'cd-agent'
         }
     }
 
