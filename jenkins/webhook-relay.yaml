@@ -6,16 +6,102 @@
 # to Jenkins' internal ClusterIP service. Jenkins never gets an inbound port,
 # public IP, Ingress, or LoadBalancer of its own.
 #
-# Uses the official smee-client npm package (published by the probot org,
-# the same org that runs smee.io) via npx on the official node image, rather
-# than any of the several unofficial third-party Docker images floating
-# around for this - this pod has network reach to Jenkins, so it isn't
-# somewhere to trust an unverified rebuild.
+# NOT using the official smee-client npm package here - confirmed by direct testing that
+# smee-client (every version checked, including 2.0.4 and current 5.0.0) has
+# a real bug: its forwarding code does `mode: data["sec-fetch-mode"]`,
+# blindly reusing whatever incoming header value GitHub's delivery happened
+# to include as the `mode` option on its own OUTGOING fetch call. A real
+# GitHub push includes that header (via GitHub's Hookshot agent / smee.io's
+# Azure App Service front-end); a synthetic test request doesn't - which is
+# exactly why manual curl/wget tests against this same endpoint succeeded
+# while real GitHub deliveries got HTTP 405 from Jenkins every time. Root-
+# caused via direct inspection of smee-client's source and confirmed with
+# webhook.site captures of the real payload/headers. The replacement below
+# has been proven against a real GitHub push - ci-application started on
+# its own, no manual Build Now.
+#
+# The script below talks the same SSE protocol smee.io uses (a chunked
+# text/event-stream GET) directly via Node's stable fetch/streams - no
+# experimental flags, no extra dependencies - and forwards only a deliberate
+# allowlist of the actual GitHub headers Jenkins' github-webhook endpoint
+# needs, instead of blindly copying every incoming header/metadata key.
 #
 # SMEE_URL comes from a ConfigMap that configure-jenkins.sh creates (a fresh
 # https://smee.io/<channel> generated once via `curl -sI https://smee.io/new`
 # and persisted, not committed - re-running configure.sh reuses the existing
 # channel instead of minting a new one each time).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webhook-relay-script
+  namespace: jenkins
+data:
+  relay.js: |
+    const smeeUrl = process.env.SMEE_URL;
+    const target = process.env.TARGET_URL;
+
+    async function forward(data) {
+      // smee.io sends housekeeping messages (e.g. an empty {} on connect)
+      // through the same channel alongside real GitHub deliveries - only
+      // actual webhook payloads have an event type and a body.
+      if (!data["x-github-event"] || !data.body) {
+        return;
+      }
+      const body = JSON.stringify(data.body);
+      try {
+        const res = await fetch(target, {
+          method: "POST",
+          body,
+          headers: {
+            "content-type": "application/json",
+            "x-github-event": data["x-github-event"] || "",
+            "x-github-delivery": data["x-github-delivery"] || "",
+            "x-hub-signature-256": data["x-hub-signature-256"] || "",
+            "x-hub-signature": data["x-hub-signature"] || "",
+          },
+        });
+        console.log(`POST ${target} - ${res.status}`);
+      } catch (err) {
+        console.error("Forward failed:", err);
+      }
+    }
+
+    async function connect() {
+      console.log(`Connecting to ${smeeUrl}...`);
+      const res = await fetch(smeeUrl, { headers: { accept: "text/event-stream" } });
+      console.log(`Connected. Forwarding to ${target}`);
+
+      let buffer = "";
+      for await (const chunk of res.body) {
+        buffer += Buffer.from(chunk).toString("utf8");
+        let idx;
+        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+          const rawEvent = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const dataLines = rawEvent
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trim());
+          if (dataLines.length === 0) continue;
+          try {
+            const data = JSON.parse(dataLines.join("\n"));
+            await forward(data);
+          } catch (err) {
+            console.error("Failed to parse event:", err);
+          }
+        }
+      }
+      console.log("Connection closed, reconnecting in 3s...");
+      setTimeout(() => connect().catch(fatal), 3000);
+    }
+
+    function fatal(err) {
+      console.error("Fatal error, reconnecting in 3s:", err);
+      setTimeout(() => connect().catch(fatal), 3000);
+    }
+
+    connect().catch(fatal);
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -37,22 +123,21 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
       containers:
-        - name: smee-client
+        - name: relay
           image: node:22.22-alpine3.24
-          command: ["npx"]
-          args:
-            - "--yes"
-            - "smee-client@5.0.0"
-            - "--url"
-            - "$(SMEE_URL)"
-            - "--target"
-            - "http://jenkins.jenkins.svc.cluster.local:8080/github-webhook/"
+          command: ["node", "/relay/relay.js"]
           env:
             - name: SMEE_URL
               valueFrom:
                 configMapKeyRef:
                   name: smee-channel
                   key: url
+            - name: TARGET_URL
+              value: "http://jenkins.jenkins.svc.cluster.local:8080/github-webhook/"
+          volumeMounts:
+            - name: script
+              mountPath: /relay
+              readOnly: true
           resources:
             requests:
               cpu: "50m"
@@ -62,6 +147,10 @@ spec:
               memory: "128Mi"
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false # npx needs to write its package cache
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+      volumes:
+        - name: script
+          configMap:
+            name: webhook-relay-script
