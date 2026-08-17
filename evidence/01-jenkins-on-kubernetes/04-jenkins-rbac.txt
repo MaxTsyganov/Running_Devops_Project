@@ -1,0 +1,12 @@
+=== kubectl get serviceaccount,role,rolebinding -n jenkins ===
+NAME                                SECRETS   AGE
+serviceaccount/cd-deploy-sa         0         82m
+serviceaccount/ci-build-sa          0         82m
+serviceaccount/default              0         82m
+serviceaccount/jenkins-controller   0         81m
+
+NAME                                                CREATED AT
+role.rbac.authorization.k8s.io/jenkins-controller   2026-08-17T16:27:48Z
+
+NAME                                                       ROLE                      AGE
+rolebinding.rbac.authorization.k8s.io/jenkins-controller   Role/jenkins-controller   82m

@@ -1,0 +1,3 @@
+=== helm list -n jenkins ===
+NAME   	NAMESPACE	REVISION	UPDATED                              	STATUS  	CHART         	APP VERSION
+jenkins	jenkins  	3       	2026-08-17 20:35:07.0706362 +0300 IDT	deployed	jenkins-5.9.54	2.568.2    

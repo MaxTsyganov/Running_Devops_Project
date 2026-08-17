@@ -1,0 +1,18 @@
+=== CD never rebuilds - it only ever receives an existing tag ===
+jenkins/cd/Jenkinsfile has no docker/kaniko build step anywhere - confirmed
+structurally (grep the file itself):
+(no matches - confirms no build capability exists in this pipeline)
+
+Its Input Validation stage instead requires IMAGE_TAG to already exist and
+rejects 'latest' outright - see console log, 'Input Validation' stage:
+[Pipeline] // script
+[Pipeline] echo
+[2026-08-17T17:48:39.267Z] === Deployment request ===
+[Pipeline] echo
+[2026-08-17T17:48:39.290Z] Triggered by:     [[_class:org.jenkinsci.plugins.workflow.support.steps.build.BuildUpstreamCause, shortDescription:Started by upstream project "ci-application" build number 7, upstreamBuild:7, upstreamProject:ci-application, upstreamUrl:job/ci-application/]]
+[Pipeline] echo
+[2026-08-17T17:48:39.311Z] Image tag:        3b7291b1
+[Pipeline] echo
+[2026-08-17T17:48:39.332Z] Target namespace: devops-app
+[Pipeline] echo
+[2026-08-17T17:48:39.351Z] Target cluster:   devops-cluster (in-cluster deploy via cd-deploy-sa ServiceAccount)

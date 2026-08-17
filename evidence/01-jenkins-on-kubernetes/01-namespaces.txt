@@ -1,0 +1,11 @@
+=== kubectl get namespaces ===
+NAME                STATUS   AGE
+amazon-cloudwatch   Active   113m
+cert-manager        Active   113m
+default             Active   160m
+devops-app          Active   116m
+external-secrets    Active   115m
+jenkins             Active   82m
+kube-node-lease     Active   160m
+kube-public         Active   160m
+kube-system         Active   160m

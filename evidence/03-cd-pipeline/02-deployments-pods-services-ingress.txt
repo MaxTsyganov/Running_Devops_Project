@@ -1,0 +1,16 @@
+=== kubectl get deployments,pods,services,ingress -n devops-app ===
+NAME                                  READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/backend-deployment    2/2     2            2           45m
+deployment.apps/frontend-deployment   2/2     2            2           45m
+deployment.apps/worker-deployment     1/1     1            1           45m
+
+NAME                                       READY   STATUS    RESTARTS   AGE
+pod/backend-deployment-79cdd7ddd5-f2277    1/1     Running   0          3m7s
+pod/backend-deployment-79cdd7ddd5-tpqpl    1/1     Running   0          3m23s
+pod/frontend-deployment-58f4f6bc68-76x59   1/1     Running   0          3m10s
+pod/frontend-deployment-58f4f6bc68-7wrkc   1/1     Running   0          3m23s
+pod/worker-deployment-69b98b945d-589w2     1/1     Running   0          3m23s
+
+NAME                       TYPE           CLUSTER-IP       EXTERNAL-IP                                                              PORT(S)                      AGE
+service/backend-service    ClusterIP      172.20.206.52    <none>                                                                   5000/TCP                     45m
+service/frontend-service   LoadBalancer   172.20.213.170   acd7eb451836e4b3f90a40f8ed739d7f-838274795.us-east-1.elb.amazonaws.com   80:30253/TCP,443:32317/TCP   45m

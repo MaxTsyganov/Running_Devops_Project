@@ -1,0 +1,6 @@
+=== kubectl get pods -n jenkins -o wide ===
+NAME                                 READY   STATUS    RESTARTS   AGE    IP          NODE                         NOMINATED NODE   READINESS GATES
+cd-application-5-s5h8j-vfssc-5l28n   2/2     Running   0          12m    10.0.2.60   ip-10-0-2-240.ec2.internal   <none>           <none>
+cd-application-6-8b8f8-r8zrq-xskm2   2/2     Running   0          2m6s   10.0.3.7    ip-10-0-3-165.ec2.internal   <none>           <none>
+jenkins-0                            2/2     Running   0          81m    10.0.3.75   ip-10-0-3-165.ec2.internal   <none>           <none>
+webhook-relay-78d5d77975-2xzbx       1/1     Running   0          65m    10.0.3.26   ip-10-0-3-158.ec2.internal   <none>           <none>

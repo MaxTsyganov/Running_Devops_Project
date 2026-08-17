@@ -1,0 +1,18 @@
+=== Traceability: CI build -> commit -> image tag -> CD deploy ===
+
+CI build #7 built and pushed images tagged :3b7291b1 (the short commit SHA of
+commit 3b7291b - 'revert: undo deliberate lint breakage').
+
+CD build #6 was triggered automatically by CI build #7's success, received
+IMAGE_TAG=3b7291b1 as a build parameter (not rebuilt), and its own Verify
+stage independently confirmed every Pod in devops-app is running exactly
+that tag - see 01-cd-build6-full-console-SUCCESS.txt, 'Verify' stage:
+
+[2026-08-17T17:49:21.820Z] + echo 'Confirmed: every pod is running :3b7291b1'
+[2026-08-17T17:49:21.820Z] Confirmed: every pod is running :3b7291b1
+[Pipeline] }
+[Pipeline] // container
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Smoke Test)

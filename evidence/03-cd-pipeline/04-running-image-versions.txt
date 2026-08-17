@@ -1,0 +1,9 @@
+=== kubectl get pods -n devops-app -o jsonpath='{..image}' ===
+957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:3b7291b1 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:3b7291b1 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:3b7291b1 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:3b7291b1 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:3b7291b1 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:3b7291b1 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:3b7291b1 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:3b7291b1 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:3b7291b1 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:3b7291b1
+
+=== Same, one per line for readability ===
+backend-deployment-79cdd7ddd5-f2277	957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:3b7291b1
+backend-deployment-79cdd7ddd5-tpqpl	957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:3b7291b1
+frontend-deployment-58f4f6bc68-76x59	957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:3b7291b1
+frontend-deployment-58f4f6bc68-7wrkc	957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:3b7291b1
+worker-deployment-69b98b945d-589w2	957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:3b7291b1

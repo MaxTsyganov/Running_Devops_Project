@@ -1,0 +1,7 @@
+=== kubectl get service,ingress,pvc -n jenkins ===
+NAME                    TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)     AGE
+service/jenkins         ClusterIP   172.20.172.116   <none>        8080/TCP    81m
+service/jenkins-agent   ClusterIP   172.20.188.120   <none>        50000/TCP   81m
+
+NAME                            STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+persistentvolumeclaim/jenkins   Bound    pvc-5c2f1c23-9522-48c9-9d97-21bb9bcfbe23   8Gi        RWO            ebs-gp3        <unset>                 81m

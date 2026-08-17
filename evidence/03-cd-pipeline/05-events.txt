@@ -1,0 +1,296 @@
+=== kubectl get events -n devops-app --sort-by=.metadata.creationTimestamp ===
+LAST SEEN   TYPE      REASON                         OBJECT                                      MESSAGE
+45m         Normal    EnsuringLoadBalancer           service/frontend-service                    Ensuring load balancer
+45m         Normal    ScalingReplicaSet              deployment/worker-deployment                Scaled up replica set worker-deployment-7c8776696d from 0 to 1
+45m         Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled up replica set frontend-deployment-54cddf9b6 from 0 to 2
+45m         Normal    NoPods                         poddisruptionbudget/backend-pdb             No matching pods found
+45m         Normal    ScalingReplicaSet              deployment/backend-deployment               Scaled up replica set backend-deployment-6f4d55f575 from 0 to 2
+45m         Normal    NoPods                         poddisruptionbudget/frontend-pdb            No matching pods found
+45m         Normal    Issuing                        certificate/frontend-tls-cert               Issuing certificate as Secret does not exist
+45m         Warning   FailedMount                    pod/frontend-deployment-54cddf9b6-v9vn4     MountVolume.SetUp failed for volume "tls-cert" : secret "frontend-tls-cert" not found
+45m         Warning   UpdateFailed                   externalsecret/app-secrets                  error processing spec.data[0] (key: devops-app/db-password), err: SecretStore "aws-secretsmanager" is not ready
+45m         Normal    WaitingForApproval             certificaterequest/frontend-tls-cert-1      Not signing CertificateRequest until it is Approved
+45m         Normal    WaitingForApproval             certificaterequest/frontend-tls-cert-1      Not signing CertificateRequest until it is Approved
+45m         Normal    WaitingForApproval             certificaterequest/frontend-tls-cert-1      Not signing CertificateRequest until it is Approved
+45m         Normal    WaitingForApproval             certificaterequest/frontend-tls-cert-1      Not signing CertificateRequest until it is Approved
+45m         Normal    WaitingForApproval             certificaterequest/frontend-tls-cert-1      Not signing CertificateRequest until it is Approved
+45m         Normal    SuccessfulCreate               replicaset/frontend-deployment-54cddf9b6    Created pod: frontend-deployment-54cddf9b6-v9vn4
+45m         Normal    CertificateIssued              certificaterequest/frontend-tls-cert-1      Certificate fetched from issuer successfully
+45m         Normal    Generated                      certificate/frontend-tls-cert               Stored new private key in temporary Secret resource "frontend-tls-cert-rbmjj"
+45m         Normal    Requested                      certificate/frontend-tls-cert               Created new CertificateRequest resource "frontend-tls-cert-1"
+45m         Normal    Issuing                        certificate/frontend-tls-cert               The certificate has been successfully issued
+45m         Normal    Scheduled                      pod/backend-deployment-6f4d55f575-8gc4d     Successfully assigned devops-app/backend-deployment-6f4d55f575-8gc4d to ip-10-0-3-158.ec2.internal
+45m         Normal    SuccessfulCreate               replicaset/worker-deployment-7c8776696d     Created pod: worker-deployment-7c8776696d-96dlm
+45m         Normal    Scheduled                      pod/worker-deployment-7c8776696d-96dlm      Successfully assigned devops-app/worker-deployment-7c8776696d-96dlm to ip-10-0-3-158.ec2.internal
+45m         Normal    SuccessfulCreate               replicaset/frontend-deployment-54cddf9b6    Created pod: frontend-deployment-54cddf9b6-dmb99
+45m         Normal    Scheduled                      pod/frontend-deployment-54cddf9b6-v9vn4     Successfully assigned devops-app/frontend-deployment-54cddf9b6-v9vn4 to ip-10-0-2-240.ec2.internal
+45m         Normal    Scheduled                      pod/frontend-deployment-54cddf9b6-dmb99     Successfully assigned devops-app/frontend-deployment-54cddf9b6-dmb99 to ip-10-0-3-158.ec2.internal
+45m         Normal    Scheduled                      pod/backend-deployment-6f4d55f575-vk845     Successfully assigned devops-app/backend-deployment-6f4d55f575-vk845 to ip-10-0-2-240.ec2.internal
+50s         Normal    Valid                          secretstore/aws-secretsmanager              store validated
+45m         Warning   FailedMount                    pod/frontend-deployment-54cddf9b6-dmb99     MountVolume.SetUp failed for volume "tls-cert" : secret "frontend-tls-cert" not found
+45m         Normal    SuccessfulCreate               replicaset/backend-deployment-6f4d55f575    Created pod: backend-deployment-6f4d55f575-8gc4d
+45m         Normal    SuccessfulCreate               replicaset/backend-deployment-6f4d55f575    Created pod: backend-deployment-6f4d55f575-vk845
+45m         Normal    cert-manager.io                certificaterequest/frontend-tls-cert-1      Certificate request has been approved by cert-manager.io
+3m51s       Normal    Created                        externalsecret/app-secrets                  secret created
+45m         Normal    Pulling                        pod/worker-deployment-7c8776696d-96dlm      Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:403fde96"
+45m         Normal    Pulling                        pod/backend-deployment-6f4d55f575-8gc4d     Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:403fde96"
+45m         Normal    Pulling                        pod/backend-deployment-6f4d55f575-vk845     Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:403fde96"
+45m         Normal    Pulling                        pod/frontend-deployment-54cddf9b6-v9vn4     Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:403fde96"
+45m         Normal    Pulling                        pod/frontend-deployment-54cddf9b6-dmb99     Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:403fde96"
+45m         Normal    EnsuredLoadBalancer            service/frontend-service                    Ensured load balancer
+45m         Normal    Pulled                         pod/backend-deployment-6f4d55f575-8gc4d     Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:403fde96" in 2.992s (2.992s including waiting). Image size: 66625660 bytes.
+45m         Normal    Pulled                         pod/frontend-deployment-54cddf9b6-v9vn4     Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:403fde96" in 2.326s (2.326s including waiting). Image size: 23054530 bytes.
+45m         Normal    Started                        pod/frontend-deployment-54cddf9b6-dmb99     Started container frontend
+45m         Normal    Started                        pod/frontend-deployment-54cddf9b6-v9vn4     Started container frontend
+45m         Normal    Created                        pod/frontend-deployment-54cddf9b6-v9vn4     Created container: frontend
+45m         Normal    Created                        pod/backend-deployment-6f4d55f575-8gc4d     Created container: backend
+45m         Normal    Pulled                         pod/worker-deployment-7c8776696d-96dlm      Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:403fde96" in 2.286s (2.286s including waiting). Image size: 64067064 bytes.
+45m         Normal    Created                        pod/frontend-deployment-54cddf9b6-dmb99     Created container: frontend
+45m         Normal    Created                        pod/worker-deployment-7c8776696d-96dlm      Created container: worker
+45m         Normal    Started                        pod/worker-deployment-7c8776696d-96dlm      Started container worker
+45m         Normal    Started                        pod/backend-deployment-6f4d55f575-8gc4d     Started container backend
+45m         Normal    Pulled                         pod/frontend-deployment-54cddf9b6-dmb99     Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:403fde96" in 2.586s (2.586s including waiting). Image size: 23054530 bytes.
+45m         Normal    Started                        pod/backend-deployment-6f4d55f575-vk845     Started container backend
+45m         Normal    Created                        pod/backend-deployment-6f4d55f575-vk845     Created container: backend
+45m         Normal    Pulled                         pod/backend-deployment-6f4d55f575-vk845     Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:403fde96" in 4.974s (4.974s including waiting). Image size: 66625660 bytes.
+42m         Warning   FailedComputeMetricsReplicas   horizontalpodautoscaler/frontend-hpa        invalid metrics (1 invalid out of 1), first error is: failed to get cpu resource metric value: failed to get cpu utilization: unable to get metrics for resource cpu: unable to fetch metrics from resource metrics API: the server could not find the requested resource (get pods.metrics.k8s.io)
+33s         Warning   FailedGetResourceMetric        horizontalpodautoscaler/frontend-hpa        failed to get cpu utilization: unable to get metrics for resource cpu: unable to fetch metrics from resource metrics API: the server could not find the requested resource (get pods.metrics.k8s.io)
+33s         Warning   FailedGetResourceMetric        horizontalpodautoscaler/backend-hpa         failed to get cpu utilization: unable to get metrics for resource cpu: unable to fetch metrics from resource metrics API: the server could not find the requested resource (get pods.metrics.k8s.io)
+42m         Warning   FailedComputeMetricsReplicas   horizontalpodautoscaler/backend-hpa         invalid metrics (1 invalid out of 1), first error is: failed to get cpu resource metric value: failed to get cpu utilization: unable to get metrics for resource cpu: unable to fetch metrics from resource metrics API: the server could not find the requested resource (get pods.metrics.k8s.io)
+31m         Normal    ScalingReplicaSet              deployment/worker-deployment                Scaled down replica set worker-deployment-7c8776696d from 1 to 0
+31m         Normal    SuccessfulDelete               replicaset/frontend-deployment-54cddf9b6    Deleted pod: frontend-deployment-54cddf9b6-v9vn4
+31m         Normal    Killing                        pod/frontend-deployment-54cddf9b6-v9vn4     Stopping container frontend
+31m         Normal    ScalingReplicaSet              deployment/backend-deployment               Scaled down replica set backend-deployment-6f4d55f575 from 2 to 1
+26m         Normal    ScalingReplicaSet              deployment/backend-deployment               Scaled up replica set backend-deployment-b7d78c97f from 0 to 1
+31m         Normal    Killing                        pod/backend-deployment-6f4d55f575-8gc4d     Stopping container backend
+31m         Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled down replica set frontend-deployment-54cddf9b6 from 2 to 1
+26m         Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled up replica set frontend-deployment-7bf9c644b from 0 to 1
+31m         Normal    SuccessfulDelete               replicaset/backend-deployment-6f4d55f575    Deleted pod: backend-deployment-6f4d55f575-8gc4d
+31m         Normal    SuccessfulCreate               replicaset/frontend-deployment-7bf9c644b    Created pod: frontend-deployment-7bf9c644b-m5tnx
+31m         Normal    Killing                        pod/worker-deployment-7c8776696d-96dlm      Stopping container worker
+31m         Normal    Scheduled                      pod/backend-deployment-b7d78c97f-g9pwr      Successfully assigned devops-app/backend-deployment-b7d78c97f-g9pwr to ip-10-0-3-158.ec2.internal
+31m         Normal    SuccessfulDelete               replicaset/worker-deployment-7c8776696d     Deleted pod: worker-deployment-7c8776696d-96dlm
+31m         Normal    SuccessfulCreate               replicaset/worker-deployment-fb6d89564      Created pod: worker-deployment-fb6d89564-t9t8v
+31m         Normal    Scheduled                      pod/worker-deployment-fb6d89564-t9t8v       Successfully assigned devops-app/worker-deployment-fb6d89564-t9t8v to ip-10-0-2-240.ec2.internal
+31m         Normal    Scheduled                      pod/frontend-deployment-7bf9c644b-m5tnx     Successfully assigned devops-app/frontend-deployment-7bf9c644b-m5tnx to ip-10-0-3-158.ec2.internal
+26m         Normal    ScalingReplicaSet              deployment/worker-deployment                Scaled up replica set worker-deployment-fb6d89564 from 0 to 1
+31m         Normal    SuccessfulCreate               replicaset/backend-deployment-b7d78c97f     Created pod: backend-deployment-b7d78c97f-g9pwr
+31m         Normal    Pulling                        pod/frontend-deployment-7bf9c644b-m5tnx     Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:71a42a0c"
+31m         Normal    Pulling                        pod/backend-deployment-b7d78c97f-g9pwr      Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:71a42a0c"
+31m         Normal    Pulling                        pod/worker-deployment-fb6d89564-t9t8v       Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:71a42a0c"
+31m         Normal    Started                        pod/worker-deployment-fb6d89564-t9t8v       Started container worker
+31m         Normal    Pulled                         pod/worker-deployment-fb6d89564-t9t8v       Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:71a42a0c" in 1.52s (1.52s including waiting). Image size: 64067584 bytes.
+31m         Normal    Created                        pod/worker-deployment-fb6d89564-t9t8v       Created container: worker
+31m         Normal    Created                        pod/frontend-deployment-7bf9c644b-m5tnx     Created container: frontend
+31m         Normal    Started                        pod/frontend-deployment-7bf9c644b-m5tnx     Started container frontend
+31m         Normal    Pulled                         pod/frontend-deployment-7bf9c644b-m5tnx     Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:71a42a0c" in 451ms (451ms including waiting). Image size: 23054540 bytes.
+31m         Normal    Started                        pod/backend-deployment-b7d78c97f-g9pwr      Started container backend
+31m         Normal    Pulled                         pod/backend-deployment-b7d78c97f-g9pwr      Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:71a42a0c" in 1.62s (1.62s including waiting). Image size: 66624790 bytes.
+31m         Normal    Created                        pod/backend-deployment-b7d78c97f-g9pwr      Created container: backend
+31m         Normal    SuccessfulCreate               replicaset/frontend-deployment-7bf9c644b    Created pod: frontend-deployment-7bf9c644b-rsb4l
+31m         Normal    SuccessfulDelete               replicaset/frontend-deployment-54cddf9b6    Deleted pod: frontend-deployment-54cddf9b6-dmb99
+31m         Normal    Killing                        pod/frontend-deployment-54cddf9b6-dmb99     Stopping container frontend
+31m         Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled down replica set frontend-deployment-54cddf9b6 from 1 to 0
+31m         Normal    Scheduled                      pod/frontend-deployment-7bf9c644b-rsb4l     Successfully assigned devops-app/frontend-deployment-7bf9c644b-rsb4l to ip-10-0-2-240.ec2.internal
+26m         Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled up replica set frontend-deployment-7bf9c644b from 1 to 2
+31m         Normal    Pulling                        pod/frontend-deployment-7bf9c644b-rsb4l     Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:71a42a0c"
+31m         Normal    Pulled                         pod/frontend-deployment-7bf9c644b-rsb4l     Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:71a42a0c" in 405ms (406ms including waiting). Image size: 23054540 bytes.
+31m         Normal    Created                        pod/frontend-deployment-7bf9c644b-rsb4l     Created container: frontend
+31m         Normal    Started                        pod/frontend-deployment-7bf9c644b-rsb4l     Started container frontend
+31m         Normal    ScalingReplicaSet              deployment/backend-deployment               Scaled down replica set backend-deployment-6f4d55f575 from 1 to 0
+26m         Normal    ScalingReplicaSet              deployment/backend-deployment               Scaled up replica set backend-deployment-b7d78c97f from 1 to 2
+31m         Normal    SuccessfulCreate               replicaset/backend-deployment-b7d78c97f     Created pod: backend-deployment-b7d78c97f-wvjpv
+31m         Normal    SuccessfulDelete               replicaset/backend-deployment-6f4d55f575    Deleted pod: backend-deployment-6f4d55f575-vk845
+31m         Normal    Scheduled                      pod/backend-deployment-b7d78c97f-wvjpv      Successfully assigned devops-app/backend-deployment-b7d78c97f-wvjpv to ip-10-0-2-240.ec2.internal
+31m         Normal    Killing                        pod/backend-deployment-6f4d55f575-vk845     Stopping container backend
+31m         Normal    Pulling                        pod/backend-deployment-b7d78c97f-wvjpv      Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:71a42a0c"
+31m         Normal    Started                        pod/backend-deployment-b7d78c97f-wvjpv      Started container backend
+31m         Normal    Created                        pod/backend-deployment-b7d78c97f-wvjpv      Created container: backend
+31m         Normal    Pulled                         pod/backend-deployment-b7d78c97f-wvjpv      Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:71a42a0c" in 1.86s (1.86s including waiting). Image size: 66624790 bytes.
+31m         Warning   Unhealthy                      pod/worker-deployment-7c8776696d-96dlm      Readiness probe errored and resulted in unknown state: rpc error: code = NotFound desc = failed to exec in container: failed to load task: no running task found: not found
+27m         Normal    SuccessfulDelete               replicaset/frontend-deployment-7bf9c644b    Deleted pod: frontend-deployment-7bf9c644b-m5tnx
+27m         Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled up replica set frontend-deployment-6c979f6484 from 0 to 1
+27m         Normal    Scheduled                      pod/backend-deployment-5d65ff6fc-bwgvh      Successfully assigned devops-app/backend-deployment-5d65ff6fc-bwgvh to ip-10-0-3-158.ec2.internal
+27m         Normal    SuccessfulCreate               replicaset/worker-deployment-8b4bdf878      Created pod: worker-deployment-8b4bdf878-42h97
+27m         Normal    ScalingReplicaSet              deployment/worker-deployment                Scaled up replica set worker-deployment-8b4bdf878 from 0 to 1
+27m         Normal    ScalingReplicaSet              deployment/backend-deployment               Scaled up replica set backend-deployment-5d65ff6fc from 0 to 1
+27m         Normal    SuccessfulDelete               replicaset/backend-deployment-b7d78c97f     Deleted pod: backend-deployment-b7d78c97f-wvjpv
+27m         Normal    SuccessfulDelete               replicaset/worker-deployment-fb6d89564      Deleted pod: worker-deployment-fb6d89564-t9t8v
+27m         Normal    Killing                        pod/backend-deployment-b7d78c97f-wvjpv      Stopping container backend
+27m         Normal    Killing                        pod/frontend-deployment-7bf9c644b-m5tnx     Stopping container frontend
+27m         Normal    SuccessfulCreate               replicaset/backend-deployment-5d65ff6fc     Created pod: backend-deployment-5d65ff6fc-bwgvh
+27m         Normal    Killing                        pod/worker-deployment-fb6d89564-t9t8v       Stopping container worker
+27m         Normal    Scheduled                      pod/frontend-deployment-6c979f6484-rjl82    Successfully assigned devops-app/frontend-deployment-6c979f6484-rjl82 to ip-10-0-2-240.ec2.internal
+27m         Normal    Scheduled                      pod/worker-deployment-8b4bdf878-42h97       Successfully assigned devops-app/worker-deployment-8b4bdf878-42h97 to ip-10-0-2-240.ec2.internal
+14m         Normal    ScalingReplicaSet              deployment/backend-deployment               Scaled down replica set backend-deployment-b7d78c97f from 2 to 1
+14m         Normal    ScalingReplicaSet              deployment/worker-deployment                Scaled down replica set worker-deployment-fb6d89564 from 1 to 0
+14m         Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled down replica set frontend-deployment-7bf9c644b from 2 to 1
+27m         Normal    SuccessfulCreate               replicaset/frontend-deployment-6c979f6484   Created pod: frontend-deployment-6c979f6484-rjl82
+27m         Normal    Pulling                        pod/backend-deployment-5d65ff6fc-bwgvh      Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:75b0ee0e"
+27m         Normal    Pulling                        pod/worker-deployment-8b4bdf878-42h97       Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:75b0ee0e"
+27m         Normal    Pulling                        pod/frontend-deployment-6c979f6484-rjl82    Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:75b0ee0e"
+27m         Normal    Pulled                         pod/backend-deployment-5d65ff6fc-bwgvh      Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:75b0ee0e" in 1.707s (1.707s including waiting). Image size: 66624867 bytes.
+27m         Normal    Pulled                         pod/frontend-deployment-6c979f6484-rjl82    Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:75b0ee0e" in 413ms (413ms including waiting). Image size: 23054514 bytes.
+27m         Normal    Started                        pod/frontend-deployment-6c979f6484-rjl82    Started container frontend
+27m         Normal    Created                        pod/frontend-deployment-6c979f6484-rjl82    Created container: frontend
+27m         Normal    Created                        pod/backend-deployment-5d65ff6fc-bwgvh      Created container: backend
+27m         Normal    Started                        pod/worker-deployment-8b4bdf878-42h97       Started container worker
+27m         Normal    Pulled                         pod/worker-deployment-8b4bdf878-42h97       Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:75b0ee0e" in 1.592s (1.592s including waiting). Image size: 64066105 bytes.
+27m         Normal    Started                        pod/backend-deployment-5d65ff6fc-bwgvh      Started container backend
+27m         Normal    Created                        pod/worker-deployment-8b4bdf878-42h97       Created container: worker
+27m         Normal    SuccessfulDelete               replicaset/backend-deployment-b7d78c97f     Deleted pod: backend-deployment-b7d78c97f-g9pwr
+27m         Normal    SuccessfulCreate               replicaset/backend-deployment-5d65ff6fc     Created pod: backend-deployment-5d65ff6fc-q669v
+27m         Normal    Scheduled                      pod/backend-deployment-5d65ff6fc-q669v      Successfully assigned devops-app/backend-deployment-5d65ff6fc-q669v to ip-10-0-2-240.ec2.internal
+13m         Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled down replica set frontend-deployment-7bf9c644b from 1 to 0
+27m         Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled up replica set frontend-deployment-6c979f6484 from 1 to 2
+27m         Normal    Killing                        pod/frontend-deployment-7bf9c644b-rsb4l     Stopping container frontend
+27m         Normal    ScalingReplicaSet              deployment/backend-deployment               Scaled up replica set backend-deployment-5d65ff6fc from 1 to 2
+27m         Normal    Killing                        pod/backend-deployment-b7d78c97f-g9pwr      Stopping container backend
+3m34s       Normal    ScalingReplicaSet              deployment/backend-deployment               Scaled down replica set backend-deployment-b7d78c97f from 1 to 0
+27m         Normal    SuccessfulDelete               replicaset/frontend-deployment-7bf9c644b    Deleted pod: frontend-deployment-7bf9c644b-rsb4l
+27m         Normal    Pulling                        pod/backend-deployment-5d65ff6fc-q669v      Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:75b0ee0e"
+27m         Normal    Scheduled                      pod/frontend-deployment-6c979f6484-2hl5s    Successfully assigned devops-app/frontend-deployment-6c979f6484-2hl5s to ip-10-0-3-158.ec2.internal
+27m         Normal    Pulling                        pod/frontend-deployment-6c979f6484-2hl5s    Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:75b0ee0e"
+27m         Normal    SuccessfulCreate               replicaset/frontend-deployment-6c979f6484   Created pod: frontend-deployment-6c979f6484-2hl5s
+27m         Normal    Started                        pod/frontend-deployment-6c979f6484-2hl5s    Started container frontend
+27m         Normal    Created                        pod/frontend-deployment-6c979f6484-2hl5s    Created container: frontend
+27m         Normal    Pulled                         pod/frontend-deployment-6c979f6484-2hl5s    Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:75b0ee0e" in 388ms (388ms including waiting). Image size: 23054514 bytes.
+27m         Normal    Pulled                         pod/backend-deployment-5d65ff6fc-q669v      Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:75b0ee0e" in 1.713s (1.713s including waiting). Image size: 66624867 bytes.
+27m         Normal    Created                        pod/backend-deployment-5d65ff6fc-q669v      Created container: backend
+27m         Normal    Started                        pod/backend-deployment-5d65ff6fc-q669v      Started container backend
+26m         Normal    Killing                        pod/frontend-deployment-6c979f6484-2hl5s    Stopping container frontend
+26m         Normal    SuccessfulDelete               replicaset/frontend-deployment-6c979f6484   Deleted pod: frontend-deployment-6c979f6484-2hl5s
+26m         Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled down replica set frontend-deployment-6c979f6484 from 2 to 1
+26m         Normal    Scheduled                      pod/frontend-deployment-7bf9c644b-77k67     Successfully assigned devops-app/frontend-deployment-7bf9c644b-77k67 to ip-10-0-2-240.ec2.internal
+26m         Normal    SuccessfulCreate               replicaset/frontend-deployment-7bf9c644b    Created pod: frontend-deployment-7bf9c644b-77k67
+26m         Normal    Pulled                         pod/frontend-deployment-7bf9c644b-77k67     Container image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:71a42a0c" already present on machine
+26m         Normal    Created                        pod/frontend-deployment-7bf9c644b-77k67     Created container: frontend
+26m         Normal    SuccessfulCreate               replicaset/worker-deployment-fb6d89564      Created pod: worker-deployment-fb6d89564-xk9wm
+26m         Normal    SuccessfulDelete               replicaset/backend-deployment-5d65ff6fc     Deleted pod: backend-deployment-5d65ff6fc-q669v
+26m         Normal    ScalingReplicaSet              deployment/worker-deployment                Scaled down replica set worker-deployment-8b4bdf878 from 1 to 0
+26m         Normal    SuccessfulCreate               replicaset/backend-deployment-b7d78c97f     Created pod: backend-deployment-b7d78c97f-ntrnd
+26m         Normal    ScalingReplicaSet              deployment/backend-deployment               Scaled down replica set backend-deployment-5d65ff6fc from 2 to 1
+26m         Normal    Scheduled                      pod/backend-deployment-b7d78c97f-ntrnd      Successfully assigned devops-app/backend-deployment-b7d78c97f-ntrnd to ip-10-0-3-158.ec2.internal
+26m         Normal    Scheduled                      pod/worker-deployment-fb6d89564-xk9wm       Successfully assigned devops-app/worker-deployment-fb6d89564-xk9wm to ip-10-0-3-158.ec2.internal
+26m         Normal    Killing                        pod/worker-deployment-8b4bdf878-42h97       Stopping container worker
+26m         Normal    SuccessfulDelete               replicaset/worker-deployment-8b4bdf878      Deleted pod: worker-deployment-8b4bdf878-42h97
+26m         Normal    Killing                        pod/backend-deployment-5d65ff6fc-q669v      Stopping container backend
+26m         Normal    Started                        pod/frontend-deployment-7bf9c644b-77k67     Started container frontend
+26m         Normal    Pulling                        pod/worker-deployment-fb6d89564-xk9wm       Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:71a42a0c"
+26m         Normal    Started                        pod/backend-deployment-b7d78c97f-ntrnd      Started container backend
+26m         Normal    Created                        pod/backend-deployment-b7d78c97f-ntrnd      Created container: backend
+26m         Normal    Pulled                         pod/backend-deployment-b7d78c97f-ntrnd      Container image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:71a42a0c" already present on machine
+26m         Normal    Created                        pod/worker-deployment-fb6d89564-xk9wm       Created container: worker
+26m         Normal    Pulled                         pod/worker-deployment-fb6d89564-xk9wm       Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:71a42a0c" in 1.674s (1.674s including waiting). Image size: 64067584 bytes.
+26m         Normal    Started                        pod/worker-deployment-fb6d89564-xk9wm       Started container worker
+26m         Normal    SuccessfulCreate               replicaset/frontend-deployment-7bf9c644b    Created pod: frontend-deployment-7bf9c644b-pbwfw
+26m         Normal    ScalingReplicaSet              deployment/frontend-deployment              (combined from similar events): Scaled down replica set frontend-deployment-6c979f6484 from 1 to 0
+26m         Normal    SuccessfulDelete               replicaset/frontend-deployment-6c979f6484   Deleted pod: frontend-deployment-6c979f6484-rjl82
+26m         Normal    Killing                        pod/frontend-deployment-6c979f6484-rjl82    Stopping container frontend
+26m         Normal    Scheduled                      pod/frontend-deployment-7bf9c644b-pbwfw     Successfully assigned devops-app/frontend-deployment-7bf9c644b-pbwfw to ip-10-0-3-158.ec2.internal
+26m         Normal    Started                        pod/frontend-deployment-7bf9c644b-pbwfw     Started container frontend
+26m         Normal    Pulled                         pod/frontend-deployment-7bf9c644b-pbwfw     Container image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:71a42a0c" already present on machine
+26m         Normal    SuccessfulDelete               replicaset/backend-deployment-5d65ff6fc     Deleted pod: backend-deployment-5d65ff6fc-bwgvh
+26m         Normal    Scheduled                      pod/backend-deployment-b7d78c97f-f46d5      Successfully assigned devops-app/backend-deployment-b7d78c97f-f46d5 to ip-10-0-2-240.ec2.internal
+26m         Normal    SuccessfulCreate               replicaset/backend-deployment-b7d78c97f     Created pod: backend-deployment-b7d78c97f-f46d5
+26m         Normal    Killing                        pod/backend-deployment-5d65ff6fc-bwgvh      Stopping container backend
+26m         Normal    ScalingReplicaSet              deployment/backend-deployment               (combined from similar events): Scaled down replica set backend-deployment-5d65ff6fc from 1 to 0
+26m         Warning   Unhealthy                      pod/frontend-deployment-6c979f6484-rjl82    Readiness probe failed: Get "http://10.0.2.14:8080/": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+26m         Normal    Created                        pod/frontend-deployment-7bf9c644b-pbwfw     Created container: frontend
+26m         Normal    Started                        pod/backend-deployment-b7d78c97f-f46d5      Started container backend
+26m         Normal    Created                        pod/backend-deployment-b7d78c97f-f46d5      Created container: backend
+26m         Normal    Pulled                         pod/backend-deployment-b7d78c97f-f46d5      Container image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:71a42a0c" already present on machine
+16m         Warning   Unhealthy                      pod/backend-deployment-b7d78c97f-ntrnd      Readiness probe failed: HTTP probe failed with statuscode: 503
+6m29s       Warning   Unhealthy                      pod/backend-deployment-b7d78c97f-f46d5      Readiness probe failed: HTTP probe failed with statuscode: 503
+14m         Normal    Killing                        pod/frontend-deployment-7bf9c644b-pbwfw     Stopping container frontend
+14m         Normal    SuccessfulCreate               replicaset/frontend-deployment-589c7cc4c    Created pod: frontend-deployment-589c7cc4c-st6f8
+14m         Normal    SuccessfulCreate               replicaset/worker-deployment-6b7d866f5c     Created pod: worker-deployment-6b7d866f5c-x2nrs
+14m         Normal    SuccessfulDelete               replicaset/frontend-deployment-7bf9c644b    Deleted pod: frontend-deployment-7bf9c644b-pbwfw
+14m         Normal    ScalingReplicaSet              deployment/worker-deployment                Scaled up replica set worker-deployment-6b7d866f5c from 0 to 1
+14m         Normal    SuccessfulDelete               replicaset/backend-deployment-b7d78c97f     Deleted pod: backend-deployment-b7d78c97f-ntrnd
+14m         Normal    Killing                        pod/backend-deployment-b7d78c97f-ntrnd      Stopping container backend
+14m         Normal    Scheduled                      pod/worker-deployment-6b7d866f5c-x2nrs      Successfully assigned devops-app/worker-deployment-6b7d866f5c-x2nrs to ip-10-0-3-158.ec2.internal
+14m         Normal    ScalingReplicaSet              deployment/backend-deployment               Scaled up replica set backend-deployment-7cf5794d48 from 0 to 1
+14m         Normal    SuccessfulDelete               replicaset/worker-deployment-fb6d89564      Deleted pod: worker-deployment-fb6d89564-xk9wm
+14m         Normal    Killing                        pod/worker-deployment-fb6d89564-xk9wm       Stopping container worker
+14m         Normal    Scheduled                      pod/backend-deployment-7cf5794d48-2vwcd     Successfully assigned devops-app/backend-deployment-7cf5794d48-2vwcd to ip-10-0-3-158.ec2.internal
+14m         Normal    SuccessfulCreate               replicaset/backend-deployment-7cf5794d48    Created pod: backend-deployment-7cf5794d48-2vwcd
+14m         Normal    Scheduled                      pod/frontend-deployment-589c7cc4c-st6f8     Successfully assigned devops-app/frontend-deployment-589c7cc4c-st6f8 to ip-10-0-3-158.ec2.internal
+14m         Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled up replica set frontend-deployment-589c7cc4c from 0 to 1
+14m         Normal    Pulling                        pod/frontend-deployment-589c7cc4c-st6f8     Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:fd3457cd"
+14m         Normal    Started                        pod/frontend-deployment-589c7cc4c-st6f8     Started container frontend
+14m         Normal    Pulling                        pod/worker-deployment-6b7d866f5c-x2nrs      Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:fd3457cd"
+14m         Normal    Pulling                        pod/backend-deployment-7cf5794d48-2vwcd     Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:fd3457cd"
+14m         Normal    Pulled                         pod/frontend-deployment-589c7cc4c-st6f8     Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:fd3457cd" in 485ms (485ms including waiting). Image size: 23054516 bytes.
+14m         Normal    Created                        pod/frontend-deployment-589c7cc4c-st6f8     Created container: frontend
+8m          Normal    Started                        pod/backend-deployment-7cf5794d48-2vwcd     Started container backend
+14m         Normal    Started                        pod/worker-deployment-6b7d866f5c-x2nrs      Started container worker
+8m1s        Normal    Created                        pod/backend-deployment-7cf5794d48-2vwcd     Created container: backend
+14m         Normal    Pulled                         pod/worker-deployment-6b7d866f5c-x2nrs      Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:fd3457cd" in 2.05s (2.05s including waiting). Image size: 64068078 bytes.
+14m         Normal    Pulled                         pod/backend-deployment-7cf5794d48-2vwcd     Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:fd3457cd" in 2.192s (2.192s including waiting). Image size: 66625978 bytes.
+14m         Normal    Created                        pod/worker-deployment-6b7d866f5c-x2nrs      Created container: worker
+8m1s        Normal    Pulled                         pod/backend-deployment-7cf5794d48-2vwcd     Container image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:fd3457cd" already present on machine
+3m54s       Warning   BackOff                        pod/backend-deployment-7cf5794d48-2vwcd     Back-off restarting failed container backend in pod backend-deployment-7cf5794d48-2vwcd_devops-app(7d8e654a-1a7b-46c9-bd3c-67d321438db6)
+13m         Normal    SuccessfulCreate               replicaset/frontend-deployment-589c7cc4c    Created pod: frontend-deployment-589c7cc4c-vzd75
+13m         Normal    SuccessfulDelete               replicaset/frontend-deployment-7bf9c644b    Deleted pod: frontend-deployment-7bf9c644b-77k67
+13m         Normal    Scheduled                      pod/frontend-deployment-589c7cc4c-vzd75     Successfully assigned devops-app/frontend-deployment-589c7cc4c-vzd75 to ip-10-0-2-240.ec2.internal
+13m         Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled up replica set frontend-deployment-589c7cc4c from 1 to 2
+13m         Normal    Killing                        pod/frontend-deployment-7bf9c644b-77k67     Stopping container frontend
+13m         Normal    Pulling                        pod/frontend-deployment-589c7cc4c-vzd75     Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:fd3457cd"
+13m         Normal    Started                        pod/frontend-deployment-589c7cc4c-vzd75     Started container frontend
+13m         Normal    Created                        pod/frontend-deployment-589c7cc4c-vzd75     Created container: frontend
+13m         Normal    Pulled                         pod/frontend-deployment-589c7cc4c-vzd75     Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:fd3457cd" in 459ms (459ms including waiting). Image size: 23054516 bytes.
+3m34s       Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled up replica set frontend-deployment-58f4f6bc68 from 0 to 1
+3m34s       Normal    Killing                        pod/worker-deployment-6b7d866f5c-x2nrs      Stopping container worker
+3m34s       Normal    SuccessfulDelete               replicaset/backend-deployment-b7d78c97f     Deleted pod: backend-deployment-b7d78c97f-f46d5
+3m34s       Normal    SuccessfulCreate               replicaset/worker-deployment-69b98b945d     Created pod: worker-deployment-69b98b945d-589w2
+3m34s       Normal    Killing                        pod/frontend-deployment-589c7cc4c-st6f8     Stopping container frontend
+3m34s       Normal    Killing                        pod/backend-deployment-b7d78c97f-f46d5      Stopping container backend
+3m34s       Normal    Scheduled                      pod/worker-deployment-69b98b945d-589w2      Successfully assigned devops-app/worker-deployment-69b98b945d-589w2 to ip-10-0-3-165.ec2.internal
+3m34s       Normal    ScalingReplicaSet              deployment/worker-deployment                Scaled up replica set worker-deployment-69b98b945d from 0 to 1
+3m34s       Normal    ScalingReplicaSet              deployment/worker-deployment                Scaled down replica set worker-deployment-6b7d866f5c from 1 to 0
+3m34s       Normal    Scheduled                      pod/frontend-deployment-58f4f6bc68-7wrkc    Successfully assigned devops-app/frontend-deployment-58f4f6bc68-7wrkc to ip-10-0-3-158.ec2.internal
+3m34s       Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled down replica set frontend-deployment-589c7cc4c from 2 to 1
+3m34s       Normal    SuccessfulDelete               replicaset/worker-deployment-6b7d866f5c     Deleted pod: worker-deployment-6b7d866f5c-x2nrs
+3m34s       Normal    Scheduled                      pod/backend-deployment-79cdd7ddd5-tpqpl     Successfully assigned devops-app/backend-deployment-79cdd7ddd5-tpqpl to ip-10-0-3-158.ec2.internal
+3m34s       Normal    SuccessfulCreate               replicaset/frontend-deployment-58f4f6bc68   Created pod: frontend-deployment-58f4f6bc68-7wrkc
+3m34s       Normal    SuccessfulDelete               replicaset/frontend-deployment-589c7cc4c    Deleted pod: frontend-deployment-589c7cc4c-st6f8
+3m34s       Normal    ScalingReplicaSet              deployment/backend-deployment               Scaled up replica set backend-deployment-79cdd7ddd5 from 0 to 1
+3m34s       Normal    SuccessfulCreate               replicaset/backend-deployment-79cdd7ddd5    Created pod: backend-deployment-79cdd7ddd5-tpqpl
+3m33s       Normal    Created                        pod/frontend-deployment-58f4f6bc68-7wrkc    Created container: frontend
+3m33s       Normal    Pulling                        pod/frontend-deployment-58f4f6bc68-7wrkc    Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:3b7291b1"
+3m33s       Normal    Pulling                        pod/backend-deployment-79cdd7ddd5-tpqpl     Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:3b7291b1"
+3m33s       Normal    Pulled                         pod/frontend-deployment-58f4f6bc68-7wrkc    Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:3b7291b1" in 452ms (452ms including waiting). Image size: 23054534 bytes.
+3m33s       Normal    Started                        pod/frontend-deployment-58f4f6bc68-7wrkc    Started container frontend
+3m32s       Normal    Pulling                        pod/worker-deployment-69b98b945d-589w2      Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:3b7291b1"
+3m31s       Normal    Pulled                         pod/backend-deployment-79cdd7ddd5-tpqpl     Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:3b7291b1" in 1.841s (1.842s including waiting). Image size: 66625996 bytes.
+3m31s       Normal    Created                        pod/backend-deployment-79cdd7ddd5-tpqpl     Created container: backend
+3m31s       Normal    Started                        pod/backend-deployment-79cdd7ddd5-tpqpl     Started container backend
+3m31s       Normal    Created                        pod/worker-deployment-69b98b945d-589w2      Created container: worker
+3m31s       Normal    Pulled                         pod/worker-deployment-69b98b945d-589w2      Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:3b7291b1" in 1.603s (1.603s including waiting). Image size: 64069494 bytes.
+3m30s       Normal    Started                        pod/worker-deployment-69b98b945d-589w2      Started container worker
+3m24s       Normal    Scheduled                      pod/backend-deployment-7cf5794d48-8852f     Successfully assigned devops-app/backend-deployment-7cf5794d48-8852f to ip-10-0-3-158.ec2.internal
+3m24s       Normal    SuccessfulCreate               replicaset/backend-deployment-7cf5794d48    Created pod: backend-deployment-7cf5794d48-8852f
+3m23s       Normal    Started                        pod/backend-deployment-7cf5794d48-8852f     Started container backend
+3m23s       Normal    Created                        pod/backend-deployment-7cf5794d48-8852f     Created container: backend
+3m23s       Normal    Pulled                         pod/backend-deployment-7cf5794d48-8852f     Container image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:fd3457cd" already present on machine
+3m21s       Normal    Scheduled                      pod/frontend-deployment-58f4f6bc68-76x59    Successfully assigned devops-app/frontend-deployment-58f4f6bc68-76x59 to ip-10-0-2-240.ec2.internal
+3m21s       Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled up replica set frontend-deployment-58f4f6bc68 from 1 to 2
+3m21s       Normal    Killing                        pod/frontend-deployment-589c7cc4c-vzd75     Stopping container frontend
+3m21s       Normal    ScalingReplicaSet              deployment/frontend-deployment              Scaled down replica set frontend-deployment-589c7cc4c from 1 to 0
+3m21s       Normal    SuccessfulCreate               replicaset/frontend-deployment-58f4f6bc68   Created pod: frontend-deployment-58f4f6bc68-76x59
+3m21s       Normal    SuccessfulDelete               replicaset/frontend-deployment-589c7cc4c    Deleted pod: frontend-deployment-589c7cc4c-vzd75
+3m19s       Normal    Pulling                        pod/frontend-deployment-58f4f6bc68-76x59    Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:3b7291b1"
+3m18s       Normal    SuccessfulCreate               replicaset/backend-deployment-79cdd7ddd5    Created pod: backend-deployment-79cdd7ddd5-f2277
+3m18s       Normal    ScalingReplicaSet              deployment/backend-deployment               Scaled down replica set backend-deployment-7cf5794d48 from 1 to 0
+3m18s       Normal    Pulled                         pod/frontend-deployment-58f4f6bc68-76x59    Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:3b7291b1" in 826ms (826ms including waiting). Image size: 23054534 bytes.
+3m18s       Normal    Created                        pod/frontend-deployment-58f4f6bc68-76x59    Created container: frontend
+3m18s       Normal    Started                        pod/frontend-deployment-58f4f6bc68-76x59    Started container frontend
+3m18s       Normal    Killing                        pod/backend-deployment-7cf5794d48-8852f     Stopping container backend
+3m18s       Normal    ScalingReplicaSet              deployment/backend-deployment               Scaled up replica set backend-deployment-79cdd7ddd5 from 1 to 2
+3m18s       Normal    SuccessfulDelete               replicaset/backend-deployment-7cf5794d48    Deleted pod: backend-deployment-7cf5794d48-8852f
+3m18s       Normal    Scheduled                      pod/backend-deployment-79cdd7ddd5-f2277     Successfully assigned devops-app/backend-deployment-79cdd7ddd5-f2277 to ip-10-0-2-240.ec2.internal
+3m17s       Normal    Pulling                        pod/backend-deployment-79cdd7ddd5-f2277     Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:3b7291b1"
+3m14s       Normal    Pulled                         pod/backend-deployment-79cdd7ddd5-f2277     Successfully pulled image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:3b7291b1" in 2.304s (2.304s including waiting). Image size: 66625996 bytes.
+3m14s       Normal    Created                        pod/backend-deployment-79cdd7ddd5-f2277     Created container: backend
+3m14s       Normal    Started                        pod/backend-deployment-79cdd7ddd5-f2277     Started container backend

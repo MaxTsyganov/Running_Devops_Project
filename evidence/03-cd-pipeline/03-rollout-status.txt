@@ -1,0 +1,7 @@
+=== kubectl rollout status (all 3 deployments) ===
+--- frontend-deployment ---
+deployment "frontend-deployment" successfully rolled out
+--- backend-deployment ---
+deployment "backend-deployment" successfully rolled out
+--- worker-deployment ---
+deployment "worker-deployment" successfully rolled out

@@ -1,0 +1,37 @@
+=== Deliberately-failed CI run confirmed to NOT trigger CD ===
+
+Method: added an unused `import sys` to backend/app.py (backend/app.py:7),
+committed as 4b043c7 ("test: deliberately broken lint..."), and pushed -
+triggering ci-application via the real GitHub webhook exactly like every
+other build in this evidence set, not a manual click.
+
+--- CI build #6 result ---
+"result":"FAILURE"
+
+--- Exact failure point (Static Analysis / Lint stage) ---
++ python -m pyflakes backend/app.py worker/worker.py
+backend/app.py:7:1: 'sys' imported but unused
+
+--- Every downstream stage correctly skipped ---
+Stage "Tests" skipped due to earlier failure(s)
+Stage "Build" skipped due to earlier failure(s)
+Stage "Scan" skipped due to earlier failure(s)
+Stage "Publish Metadata" skipped due to earlier failure(s)
+
+--- cd-application's build list, queried immediately after build #6 failed
+    (captured live during the session, before any later CI success re-triggered it) ---
+"builds":[
+  {"number":5,"url":"http://jenkins:8080/job/cd-application/5/"},
+  {"number":4,"url":"http://jenkins:8080/job/cd-application/4/"},
+  {"number":3,"url":"http://jenkins:8080/job/cd-application/3/"},
+  {"number":2,"url":"http://jenkins:8080/job/cd-application/2/"},
+  {"number":1,"url":"http://jenkins:8080/job/cd-application/1/"}
+]
+No build #6 exists for cd-application - confirmed: a failed CI run never
+reaches the `post { success { build job: 'cd-application', ... } } ` block
+in ci-Jenkinsfile, so CD is never invoked.
+
+The lint breakage was reverted in the very next commit (3b7291b), which
+triggered a normal successful CI run (build #7) and, from that, a normal
+CD run (build #6) - see 01-ci-build7-full-console-SUCCESS.txt and
+../03-cd-pipeline/.

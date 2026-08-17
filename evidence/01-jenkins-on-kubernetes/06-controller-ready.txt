@@ -1,0 +1,7 @@
+=== Jenkins controller Ready status ===
+NAME        READY   STATUS    RESTARTS   AGE   IP          NODE                         NOMINATED NODE   READINESS GATES
+jenkins-0   2/2     Running   0          82m   10.0.3.75   ip-10-0-3-165.ec2.internal   <none>           <none>
+
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 

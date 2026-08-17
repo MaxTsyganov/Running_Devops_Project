@@ -1,0 +1,11 @@
+=== Smoke test result (real HTTP request to the live LoadBalancer) ===
+[2026-08-17T17:49:22.579Z] + seq 1 12
+[2026-08-17T17:49:22.579Z] + wget -q -O- '--timeout=5' http://acd7eb451836e4b3f90a40f8ed739d7f-838274795.us-east-1.elb.amazonaws.com/
+[2026-08-17T17:49:22.579Z] + echo 'Smoke test passed: frontend responded on http://acd7eb451836e4b3f90a40f8ed739d7f-838274795.us-east-1.elb.amazonaws.com/'
+[2026-08-17T17:49:22.579Z] Smoke test passed: frontend responded on http://acd7eb451836e4b3f90a40f8ed739d7f-838274795.us-east-1.elb.amazonaws.com/
+[2026-08-17T17:49:22.579Z] + exit 0
+[Pipeline] }
+
+=== Independent re-confirmation right now ===
+URL: http://acd7eb451836e4b3f90a40f8ed739d7f-838274795.us-east-1.elb.amazonaws.com/
+HTTP_STATUS:200

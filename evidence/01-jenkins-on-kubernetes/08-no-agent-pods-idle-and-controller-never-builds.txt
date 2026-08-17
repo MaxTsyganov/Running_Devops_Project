@@ -1,0 +1,12 @@
+=== No agent Pods currently running (ephemeral - only appear during a build) ===
+Only the controller (jenkins-0) and the persistent webhook-relay should be present:
+NAME                                 READY   STATUS    RESTARTS   AGE
+cd-application-5-s5h8j-vfssc-5l28n   2/2     Running   0          13m
+cd-application-6-8b8f8-r8zrq-xskm2   2/2     Running   0          2m36s
+jenkins-0                            2/2     Running   0          82m
+webhook-relay-78d5d77975-2xzbx       1/1     Running   0          65m
+
+=== Confirmed via jenkins/values.yaml: numExecutors: 0 on the controller ===
+  (controller.numExecutors: 0 - structurally impossible for a build to run on it)
+  numExecutors: 0
+

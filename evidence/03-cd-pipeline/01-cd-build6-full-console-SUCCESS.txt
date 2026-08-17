@@ -1,0 +1,314 @@
+Started by upstream project "ci-application" build number 7
+originally caused by:
+ Started by GitHub push by MaxTsyganov
+Obtained jenkins/cd/Jenkinsfile from git https://github.com/MaxTsyganov/Running_Devops_Project.git
+[Pipeline] Start of Pipeline
+[Pipeline] podTemplate
+[Pipeline] {
+[Pipeline] node
+Created Pod: devops-agents jenkins/cd-application-6-8b8f8-r8zrq-xskm2
+[PodInfo] jenkins/cd-application-6-8b8f8-r8zrq-xskm2
+	Container [deploy] waiting [ContainerCreating] No message
+	Container [jnlp] waiting [ContainerCreating] No message
+	Pod [Pending][ContainersNotReady] containers with unready status: [deploy jnlp]
+[PodInfo] jenkins/cd-application-6-8b8f8-r8zrq-xskm2
+	Container [deploy] waiting [ContainerCreating] No message
+	Container [jnlp] waiting [ContainerCreating] No message
+	Pod [Pending][ContainersNotReady] containers with unready status: [deploy jnlp]
+Agent cd-application-6-8b8f8-r8zrq-xskm2 is provisioned from template cd-application_6-8b8f8-r8zrq
+---
+apiVersion: "v1"
+kind: "Pod"
+metadata:
+  annotations:
+    kubernetes.jenkins.io/last-refresh: "1786988903157"
+    buildUrl: "http://jenkins.jenkins.svc.cluster.local:8080/job/cd-application/6/"
+    runUrl: "job/cd-application/6/"
+  labels:
+    jenkins: "slave"
+    jenkins/label-digest: "6eaea7a19bd74650216fce7d3b2cd96b214928cb"
+    jenkins/label: "cd-application_6-8b8f8"
+    kubernetes.jenkins.io/controller: "http___jenkins_jenkins_svc_cluster_local_8080x"
+  name: "cd-application-6-8b8f8-r8zrq-xskm2"
+  namespace: "jenkins"
+spec:
+  containers:
+  - args:
+    - "99d"
+    command:
+    - "sleep"
+    image: "dtzar/helm-kubectl:3.16"
+    imagePullPolicy: "IfNotPresent"
+    name: "deploy"
+    resources:
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+    tty: false
+    volumeMounts:
+    - mountPath: "/home/jenkins/agent"
+      name: "workspace-volume"
+      readOnly: false
+  - env:
+    - name: "JENKINS_SECRET"
+      value: "********"
+    - name: "JENKINS_TUNNEL"
+      value: "jenkins-agent.jenkins.svc.cluster.local:50000"
+    - name: "JENKINS_AGENT_NAME"
+      value: "cd-application-6-8b8f8-r8zrq-xskm2"
+    - name: "REMOTING_OPTS"
+      value: "-noReconnectAfter 1d"
+    - name: "JENKINS_NAME"
+      value: "cd-application-6-8b8f8-r8zrq-xskm2"
+    - name: "JENKINS_AGENT_WORKDIR"
+      value: "/home/jenkins/agent"
+    - name: "JENKINS_URL"
+      value: "http://jenkins.jenkins.svc.cluster.local:8080/"
+    image: "jenkins/inbound-agent:3384.v60d89463d9e0-2-jdk25"
+    name: "jnlp"
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+    volumeMounts:
+    - mountPath: "/home/jenkins/agent"
+      name: "workspace-volume"
+      readOnly: false
+  nodeSelector:
+    kubernetes.io/os: "linux"
+  restartPolicy: "Never"
+  serviceAccountName: "cd-deploy-sa"
+  volumes:
+  - emptyDir:
+      medium: ""
+    name: "workspace-volume"
+
+Running on cd-application-6-8b8f8-r8zrq-xskm2 in /home/jenkins/agent/workspace/cd-application
+[Pipeline] {
+[Pipeline] stage
+[Pipeline] { (Declarative: Checkout SCM)
+[Pipeline] checkout
+The recommended git tool is: git
+No credentials specified
+Cloning the remote Git repository
+Cloning repository https://github.com/MaxTsyganov/Running_Devops_Project.git
+ > git init /home/jenkins/agent/workspace/cd-application # timeout=10
+Fetching upstream changes from https://github.com/MaxTsyganov/Running_Devops_Project.git
+ > git --version # timeout=10
+ > git --version # 'git version 2.47.3'
+ > git fetch --tags --force --progress -- https://github.com/MaxTsyganov/Running_Devops_Project.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+ > git config remote.origin.url https://github.com/MaxTsyganov/Running_Devops_Project.git # timeout=10
+ > git config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/* # timeout=10
+Avoid second fetch
+Checking out Revision 3b7291b1c254593489551b3111605b868ca5aca8 (refs/remotes/origin/main)
+Commit message: "revert: undo deliberate lint breakage from the previous commit"
+ > git rev-parse refs/remotes/origin/main^{commit} # timeout=10
+ > git config core.sparsecheckout # timeout=10
+ > git checkout -f 3b7291b1c254593489551b3111605b868ca5aca8 # timeout=10
+ > git rev-list --no-walk fd3457cdfded3b39b83a4718c4c6e2153ddc5b15 # timeout=10
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] withEnv
+[Pipeline] {
+[Pipeline] withEnv
+[Pipeline] {
+[Pipeline] timestamps
+[Pipeline] {
+[Pipeline] timeout
+[2026-08-17T17:48:38.398Z] Timeout set to expire in 25 min
+[Pipeline] {
+[Pipeline] stage
+[Pipeline] { (Checkout)
+[Pipeline] checkout
+[2026-08-17T17:48:38.523Z] The recommended git tool is: git
+[2026-08-17T17:48:38.608Z] No credentials specified
+[2026-08-17T17:48:38.619Z] Fetching changes from the remote Git repository
+[2026-08-17T17:48:38.966Z] Checking out Revision 3b7291b1c254593489551b3111605b868ca5aca8 (refs/remotes/origin/main)
+[2026-08-17T17:48:39.030Z] Commit message: "revert: undo deliberate lint breakage from the previous commit"
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Input Validation)
+[Pipeline] script
+[Pipeline] {
+[Pipeline] }
+[Pipeline] // script
+[Pipeline] echo
+[2026-08-17T17:48:39.267Z] === Deployment request ===
+[Pipeline] echo
+[2026-08-17T17:48:39.290Z] Triggered by:     [[_class:org.jenkinsci.plugins.workflow.support.steps.build.BuildUpstreamCause, shortDescription:Started by upstream project "ci-application" build number 7, upstreamBuild:7, upstreamProject:ci-application, upstreamUrl:job/ci-application/]]
+[Pipeline] echo
+[2026-08-17T17:48:39.311Z] Image tag:        3b7291b1
+[Pipeline] echo
+[2026-08-17T17:48:39.332Z] Target namespace: devops-app
+[Pipeline] echo
+[2026-08-17T17:48:39.351Z] Target cluster:   devops-cluster (in-cluster deploy via cd-deploy-sa ServiceAccount)
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Load infra config)
+[Pipeline] container
+[Pipeline] {
+[Pipeline] script
+[Pipeline] {
+[2026-08-17T17:48:38.611Z]  > git rev-parse --resolve-git-dir /home/jenkins/agent/workspace/cd-application/.git # timeout=10
+[2026-08-17T17:48:38.637Z]  > git config remote.origin.url https://github.com/MaxTsyganov/Running_Devops_Project.git # timeout=10
+[2026-08-17T17:48:38.654Z] Fetching upstream changes from https://github.com/MaxTsyganov/Running_Devops_Project.git
+[2026-08-17T17:48:38.654Z]  > git --version # timeout=10
+[2026-08-17T17:48:38.671Z]  > git --version # 'git version 2.47.3'
+[2026-08-17T17:48:38.671Z]  > git fetch --tags --force --progress -- https://github.com/MaxTsyganov/Running_Devops_Project.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+[2026-08-17T17:48:38.959Z]  > git rev-parse refs/remotes/origin/main^{commit} # timeout=10
+[2026-08-17T17:48:38.977Z]  > git config core.sparsecheckout # timeout=10
+[2026-08-17T17:48:38.985Z]  > git checkout -f 3b7291b1c254593489551b3111605b868ca5aca8 # timeout=10
+[Pipeline] sh
+[2026-08-17T17:48:40.166Z] + kubectl get configmap terraform-outputs -n devops-app -o 'jsonpath={.data.dbHost}'
+[Pipeline] sh
+[2026-08-17T17:48:40.766Z] + kubectl get configmap terraform-outputs -n devops-app -o 'jsonpath={.data.s3BucketName}'
+[Pipeline] sh
+[2026-08-17T17:48:41.367Z] + kubectl get configmap terraform-outputs -n devops-app -o 'jsonpath={.data.snsTopicArn}'
+[Pipeline] sh
+[2026-08-17T17:48:41.934Z] + kubectl get configmap terraform-outputs -n devops-app -o 'jsonpath={.data.dbPasswordSecretName}'
+[Pipeline] }
+[Pipeline] // script
+[Pipeline] }
+[Pipeline] // container
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Manifest Validation)
+[Pipeline] container
+[Pipeline] {
+[Pipeline] sh
+[2026-08-17T17:48:42.784Z] + set -e
+[2026-08-17T17:48:42.785Z] + helm lint helm/devops-app --strict
+[2026-08-17T17:48:42.785Z] ==> Linting helm/devops-app
+[2026-08-17T17:48:42.785Z] [INFO] Chart.yaml: icon is recommended
+[2026-08-17T17:48:42.785Z] 
+[2026-08-17T17:48:42.785Z] 1 chart(s) linted, 0 chart(s) failed
+[2026-08-17T17:48:42.785Z] + helm template devops-app ./helm/devops-app --namespace devops-app --set 'image.registry=957905603240.dkr.ecr.us-east-1.amazonaws.com' --set 'image.tag=3b7291b1' --set 'config.dbHost=appdb-instance.cs1amicmwnx1.us-east-1.rds.amazonaws.com' --set 'config.s3BucketName=devops-app-mtsyganov-075b4a-ansz9o' --set 'config.snsTopicArn=arn:aws:sns:us-east-1:957905603240:devops-project-alerts' --set 'secrets.dbPasswordSecretName=devops-app/db-password'
+[Pipeline] }
+[Pipeline] // container
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Deploy)
+[Pipeline] container
+[Pipeline] {
+[Pipeline] sh
+[2026-08-17T17:48:43.799Z] + set -e
+[2026-08-17T17:48:43.799Z] + helm upgrade --install devops-app ./helm/devops-app --namespace devops-app --set 'image.registry=957905603240.dkr.ecr.us-east-1.amazonaws.com' --set 'image.tag=3b7291b1' --set 'config.dbHost=appdb-instance.cs1amicmwnx1.us-east-1.rds.amazonaws.com' --set 'config.s3BucketName=devops-app-mtsyganov-075b4a-ansz9o' --set 'config.snsTopicArn=arn:aws:sns:us-east-1:957905603240:devops-project-alerts' --set 'secrets.dbPasswordSecretName=devops-app/db-password' --wait --timeout 10m
+[2026-08-17T17:49:05.899Z] Release "devops-app" has been upgraded. Happy Helming!
+[2026-08-17T17:49:05.899Z] NAME: devops-app
+[2026-08-17T17:49:05.899Z] LAST DEPLOYED: Mon Aug 17 17:48:43 2026
+[2026-08-17T17:49:05.899Z] NAMESPACE: devops-app
+[2026-08-17T17:49:05.899Z] STATUS: deployed
+[2026-08-17T17:49:05.899Z] REVISION: 6
+[2026-08-17T17:49:05.899Z] TEST SUITE: None
+[Pipeline] }
+[Pipeline] // container
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Rollout)
+[Pipeline] container
+[Pipeline] {
+[Pipeline] sh
+[2026-08-17T17:49:06.682Z] + set -e
+[2026-08-17T17:49:06.682Z] + kubectl rollout status deployment/frontend-deployment -n devops-app '--timeout=180s'
+[2026-08-17T17:49:06.682Z] Waiting for deployment "frontend-deployment" rollout to finish: 1 of 2 updated replicas are available...
+[2026-08-17T17:49:16.686Z] deployment "frontend-deployment" successfully rolled out
+[2026-08-17T17:49:16.686Z] + kubectl rollout status deployment/backend-deployment -n devops-app '--timeout=180s'
+[2026-08-17T17:49:16.686Z] Waiting for deployment "backend-deployment" rollout to finish: 1 of 2 updated replicas are available...
+[2026-08-17T17:49:19.988Z] deployment "backend-deployment" successfully rolled out
+[2026-08-17T17:49:19.988Z] + kubectl rollout status deployment/worker-deployment -n devops-app '--timeout=180s'
+[2026-08-17T17:49:20.248Z] deployment "worker-deployment" successfully rolled out
+[Pipeline] }
+[Pipeline] // container
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Verify)
+[Pipeline] container
+[Pipeline] {
+[Pipeline] sh
+[2026-08-17T17:49:21.007Z] + set -e
+[2026-08-17T17:49:21.007Z] + echo '=== Pods ==='
+[2026-08-17T17:49:21.007Z] === Pods ===
+[2026-08-17T17:49:21.007Z] + kubectl get pods -n devops-app -o wide
+[2026-08-17T17:49:21.007Z] NAME                                   READY   STATUS        RESTARTS   AGE   IP           NODE                         NOMINATED NODE   READINESS GATES
+[2026-08-17T17:49:21.007Z] backend-deployment-79cdd7ddd5-f2277    1/1     Running       0          17s   10.0.2.14    ip-10-0-2-240.ec2.internal   <none>           <none>
+[2026-08-17T17:49:21.007Z] backend-deployment-79cdd7ddd5-tpqpl    1/1     Running       0          33s   10.0.3.25    ip-10-0-3-158.ec2.internal   <none>           <none>
+[2026-08-17T17:49:21.007Z] backend-deployment-7cf5794d48-8852f    1/1     Terminating   0          23s   10.0.3.196   ip-10-0-3-158.ec2.internal   <none>           <none>
+[2026-08-17T17:49:21.007Z] frontend-deployment-58f4f6bc68-76x59   1/1     Running       0          20s   10.0.2.150   ip-10-0-2-240.ec2.internal   <none>           <none>
+[2026-08-17T17:49:21.007Z] frontend-deployment-58f4f6bc68-7wrkc   1/1     Running       0          33s   10.0.3.117   ip-10-0-3-158.ec2.internal   <none>           <none>
+[2026-08-17T17:49:21.007Z] worker-deployment-69b98b945d-589w2     1/1     Running       0          33s   10.0.3.101   ip-10-0-3-165.ec2.internal   <none>           <none>
+[2026-08-17T17:49:21.007Z] + echo '=== Services ==='
+[2026-08-17T17:49:21.007Z] === Services ===
+[2026-08-17T17:49:21.007Z] + kubectl get services -n devops-app
+[2026-08-17T17:49:21.287Z] NAME               TYPE           CLUSTER-IP       EXTERNAL-IP                                                              PORT(S)                      AGE
+[2026-08-17T17:49:21.287Z] backend-service    ClusterIP      172.20.206.52    <none>                                                                   5000/TCP                     42m
+[2026-08-17T17:49:21.287Z] frontend-service   LoadBalancer   172.20.213.170   acd7eb451836e4b3f90a40f8ed739d7f-838274795.us-east-1.elb.amazonaws.com   80:30253/TCP,443:32317/TCP   42m
+[2026-08-17T17:49:21.287Z] + echo '=== Running image versions ==='
+[2026-08-17T17:49:21.287Z] === Running image versions ===
+[2026-08-17T17:49:21.287Z] + kubectl get pods -n devops-app -o 'custom-columns=NAME:.metadata.name,IMAGE:.spec.containers[0].image'
+[2026-08-17T17:49:21.547Z] NAME                                   IMAGE
+[2026-08-17T17:49:21.547Z] backend-deployment-79cdd7ddd5-f2277    957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:3b7291b1
+[2026-08-17T17:49:21.547Z] backend-deployment-79cdd7ddd5-tpqpl    957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:3b7291b1
+[2026-08-17T17:49:21.547Z] backend-deployment-7cf5794d48-8852f    957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:fd3457cd
+[2026-08-17T17:49:21.547Z] frontend-deployment-58f4f6bc68-76x59   957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:3b7291b1
+[2026-08-17T17:49:21.547Z] frontend-deployment-58f4f6bc68-7wrkc   957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:3b7291b1
+[2026-08-17T17:49:21.547Z] worker-deployment-69b98b945d-589w2     957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:3b7291b1
+[2026-08-17T17:49:21.547Z] + kubectl get pods -n devops-app -o 'custom-columns=IMAGE:.spec.containers[0].image,DELETING:.metadata.deletionTimestamp' --no-headers
+[2026-08-17T17:49:21.547Z] + awk '$2 == "<none>" {print $1}'
+[2026-08-17T17:49:21.547Z] + grep -v ':3b7291b1$'
+[2026-08-17T17:49:21.820Z] + true
+[2026-08-17T17:49:21.820Z] + WRONG_VERSION=
+[2026-08-17T17:49:21.820Z] + '[' -n  ]
+[2026-08-17T17:49:21.820Z] + echo 'Confirmed: every pod is running :3b7291b1'
+[2026-08-17T17:49:21.820Z] Confirmed: every pod is running :3b7291b1
+[Pipeline] }
+[Pipeline] // container
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Smoke Test)
+[Pipeline] container
+[Pipeline] {
+[Pipeline] sh
+[2026-08-17T17:49:22.579Z] + set -e
+[2026-08-17T17:49:22.579Z] + kubectl get svc frontend-service -n devops-app -o 'jsonpath={.status.loadBalancer.ingress[0].hostname}'
+[2026-08-17T17:49:22.579Z] + EXTERNAL_HOST=acd7eb451836e4b3f90a40f8ed739d7f-838274795.us-east-1.elb.amazonaws.com
+[2026-08-17T17:49:22.579Z] + seq 1 12
+[2026-08-17T17:49:22.579Z] + wget -q -O- '--timeout=5' http://acd7eb451836e4b3f90a40f8ed739d7f-838274795.us-east-1.elb.amazonaws.com/
+[2026-08-17T17:49:22.579Z] + echo 'Smoke test passed: frontend responded on http://acd7eb451836e4b3f90a40f8ed739d7f-838274795.us-east-1.elb.amazonaws.com/'
+[2026-08-17T17:49:22.579Z] Smoke test passed: frontend responded on http://acd7eb451836e4b3f90a40f8ed739d7f-838274795.us-east-1.elb.amazonaws.com/
+[2026-08-17T17:49:22.579Z] + exit 0
+[Pipeline] }
+[Pipeline] // container
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Declarative: Post Actions)
+[Pipeline] cleanWs
+[2026-08-17T17:49:22.779Z] [WS-CLEANUP] Deleting project workspace...
+[2026-08-17T17:49:22.779Z] [WS-CLEANUP] Deferred wipeout is used...
+[2026-08-17T17:49:22.793Z] [WS-CLEANUP] done
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] }
+[Pipeline] // timeout
+[Pipeline] }
+[Pipeline] // timestamps
+[Pipeline] }
+[Pipeline] // withEnv
+[Pipeline] }
+[Pipeline] // withEnv
+[Pipeline] }
+[Pipeline] // node
+[Pipeline] }
+[Pipeline] // podTemplate
+[Pipeline] End of Pipeline
+Finished: SUCCESS

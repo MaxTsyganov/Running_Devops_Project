@@ -1,0 +1,28 @@
+=== Rollback demonstration (documented command from cd-Jenkinsfile's ===
+    post { failure { ... } } block: helm rollback devops-app -n devops-app) ===
+
+Before rollback - running on revision 3 (tag 75b0ee0e):
+  backend/frontend/worker pods: :75b0ee0e
+
+Command run:
+  helm rollback devops-app 2 -n devops-app --wait --timeout 5m
+
+Output:
+  Rollback was a success! Happy Helming!
+
+After rollback - confirmed every pod reverted to revision 2's tag (71a42a0c):
+  backend-deployment-b7d78c97f-f46d5   .../devops-backend:71a42a0c   Running
+  backend-deployment-b7d78c97f-ntrnd   .../devops-backend:71a42a0c   Running
+  frontend-deployment-7bf9c644b-77k67  .../devops-frontend:71a42a0c  Running
+  frontend-deployment-7bf9c644b-pbwfw  .../devops-frontend:71a42a0c  Running
+  worker-deployment-fb6d89564-xk9wm    .../devops-worker:71a42a0c    Running
+
+helm history devops-app -n devops-app after rollback:
+  REVISION  STATUS      DESCRIPTION
+  1         superseded  Install complete
+  2         superseded  Upgrade complete
+  3         superseded  Upgrade complete
+  4         deployed    Rollback to 2
+
+kubectl rollout status confirmed all 3 Deployments successfully rolled out
+post-rollback, and a smoke test against the LoadBalancer returned HTTP 200.

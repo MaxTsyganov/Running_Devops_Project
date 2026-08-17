@@ -1,0 +1,65 @@
+=== maxSurge:0 / maxUnavailable:1 rolling update, captured live via ===
+    kubectl get pods -n devops-app -w
+during CD build #4's Deploy stage (image tag 71a42a0c -> 75b0ee0e).
+
+Read as: for every Deployment, the old pod always starts terminating
+before/while its replacement comes up - Running count for any one
+Deployment never exceeds its declared replica count (frontend/backend: 2,
+worker: 1) at any point in the transition.
+
+NAME                                  READY   STATUS    RESTARTS   AGE
+backend-deployment-6f4d55f575-8gc4d   1/1     Running   0          13m
+backend-deployment-6f4d55f575-vk845   1/1     Running   0          13m
+frontend-deployment-54cddf9b6-dmb99   1/1     Running   0          13m
+frontend-deployment-54cddf9b6-v9vn4   1/1     Running   0          13m
+worker-deployment-7c8776696d-96dlm    1/1     Running   0          13m
+frontend-deployment-54cddf9b6-v9vn4   1/1     Terminating   0          13m
+frontend-deployment-54cddf9b6-v9vn4   1/1     Terminating   0          13m
+backend-deployment-6f4d55f575-8gc4d   1/1     Terminating   0          13m
+backend-deployment-6f4d55f575-8gc4d   1/1     Terminating   0          13m
+frontend-deployment-54cddf9b6-v9vn4   0/1     Completed     0          13m
+frontend-deployment-7bf9c644b-m5tnx   0/1     Pending       0          0s
+backend-deployment-b7d78c97f-g9pwr    0/1     Pending       0          1s
+worker-deployment-7c8776696d-96dlm    1/1     Terminating   0          13m
+frontend-deployment-7bf9c644b-m5tnx   0/1     Pending       0          1s
+backend-deployment-b7d78c97f-g9pwr    0/1     Pending       0          1s
+worker-deployment-7c8776696d-96dlm    1/1     Terminating   0          13m
+frontend-deployment-7bf9c644b-m5tnx   0/1     ContainerCreating   0          1s
+backend-deployment-b7d78c97f-g9pwr    0/1     ContainerCreating   0          1s
+worker-deployment-fb6d89564-t9t8v     0/1     Pending             0          0s
+worker-deployment-fb6d89564-t9t8v     0/1     Pending             0          0s
+worker-deployment-fb6d89564-t9t8v     0/1     ContainerCreating   0          0s
+frontend-deployment-54cddf9b6-v9vn4   0/1     Completed           0          13m
+frontend-deployment-54cddf9b6-v9vn4   0/1     Completed           0          13m
+frontend-deployment-7bf9c644b-m5tnx   0/1     Running             0          3s
+worker-deployment-fb6d89564-t9t8v     0/1     Running             0          3s
+backend-deployment-b7d78c97f-g9pwr    0/1     Running             0          5s
+frontend-deployment-7bf9c644b-m5tnx   1/1     Running             0          14s
+frontend-deployment-54cddf9b6-dmb99   1/1     Terminating         0          14m
+frontend-deployment-54cddf9b6-dmb99   1/1     Terminating         0          14m
+frontend-deployment-7bf9c644b-rsb4l   0/1     Pending             0          0s
+frontend-deployment-7bf9c644b-rsb4l   0/1     Pending             0          0s
+frontend-deployment-7bf9c644b-rsb4l   0/1     ContainerCreating   0          0s
+frontend-deployment-54cddf9b6-dmb99   0/1     Completed           0          14m
+frontend-deployment-54cddf9b6-dmb99   0/1     Completed           0          14m
+frontend-deployment-54cddf9b6-dmb99   0/1     Completed           0          14m
+frontend-deployment-7bf9c644b-rsb4l   0/1     Running             0          2s
+backend-deployment-b7d78c97f-g9pwr    1/1     Running             0          17s
+backend-deployment-6f4d55f575-vk845   1/1     Terminating         0          14m
+backend-deployment-6f4d55f575-vk845   1/1     Terminating         0          14m
+backend-deployment-b7d78c97f-wvjpv    0/1     Pending             0          0s
+backend-deployment-b7d78c97f-wvjpv    0/1     Pending             0          0s
+backend-deployment-b7d78c97f-wvjpv    0/1     ContainerCreating   0          0s
+backend-deployment-b7d78c97f-wvjpv    0/1     Running             0          4s
+worker-deployment-fb6d89564-t9t8v     1/1     Running             0          20s
+frontend-deployment-7bf9c644b-rsb4l   1/1     Running             0          13s
+backend-deployment-6f4d55f575-8gc4d   0/1     Error               0          14m
+worker-deployment-7c8776696d-96dlm    0/1     Error               0          14m
+backend-deployment-6f4d55f575-8gc4d   0/1     Error               0          14m
+backend-deployment-6f4d55f575-8gc4d   0/1     Error               0          14m
+worker-deployment-7c8776696d-96dlm    0/1     Error               0          14m
+worker-deployment-7c8776696d-96dlm    0/1     Error               0          14m
+backend-deployment-b7d78c97f-wvjpv    1/1     Running             0          16s
+backend-deployment-6f4d55f575-vk845   0/1     Error               0          14m
+backend-deployment-6f4d55f575-vk845   0/1     Error               0          14m
+backend-deployment-6f4d55f575-vk845   0/1     Error               0          14m

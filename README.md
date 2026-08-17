@@ -551,8 +551,12 @@ backend/                   Flask + Gunicorn API (RDS, S3, SNS)
 worker/                    Background poller (RDS, SNS)
 jenkins/                   Assignment 4: Jenkins install/config scripts, CI+CD Jenkinsfiles,
                            JCasC values, RBAC, job configs, architecture diagrams (see §14)
-Screenshots+txt_Files/     Evidence captures: required commands, functional checks,
+Screenshots+txt_Files/     Assignment 3 evidence: required commands, functional checks,
                            resilience test, and bonus objectives (see §6)
+evidence/                  Assignment 4 evidence: Jenkins-on-Kubernetes, CI pipeline (including a
+                           deliberately-failed run that never triggers CD), CD pipeline
+                           (rollout/traceability/smoke test/maxSurge:0 live capture), and the
+                           rollback demonstration (see §14)
 ```
 
 **CI** (`.github/workflows/ci.yml`) runs `terraform fmt`/`validate`, `helm lint` plus a full

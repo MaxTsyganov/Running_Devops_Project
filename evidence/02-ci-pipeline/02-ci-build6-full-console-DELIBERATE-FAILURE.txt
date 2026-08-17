@@ -1,0 +1,279 @@
+Started by GitHub push by MaxTsyganov
+Obtained jenkins/ci/Jenkinsfile from git https://github.com/MaxTsyganov/Running_Devops_Project.git
+[Pipeline] Start of Pipeline
+[Pipeline] podTemplate
+[Pipeline] {
+[Pipeline] node
+Created Pod: devops-agents jenkins/ci-application-6-b7p9g-sh2td-l5bdz
+[PodInfo] jenkins/ci-application-6-b7p9g-sh2td-l5bdz
+	Container [jnlp] waiting [ContainerCreating] No message
+	Container [kaniko] waiting [ContainerCreating] No message
+	Container [python] waiting [ContainerCreating] No message
+	Container [trivy] waiting [ContainerCreating] No message
+	Pod [Pending][ContainersNotReady] containers with unready status: [python kaniko trivy jnlp]
+[PodInfo] jenkins/ci-application-6-b7p9g-sh2td-l5bdz
+	Container [jnlp] waiting [ContainerCreating] No message
+	Container [kaniko] waiting [ContainerCreating] No message
+	Container [python] waiting [ContainerCreating] No message
+	Container [trivy] waiting [ContainerCreating] No message
+	Pod [Pending][ContainersNotReady] containers with unready status: [python kaniko trivy jnlp]
+[PodInfo] jenkins/ci-application-6-b7p9g-sh2td-l5bdz
+	Container [jnlp] waiting [ContainerCreating] No message
+	Container [kaniko] waiting [ContainerCreating] No message
+	Container [python] waiting [ContainerCreating] No message
+	Container [trivy] waiting [ContainerCreating] No message
+	Pod [Pending][ContainersNotReady] containers with unready status: [python kaniko trivy jnlp]
+Agent ci-application-6-b7p9g-sh2td-l5bdz is provisioned from template ci-application_6-b7p9g-sh2td
+---
+apiVersion: "v1"
+kind: "Pod"
+metadata:
+  annotations:
+    kubernetes.jenkins.io/last-refresh: "1786988327681"
+    buildUrl: "http://jenkins.jenkins.svc.cluster.local:8080/job/ci-application/6/"
+    runUrl: "job/ci-application/6/"
+  labels:
+    jenkins: "slave"
+    jenkins/label-digest: "09a45ba3532a214d44ef11941777ec8929fff66d"
+    jenkins/label: "ci-application_6-b7p9g"
+    kubernetes.jenkins.io/controller: "http___jenkins_jenkins_svc_cluster_local_8080x"
+  name: "ci-application-6-b7p9g-sh2td-l5bdz"
+  namespace: "jenkins"
+spec:
+  containers:
+  - args:
+    - "99d"
+    command:
+    - "sleep"
+    image: "python:3.11-slim"
+    imagePullPolicy: "IfNotPresent"
+    name: "python"
+    resources:
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+      requests:
+        memory: "200Mi"
+        cpu: "150m"
+    tty: false
+    volumeMounts:
+    - mountPath: "/home/jenkins/agent"
+      name: "workspace-volume"
+      readOnly: false
+  - args:
+    - "99d"
+    command:
+    - "sleep"
+    image: "gcr.io/kaniko-project/executor:v1.24.0-debug"
+    imagePullPolicy: "IfNotPresent"
+    name: "kaniko"
+    resources:
+      limits:
+        memory: "800Mi"
+        cpu: "1"
+      requests:
+        memory: "400Mi"
+        cpu: "250m"
+    tty: false
+    volumeMounts:
+    - mountPath: "/home/jenkins/agent"
+      name: "workspace-volume"
+      readOnly: false
+  - args:
+    - "99d"
+    command:
+    - "sleep"
+    image: "aquasec/trivy:0.74.0"
+    imagePullPolicy: "IfNotPresent"
+    name: "trivy"
+    resources:
+      limits:
+        memory: "700Mi"
+        cpu: "500m"
+      requests:
+        memory: "300Mi"
+        cpu: "250m"
+    tty: false
+    volumeMounts:
+    - mountPath: "/home/jenkins/agent"
+      name: "workspace-volume"
+      readOnly: false
+  - env:
+    - name: "JENKINS_SECRET"
+      value: "********"
+    - name: "JENKINS_TUNNEL"
+      value: "jenkins-agent.jenkins.svc.cluster.local:50000"
+    - name: "JENKINS_AGENT_NAME"
+      value: "ci-application-6-b7p9g-sh2td-l5bdz"
+    - name: "REMOTING_OPTS"
+      value: "-noReconnectAfter 1d"
+    - name: "JENKINS_NAME"
+      value: "ci-application-6-b7p9g-sh2td-l5bdz"
+    - name: "JENKINS_AGENT_WORKDIR"
+      value: "/home/jenkins/agent"
+    - name: "JENKINS_URL"
+      value: "http://jenkins.jenkins.svc.cluster.local:8080/"
+    image: "jenkins/inbound-agent:3384.v60d89463d9e0-2-jdk25"
+    name: "jnlp"
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+    volumeMounts:
+    - mountPath: "/home/jenkins/agent"
+      name: "workspace-volume"
+      readOnly: false
+  nodeSelector:
+    kubernetes.io/os: "linux"
+  restartPolicy: "Never"
+  serviceAccountName: "ci-build-sa"
+  volumes:
+  - emptyDir:
+      medium: ""
+    name: "workspace-volume"
+
+Running on ci-application-6-b7p9g-sh2td-l5bdz in /home/jenkins/agent/workspace/ci-application
+[Pipeline] {
+[Pipeline] stage
+[Pipeline] { (Declarative: Checkout SCM)
+[Pipeline] checkout
+The recommended git tool is: git
+No credentials specified
+Cloning the remote Git repository
+Cloning repository https://github.com/MaxTsyganov/Running_Devops_Project.git
+ > git init /home/jenkins/agent/workspace/ci-application # timeout=10
+Fetching upstream changes from https://github.com/MaxTsyganov/Running_Devops_Project.git
+ > git --version # timeout=10
+ > git --version # 'git version 2.47.3'
+ > git fetch --tags --force --progress -- https://github.com/MaxTsyganov/Running_Devops_Project.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+ > git config remote.origin.url https://github.com/MaxTsyganov/Running_Devops_Project.git # timeout=10
+ > git config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/* # timeout=10
+Avoid second fetch
+Checking out Revision 4b043c7079339b5d68902f2ccc4a64b1aeef12fc (refs/remotes/origin/main)
+Commit message: "test: deliberately broken lint, to capture CI-fails-blocks-CD evidence"
+ > git rev-parse refs/remotes/origin/main^{commit} # timeout=10
+ > git config core.sparsecheckout # timeout=10
+ > git checkout -f 4b043c7079339b5d68902f2ccc4a64b1aeef12fc # timeout=10
+ > git rev-list --no-walk fd3457cdfded3b39b83a4718c4c6e2153ddc5b15 # timeout=10
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] withEnv
+[Pipeline] {
+[Pipeline] withEnv
+[Pipeline] {
+[Pipeline] timestamps
+[Pipeline] {
+[Pipeline] timeout
+[2026-08-17T17:39:04.534Z] Timeout set to expire in 30 min
+[Pipeline] {
+[Pipeline] stage
+[Pipeline] { (Checkout)
+[Pipeline] checkout
+[2026-08-17T17:39:04.652Z] The recommended git tool is: git
+[2026-08-17T17:39:04.682Z] No credentials specified
+[2026-08-17T17:39:04.694Z] Fetching changes from the remote Git repository
+[2026-08-17T17:39:04.951Z] Checking out Revision 4b043c7079339b5d68902f2ccc4a64b1aeef12fc (refs/remotes/origin/main)
+[2026-08-17T17:39:05.004Z] Commit message: "test: deliberately broken lint, to capture CI-fails-blocks-CD evidence"
+[Pipeline] script
+[Pipeline] {
+[Pipeline] sh
+[2026-08-17T17:39:05.535Z] + git rev-parse --short=8 HEAD
+[Pipeline] }
+[2026-08-17T17:39:04.685Z]  > git rev-parse --resolve-git-dir /home/jenkins/agent/workspace/ci-application/.git # timeout=10
+[2026-08-17T17:39:04.704Z]  > git config remote.origin.url https://github.com/MaxTsyganov/Running_Devops_Project.git # timeout=10
+[2026-08-17T17:39:04.734Z] Fetching upstream changes from https://github.com/MaxTsyganov/Running_Devops_Project.git
+[2026-08-17T17:39:04.735Z]  > git --version # timeout=10
+[2026-08-17T17:39:04.740Z]  > git --version # 'git version 2.47.3'
+[2026-08-17T17:39:04.741Z]  > git fetch --tags --force --progress -- https://github.com/MaxTsyganov/Running_Devops_Project.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+[2026-08-17T17:39:04.944Z]  > git rev-parse refs/remotes/origin/main^{commit} # timeout=10
+[2026-08-17T17:39:04.954Z]  > git config core.sparsecheckout # timeout=10
+[2026-08-17T17:39:04.963Z]  > git checkout -f 4b043c7079339b5d68902f2ccc4a64b1aeef12fc # timeout=10
+[Pipeline] // script
+[Pipeline] echo
+[2026-08-17T17:39:05.656Z] Branch:       origin/main
+[Pipeline] echo
+[2026-08-17T17:39:05.678Z] Commit:       4b043c70
+[Pipeline] echo
+[2026-08-17T17:39:05.704Z] Build number: 6
+[Pipeline] echo
+[2026-08-17T17:39:05.751Z] Image tag:    4b043c70
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Validation)
+[Pipeline] sh
+[2026-08-17T17:39:06.164Z] + set -e
+[2026-08-17T17:39:06.164Z] + test -f frontend/Dockerfile
+[2026-08-17T17:39:06.164Z] + test -f frontend/.dockerignore
+[2026-08-17T17:39:06.164Z] + test -f backend/Dockerfile
+[2026-08-17T17:39:06.164Z] + test -f backend/.dockerignore
+[2026-08-17T17:39:06.164Z] + test -f worker/Dockerfile
+[2026-08-17T17:39:06.164Z] + test -f worker/.dockerignore
+[2026-08-17T17:39:06.164Z] + test -f helm/devops-app/Chart.yaml
+[2026-08-17T17:39:06.164Z] + test -f helm/devops-app/values.yaml
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Static Analysis / Lint)
+[Pipeline] container
+[Pipeline] {
+[Pipeline] sh
+[2026-08-17T17:39:06.862Z] + set -e
+[2026-08-17T17:39:06.862Z] + pip install --quiet --no-cache-dir pyflakes==3.2.0
+[2026-08-17T17:39:11.067Z] WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv
+[2026-08-17T17:39:11.067Z] 
+[2026-08-17T17:39:11.067Z] [notice] A new release of pip is available: 24.0 -> 26.2.1
+[2026-08-17T17:39:11.067Z] [notice] To update, run: pip install --upgrade pip
+[2026-08-17T17:39:11.067Z] + python -m pyflakes backend/app.py worker/worker.py
+[2026-08-17T17:39:11.350Z] backend/app.py:7:1: 'sys' imported but unused
+[Pipeline] }
+[Pipeline] // container
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Tests)
+Stage "Tests" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Build)
+Stage "Build" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Scan)
+Stage "Scan" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Publish Metadata)
+Stage "Publish Metadata" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Declarative: Post Actions)
+[Pipeline] cleanWs
+[2026-08-17T17:39:12.365Z] [WS-CLEANUP] Deleting project workspace...
+[2026-08-17T17:39:12.366Z] [WS-CLEANUP] Deferred wipeout is used...
+[2026-08-17T17:39:12.379Z] [WS-CLEANUP] done
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] }
+[Pipeline] // timeout
+[Pipeline] }
+[Pipeline] // timestamps
+[Pipeline] }
+[Pipeline] // withEnv
+[Pipeline] }
+[Pipeline] // withEnv
+[Pipeline] }
+[Pipeline] // node
+[Pipeline] }
+[Pipeline] // podTemplate
+[Pipeline] End of Pipeline
+ERROR: script returned exit code 1
+Finished: FAILURE

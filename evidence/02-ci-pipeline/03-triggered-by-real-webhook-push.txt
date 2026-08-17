@@ -1,0 +1,23 @@
+=== Confirms build #7 was triggered by a real GitHub push, not a manual click ===
+(Jenkins controller log line at the moment of the push)
+
+--
+2026-08-17 17:18:15.963+0000 [id=16]	INFO	o.j.p.g.w.s.DefaultPushGHEventSubscriber#onEvent: Received PushEvent for https://github.com/MaxTsyganov/Running_Devops_Project from 10.0.3.26 ⇒ http://jenkins.jenkins.svc.cluster.local:8080/github-webhook/
+2026-08-17 17:18:15.965+0000 [id=16]	INFO	o.j.p.g.w.s.DefaultPushGHEventSubscriber$1#run: Poked ci-application
+2026-08-17 17:18:16.333+0000 [id=688]	INFO	c.c.jenkins.GitHubPushTrigger$1#run: SCM changes detected in ci-application. Triggering #3
+--
+2026-08-17 17:22:31.596+0000 [id=16]	INFO	o.j.p.g.w.s.DefaultPushGHEventSubscriber#onEvent: Received PushEvent for https://github.com/MaxTsyganov/Running_Devops_Project from 10.0.3.26 ⇒ http://jenkins.jenkins.svc.cluster.local:8080/github-webhook/
+2026-08-17 17:22:31.597+0000 [id=16]	INFO	o.j.p.g.w.s.DefaultPushGHEventSubscriber$1#run: Poked ci-application
+2026-08-17 17:22:32.051+0000 [id=868]	INFO	c.c.jenkins.GitHubPushTrigger$1#run: SCM changes detected in ci-application. Triggering #4
+--
+2026-08-17 17:35:37.696+0000 [id=19]	INFO	o.j.p.g.w.s.DefaultPushGHEventSubscriber#onEvent: Received PushEvent for https://github.com/MaxTsyganov/Running_Devops_Project from 10.0.3.26 ⇒ http://jenkins.jenkins.svc.cluster.local:8080/github-webhook/
+2026-08-17 17:35:37.697+0000 [id=19]	INFO	o.j.p.g.w.s.DefaultPushGHEventSubscriber$1#run: Poked ci-application
+2026-08-17 17:35:38.090+0000 [id=1126]	INFO	c.c.jenkins.GitHubPushTrigger$1#run: SCM changes detected in ci-application. Triggering #5
+--
+2026-08-17 17:38:37.768+0000 [id=15]	INFO	o.j.p.g.w.s.DefaultPushGHEventSubscriber#onEvent: Received PushEvent for https://github.com/MaxTsyganov/Running_Devops_Project from 10.0.3.26 ⇒ http://jenkins.jenkins.svc.cluster.local:8080/github-webhook/
+2026-08-17 17:38:37.770+0000 [id=15]	INFO	o.j.p.g.w.s.DefaultPushGHEventSubscriber$1#run: Poked ci-application
+2026-08-17 17:38:38.257+0000 [id=1305]	INFO	c.c.jenkins.GitHubPushTrigger$1#run: SCM changes detected in ci-application. Triggering #6
+--
+2026-08-17 17:39:46.569+0000 [id=19]	INFO	o.j.p.g.w.s.DefaultPushGHEventSubscriber#onEvent: Received PushEvent for https://github.com/MaxTsyganov/Running_Devops_Project from 10.0.3.26 ⇒ http://jenkins.jenkins.svc.cluster.local:8080/github-webhook/
+2026-08-17 17:39:46.570+0000 [id=19]	INFO	o.j.p.g.w.s.DefaultPushGHEventSubscriber$1#run: Poked ci-application
+2026-08-17 17:39:46.966+0000 [id=1365]	INFO	c.c.jenkins.GitHubPushTrigger$1#run: SCM changes detected in ci-application. Triggering #7
