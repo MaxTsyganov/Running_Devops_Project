@@ -4,7 +4,6 @@ handling S3 file uploads, and triggering SNS alerts.
 """
 
 import os
-import sys
 import logging
 from datetime import datetime
 
