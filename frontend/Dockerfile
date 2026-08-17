@@ -1,6 +1,6 @@
-# Unprivileged variant: non-root by default and listens on unprivileged ports
-# unconditionally, so a plain "docker run" behaves the same as it does under
-# Kubernetes' runAsUser:101 override instead of depending on it.
+# Unprivileged variant: non-root by default, listens on unprivileged ports
+# unconditionally. A plain "docker run" then behaves the same as it does
+# under Kubernetes' runAsUser:101 override, instead of depending on it.
 FROM nginxinc/nginx-unprivileged:1.30.4-alpine
 
 USER 101

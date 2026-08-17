@@ -8,9 +8,9 @@ info()    { echo "    $1"; }
 success() { echo -e "${GREEN}✔ $1${RESET}"; }
 fail()    { echo -e "${RED}✘ $1${RESET}"; exit 1; }
 
-# Pinned version for eksctl, installed straight from GitHub releases (not a
-# package manager) - reviewed and bumped deliberately, instead of always
-# pulling whatever "latest"/"stable" happens to resolve to on a given run.
+# Pinned eksctl version, installed straight from GitHub releases (not a
+# package manager) - bumped deliberately instead of always pulling whatever
+# "latest" resolves to on a given run.
 EKSCTL_VERSION="v0.229.0"
 
 echo -e "${BOLD}=================================================================="
@@ -27,9 +27,9 @@ step "[0/11] Running pre-flight checks..."
 
 info "Checking required CLI tools..."
 
-# aws and docker are never auto-installed: aws-cli is often already managed
-# inside a venv (pip install awscli), and docker is usually Docker Desktop,
-# a GUI installer this script can't drive.
+# aws and docker are never auto-installed: aws-cli is often managed inside
+# a venv (pip install awscli), and docker is usually Docker Desktop - a GUI
+# installer this script can't drive.
 for tool in aws docker; do
     command -v "$tool" >/dev/null 2>&1 \
         || fail "'$tool' is not installed or not on your PATH. Install it yourself and re-run this script."
@@ -56,9 +56,9 @@ install_helm() {
     curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 }
 
-# terraform/eksctl/kubectl/helm are plain binaries with no venv-conflict risk,
-# so offering to install them is safe - but still asked one at a time, never
-# silent, since each one runs real sudo commands against the system.
+# terraform/eksctl/kubectl/helm are plain binaries with no venv-conflict
+# risk, so offering to install them is safe - but still asked one at a time,
+# never silently, since each install runs real sudo commands.
 for tool in terraform eksctl kubectl helm; do
     command -v "$tool" >/dev/null 2>&1 && continue
     echo -e "${YELLOW}    '$tool' is not installed.${RESET}"
@@ -82,11 +82,11 @@ docker info >/dev/null 2>&1 \
 success "Docker daemon is reachable."
 
 info "Checking AWS credentials..."
-# Most aws-cli calls below have their output captured into a variable, which
-# never triggers a pager - but a few (like the security-group rule further
-# down) print straight to the terminal, and aws-cli defaults to piping that
-# through `less`, silently blocking the script on a keypress. Disabling the
-# pager globally avoids that for every call, not just the ones caught so far.
+# Most aws-cli calls below capture output into a variable, which never
+# triggers a pager - but a few (like the security-group rule further down)
+# print straight to the terminal, and aws-cli pipes that through `less` by
+# default, silently blocking the script on a keypress. Disabling the pager
+# globally avoids that for every call, not just the ones caught so far.
 export AWS_PAGER=""
 export AWS_REGION="us-east-1"
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text) \
@@ -144,10 +144,10 @@ step "[2/11] Applying Terraform (RDS, S3, SNS, IAM, networking)..."
 cd terraform
 terraform init -input=false
 # -auto-approve: this script already stops (set -e) on any Terraform error,
-# and re-running apply on unchanged infra is a safe no-op, so we skip the
-# interactive "yes" prompt to keep the whole deploy hands-off. -input=false
-# for the same reason: a missing variable should fail loudly, not block on
-# a prompt with nobody watching for it.
+# and re-running apply on unchanged infra is a safe no-op, so the
+# interactive "yes" prompt is skipped to keep the deploy hands-off.
+# -input=false, same reason: a missing variable should fail loudly, not
+# block on a prompt with nobody watching for it.
 terraform apply -auto-approve -input=false
 VPC_ID=$(terraform output -raw vpc_id)
 PUBLIC_SUBNET_IDS=$(terraform output -raw public_subnet_ids)
@@ -176,21 +176,22 @@ if eksctl get cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2
 else
     info "Creating cluster inside the existing VPC/subnets (this takes 15-20 minutes)..."
     # 3 nodes, not 2: pod ceiling per node is set by ENI IP capacity
-    # (EKS/VPC CNI), not CPU/memory. With kube-system, CoreDNS, ArgoCD,
-    # cert-manager, and this app all scheduled, 2 nodes isn't enough
-    # headroom; 3 is, for a small added cost.
+    # (EKS/VPC CNI), not CPU/memory. With kube-system, CoreDNS, cert-manager,
+    # Jenkins, and this app all scheduled, 2 nodes isn't enough headroom; 3
+    # is, for a small added cost.
     # t3.medium, not t3.small: Assignment 4 adds a resident Jenkins
     # controller Pod, a resident webhook-relay Pod, and bursts of ephemeral
-    # CI/CD agent Pods on top of everything already competing for the same
-    # 3 nodes. t3.small's pod ceiling (11/node, 33 total) was already tight
-    # before Jenkins existed; t3.medium doubles the memory per node and
-    # raises the ceiling to 17/node (51 total) for the same node count -
-    # cheap insurance against CI agent Pods stuck Pending mid-build.
+    # CI/CD agent Pods on top of everything already competing for the same 3
+    # nodes. t3.small's pod ceiling (11/node, 33 total) was already tight
+    # before Jenkins; t3.medium doubles the memory per node, raising the
+    # ceiling to 17/node (51 total) for the same node count - cheap
+    # insurance against CI agent Pods stuck Pending mid-build.
     # --node-private-networking: passing both public and private subnets only
-    # tells eksctl which subnets exist - without this flag it can still place
-    # the managed node group in the public ones, which (since map_public_ip_on_launch
-    # is true there) hands every node a real public IP. This forces the node
-    # group into the private subnets only, with no public IP at all.
+    # tells eksctl which subnets exist - without this flag it can still put
+    # the managed node group in the public ones, which (since
+    # map_public_ip_on_launch is true there) gives every node a real public
+    # IP. This forces the node group into private subnets only, with no
+    # public IP.
     eksctl create cluster \
         --name "$CLUSTER_NAME" \
         --region "$AWS_REGION" \
@@ -207,8 +208,8 @@ success "kubectl is now pointed at '$CLUSTER_NAME'."
 step "[4/11] Enabling VPC CNI NetworkPolicy enforcement..."
 # Off by default on EKS - AWS ships the VPC CNI with policy enforcement
 # disabled unless explicitly turned on. Without this, the NetworkPolicy
-# objects the Helm chart creates are inert: they exist as API objects, but
-# nothing in the cluster actually reads or enforces them.
+# objects the Helm chart creates are inert: they exist as API objects but
+# nothing in the cluster enforces them.
 aws eks update-addon \
     --cluster-name "$CLUSTER_NAME" --region "$AWS_REGION" \
     --addon-name vpc-cni \
@@ -232,20 +233,21 @@ step "[6/11] Setting up IRSA so backend/worker get AWS access without static key
 # IRSA lets a pod assume an IAM role via a short-lived token instead of a
 # long-lived access key in a Secret. Needs an OIDC provider on the cluster
 # plus a role per ServiceAccount, trusted only by that SA, using the same
-# least-privilege policy from terraform/iam.tf. frontend-sa gets no role -
+# least-privilege policies from terraform/iam.tf. frontend-sa gets no role -
 # it never talks to AWS.
-# Created directly, NOT as a chart template: cd-deploy-sa's RBAC
-# (jenkins/rbac/cd-deploy-rbac.yaml) is deliberately read-only, resourceName-
-# scoped to exactly "devops-app" on Namespace - it can check the namespace
-# exists, but can never create/own one (Namespace is cluster-scoped, so even
-# that narrow ClusterRole is the one unavoidable exception to this project's
-# namespace-scoped RBAC). A chart-templated Namespace resource would make
-# `helm upgrade --install` (which CD runs as cd-deploy-sa) try to adopt/manage
-# this object as part of the release - confirmed failing two different ways:
-# "invalid ownership metadata" on first install (this namespace wasn't
-# created by Helm), and would need write permissions CD deliberately doesn't
-# have even if that were fixed. It still has to exist now, before IRSA setup
-# below: eksctl needs somewhere to put backend-sa/worker-sa.
+#
+# Namespace is created directly here, NOT as a chart template. cd-deploy-sa's
+# RBAC (jenkins/rbac/cd-deploy-rbac.yaml) is deliberately read-only,
+# resourceName-scoped to exactly "devops-app" on Namespace - it can check
+# the namespace exists but can never create or own one (Namespace is
+# cluster-scoped, so this is the one unavoidable exception to this project's
+# namespace-scoped RBAC). A chart-templated Namespace would make `helm
+# upgrade --install` (which CD runs as cd-deploy-sa) try to adopt it as part
+# of the release - confirmed failing two ways: "invalid ownership metadata"
+# on first install (the namespace wasn't created by Helm), and it would
+# need write permissions CD deliberately doesn't have even if that were
+# fixed. The namespace has to exist now anyway: eksctl needs somewhere to
+# put backend-sa/worker-sa.
 kubectl create namespace devops-app --dry-run=client -o yaml | kubectl apply -f -
 
 eksctl utils associate-iam-oidc-provider \
@@ -273,11 +275,11 @@ success "worker-sa can now reach SNS via IRSA - no AWS keys involved."
 
 step "[7/11] Installing External Secrets Operator to sync the DB password from Secrets Manager..."
 # Replaces passing the password through the ArgoCD Application's
-# valuesObject (which persisted it, base64-only, as a readable live cluster
-# object). The chart's SecretStore/ExternalSecret templates read the real
-# value directly from AWS at sync time instead; the ESO controller's own
-# IRSA-bound ServiceAccount is the only thing with permission to read it,
-# scoped to exactly this one secret (terraform/iam.tf).
+# valuesObject, which persisted it, base64-only, as a readable live cluster
+# object. The chart's SecretStore/ExternalSecret templates read the real
+# value directly from AWS at sync time instead; only the ESO controller's
+# own IRSA-bound ServiceAccount can read it, scoped to exactly this one
+# secret (terraform/iam.tf).
 kubectl create namespace external-secrets --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
 ESO_POLICY_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:policy/DevOps-ExternalSecrets-Policy"
@@ -299,15 +301,15 @@ helm upgrade --install external-secrets external-secrets/external-secrets \
 success "External Secrets Operator installed."
 
 step "[8/11] Installing cert-manager and creating a self-signed TLS issuer..."
-# cert-manager issues and auto-renews the frontend's cert instead of a one-off
-# openssl script. Still self-signed - there's no domain pointed at the load
-# balancer to get a real CA-trusted cert from - but now issued and rotated
-# the way a production cert-manager + Let's Encrypt setup would work, just
-# with a SelfSigned issuer instead of an ACME one.
+# cert-manager issues and auto-renews the frontend's cert instead of a
+# one-off openssl script. Still self-signed - there's no domain pointed at
+# the load balancer to get a real CA-trusted cert from - but issued and
+# rotated the same way a production cert-manager + Let's Encrypt setup
+# would, just with a SelfSigned issuer instead of an ACME one.
 if ! kubectl get deployment cert-manager -n cert-manager >/dev/null 2>&1; then
     info "Installing cert-manager (first run only)..."
-    # --server-side: same reason as ArgoCD below - cert-manager's CRDs are
-    # too large for client-side apply's last-applied-configuration annotation.
+    # --server-side: cert-manager's CRDs are too large for client-side
+    # apply's last-applied-configuration annotation.
     kubectl apply --server-side --force-conflicts \
         -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml >/dev/null
 else
@@ -340,11 +342,11 @@ rm -f "$CLUSTERISSUER"
 success "Self-signed ClusterIssuer ready."
 
 step "[9/11] Installing Fluent Bit to ship container logs to CloudWatch..."
-# Fluent Bit is cluster infrastructure, not part of the app - same category as
-# ArgoCD and cert-manager, so it's installed directly here rather than folded
-# into helm/devops-app. The log group itself is Terraform-managed (logging.tf),
-# not auto-created by Fluent Bit, so IRSA only grants it permission to write
-# into that one already-existing group - never to create new ones.
+# Fluent Bit is cluster infrastructure, not part of the app - same category
+# as cert-manager, so it's installed directly here instead of folded into
+# helm/devops-app. The log group is Terraform-managed (logging.tf), not
+# auto-created by Fluent Bit, so IRSA only grants permission to write into
+# that one existing group - never to create new ones.
 kubectl create namespace amazon-cloudwatch --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
 FLUENTBIT_POLICY_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:policy/DevOps-FluentBit-Logging-Policy"
@@ -398,11 +400,11 @@ for service in frontend backend worker; do
 
     docker tag devops-$service:latest "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/devops-$service:v1.0.0"
     # ECR repos are IMMUTABLE (terraform/ecr.tf) - re-pushing an existing tag
-    # errors instead of silently overwriting it, which is exactly the
-    # behavior that policy is for. v1.0.0 is a fixed baseline tag (unlike
-    # Jenkins CI's per-commit-SHA tags), so re-running this script on an
-    # unchanged Dockerfile/app needs to treat "tag already exists" as a
-    # no-op, not a failure - the content is identical either way.
+    # errors instead of silently overwriting it, which is exactly what that
+    # policy is for. v1.0.0 is a fixed baseline tag (unlike Jenkins CI's
+    # per-commit-SHA tags), so re-running this script on an unchanged
+    # Dockerfile/app needs to treat "tag already exists" as a no-op, not a
+    # failure - the content is identical either way.
     if aws ecr describe-images --region "$AWS_REGION" --repository-name "devops-$service" \
         --image-ids imageTag=v1.0.0 >/dev/null 2>&1; then
         info "devops-$service:v1.0.0 already in ECR, skipping push."
@@ -414,18 +416,17 @@ success "All 3 images built, scanned, and pushed as :v1.0.0."
 
 step "[11/11] Publishing the terraform-outputs ConfigMap for Jenkins CD..."
 # Assignment 3 deployed via ArgoCD (Application valuesObject + selfHeal).
-# Assignment 4 replaced that with Jenkins CD deploying straight via
-# `helm upgrade --install` (jenkins/cd/Jenkinsfile) - running both would mean
+# Assignment 4 replaced that with Jenkins CD deploying straight via `helm
+# upgrade --install` (jenkins/cd/Jenkinsfile) - running both would mean
 # ArgoCD's selfHeal reverts every Jenkins CD deploy back to whatever's last
-# synced from git, fighting the exact pipeline this assignment is about.
+# synced from git, fighting the pipeline this assignment is about.
 # So infra bring-up stops here: it prepares the namespace and the one thing
-# CD can't get any other way (the non-secret Terraform outputs - RDS host,
-# S3 bucket, SNS topic ARN, the Secrets Manager secret name - which change
-# every time `terraform apply` runs and so can't be hardcoded into the
-# Jenkinsfile). CD's own Jenkinsfile deliberately never creates this
-# namespace itself (see its "Deploy" stage) - first deploy is Jenkins CD's
-# job, not this script's. The namespace already exists from step [6/11]
-# (rendered from the chart's own namespace.yaml), so only the ConfigMap is
+# CD can't get any other way - the non-secret Terraform outputs (RDS host,
+# S3 bucket, SNS topic ARN, the Secrets Manager secret name) that change on
+# every `terraform apply` and so can't be hardcoded into the Jenkinsfile.
+# CD's own Jenkinsfile deliberately never creates this namespace itself (see
+# its "Deploy" stage) - first deploy is Jenkins CD's job, not this script's.
+# The namespace already exists from step [6/11], so only the ConfigMap is
 # new here.
 kubectl create configmap terraform-outputs -n devops-app \
     --from-literal=dbHost="${DB_HOST}" \

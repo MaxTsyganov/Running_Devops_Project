@@ -48,9 +48,8 @@ resource "aws_s3_bucket" "app_bucket" {
   }
 }
 
-# Nothing in this project ever needs public bucket access - the backend
-# talks to S3 through IRSA, not a public URL - so blocking it entirely has
-# no functional downside.
+# Nothing here needs public bucket access - the backend talks to S3 via
+# IRSA, not a public URL - so blocking it entirely costs nothing.
 resource "aws_s3_bucket_public_access_block" "app_bucket" {
   bucket = aws_s3_bucket.app_bucket.id
 
@@ -62,7 +61,7 @@ resource "aws_s3_bucket_public_access_block" "app_bucket" {
 
 # SSE-S3 (AES256, AWS-managed key) - free. A customer-managed KMS key would
 # satisfy stricter scanners too, but costs ~$1/month for a key this project
-# doesn't otherwise need, for marginal benefit on data that isn't sensitive.
+# doesn't otherwise need, for marginal benefit on non-sensitive data.
 # trivy:ignore:AWS-0132
 resource "aws_s3_bucket_server_side_encryption_configuration" "app_bucket" {
   bucket = aws_s3_bucket.app_bucket.id

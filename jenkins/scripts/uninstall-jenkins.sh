@@ -2,9 +2,9 @@
 set -e
 
 # Removes Jenkins and everything install-jenkins.sh/configure-jenkins.sh
-# created, WITHOUT touching the app (devops-app namespace), the EKS cluster,
-# or any Terraform-managed AWS infra - the counterpart to those two scripts,
-# for when you want Jenkins gone but the app to keep running. For a full
+# created, without touching the app (devops-app namespace), the EKS cluster,
+# or any Terraform-managed AWS infra. Counterpart to those two scripts, for
+# when you want Jenkins gone but the app to keep running. For a full
 # environment teardown (cluster, RDS, everything), use teardown.sh instead.
 #
 # Idempotent - safe to re-run; every step no-ops cleanly if its target is

@@ -23,12 +23,12 @@
     <scriptPath>jenkins/ci/Jenkinsfile</scriptPath>
     <lightweight>true</lightweight>
   </definition>
-  <!-- Registers the actual GitHub push trigger. githubPush() inside the
-       Jenkinsfile alone is not enough - Jenkins only picks that up as a live
-       trigger starting from a build that already had it wired here, so it
-       has to be declared in the job config itself, not just the pipeline
-       script. No "plugin=" version pin, matching jenkins/values.yaml's
-       policy of not hand-pinning individual plugin versions. -->
+  <!-- Registers the GitHub push trigger. githubPush() inside the Jenkinsfile
+       alone isn't enough - Jenkins only picks it up as a live trigger
+       starting from a build that already had it wired here, so it has to be
+       declared in the job config itself, not just the pipeline script. No
+       "plugin=" version pin, matching jenkins/values.yaml's policy of not
+       hand-pinning individual plugin versions. -->
   <triggers>
     <com.cloudbees.jenkins.GitHubPushTrigger>
       <spec></spec>

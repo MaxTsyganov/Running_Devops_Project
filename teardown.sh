@@ -14,33 +14,35 @@ echo "  Terraform-managed AWS resource (RDS, S3, SNS, ECR, IAM, networking)."
 echo -e "==================================================================${RESET}"
 
 step "[1/8] Deleting the app namespace..."
-# Assignment 3 deployed via ArgoCD (an Application with a resources-finalizer,
-# so deleting it cascades to everything it manages); Assignment 4 replaced
-# that with Jenkins CD deploying straight via helm upgrade --install, so
-# there may be no ArgoCD Application to find at all - both attempts below
-# fail safely if their target is already gone or was never there.
+# Assignment 3 deployed via ArgoCD (an Application with a resources-
+# finalizer, so deleting it cascades to everything it manages). Assignment 4
+# replaced that with Jenkins CD deploying straight via helm upgrade
+# --install, so there may be no ArgoCD Application to find at all - both
+# attempts below fail safely if their target is already gone or never
+# existed.
 kubectl delete application devops-app -n argocd --timeout=120s 2>/dev/null \
     || info "No ArgoCD Application found, nothing to cascade-delete here - continuing."
 # The Namespace is chart-managed now, so the Application delete above should
-# already be pruning it - this is a backstop that also blocks until it's fully
-# gone, which the next step (waiting for the load balancer to release) relies on.
+# already be pruning it - this is a backstop that also blocks until it's
+# fully gone, which the next step (waiting for the load balancer) relies on.
 kubectl delete namespace devops-app --ignore-not-found=true 2>/dev/null \
     || info "No cluster reachable, nothing to delete here - continuing."
 # ArgoCD (if still installed), cert-manager, and Fluent Bit (the argocd/
-# cert-manager/amazon-cloudwatch namespaces) are all left alone here on
-# purpose - none of them own AWS resources directly (their IAM roles are
-# deleted separately in step [5/8], the CloudWatch log group by `terraform
-# destroy` in step [7/8]), so they all disappear for free when `eksctl
-# delete cluster` runs in step [6/8]. Deleting them here would just make the
-# script wait on components terminating for no real benefit.
+# cert-manager/amazon-cloudwatch namespaces) are left alone on purpose - none
+# of them own AWS resources directly (their IAM roles are deleted separately
+# in step [5/8], the CloudWatch log group by `terraform destroy` in step
+# [7/8]), so they disappear for free when `eksctl delete cluster` runs in
+# step [6/8]. Deleting them here would just make the script wait on
+# components terminating for no benefit.
 
 step "[2/8] Waiting for the AWS Load Balancer to fully release..."
-# kubectl delete only removes the Service object immediately - the actual AWS
-# ELB/NLB and the network interfaces it planted in our subnets are cleaned up
-# asynchronously by a controller running INSIDE the cluster. If we delete the
-# cluster before that finishes, the load balancer gets orphaned with nothing
-# left to finish deleting it, and `terraform destroy` fails later with a VPC
-# DependencyViolation. So: wait here until no load balancer remains in our VPC.
+# kubectl delete only removes the Service object immediately - the actual
+# AWS ELB/NLB and the network interfaces it planted in our subnets are
+# cleaned up asynchronously by a controller running INSIDE the cluster.
+# Deleting the cluster before that finishes orphans the load balancer with
+# nothing left to clean it up, and `terraform destroy` fails later with a
+# VPC DependencyViolation. So: wait here until no load balancer remains in
+# the VPC.
 VPC_ID=$( (cd terraform && terraform output -raw vpc_id 2>/dev/null) || true)
 if [ -n "$VPC_ID" ]; then
     WAITED=0
@@ -94,9 +96,9 @@ step "[4/8] Deleting the Jenkins PVC before the cluster disappears..."
 # `eksctl delete cluster` on its own) does NOT delete the PVC a StatefulSet
 # creates via volumeClaimTemplates - that's deliberate K8s behavior to
 # protect data. Left alone, the underlying EBS volume outlives the cluster
-# entirely and keeps costing money forever with nothing left to clean it up.
-# Deleting the PVC here, while the EBS CSI driver is still running, lets it
-# actually finish deleting the real EBS volume before the cluster is gone.
+# and keeps costing money with nothing left to clean it up. Deleting the PVC
+# here, while the EBS CSI driver is still running, lets it actually finish
+# deleting the EBS volume before the cluster is gone.
 if eksctl get cluster --name devops-cluster --region us-east-1 >/dev/null 2>&1; then
     helm uninstall jenkins -n jenkins --wait --timeout=120s 2>/dev/null \
         || info "No Jenkins Helm release found, continuing."
@@ -118,11 +120,12 @@ else
 fi
 
 step "[5/8] Deleting IRSA IAM service accounts (backend-sa, worker-sa, ci-build-sa, fluent-bit-sa, external-secrets-sa)..."
-# Same lesson as the security-group rule above: these were created by `eksctl
-# create iamserviceaccount` as their own CloudFormation stacks, separate from
-# the main cluster stack. Deleting them explicitly first (rather than assuming
-# `eksctl delete cluster` cleans them up) avoids leaving orphaned IAM roles
-# behind, the same way the orphaned cluster security group happened before.
+# Same lesson as the security-group rule above: these were created by
+# `eksctl create iamserviceaccount` as their own CloudFormation stacks,
+# separate from the main cluster stack. Deleting them explicitly first
+# (rather than assuming `eksctl delete cluster` cleans them up) avoids
+# leaving orphaned IAM roles behind, the same way the security group got
+# orphaned before.
 if eksctl get cluster --name devops-cluster --region us-east-1 >/dev/null 2>&1; then
     eksctl delete iamserviceaccount --verbose 0 \
         --cluster devops-cluster --region us-east-1 \
@@ -172,9 +175,9 @@ step "[7/8] Destroying Terraform infrastructure (RDS, S3, SNS, IAM, VPC)..."
 cd terraform
 # Never assume the local .terraform/ cache is already correctly pointed at
 # the real S3 backend - init is cheap and idempotent when it's already
-# right, and this is what actually fixes it on the rare occasion it's
-# fallen out of sync (e.g. someone ran a local `terraform init -backend=false`
-# in this same directory for a one-off test and never reconfigured back).
+# right, and it's what actually fixes things on the rare occasion the cache
+# fell out of sync (e.g. someone ran `terraform init -backend=false` here
+# for a one-off test and never reconfigured it back).
 terraform init -input=false
 # None of these values affect what gets destroyed (destroy operates on
 # existing state, not on what the variables would have created) - they're
@@ -183,12 +186,11 @@ terraform init -input=false
 export TF_VAR_db_password="unused-during-teardown"
 export TF_VAR_bucket_name="unused-during-teardown"
 export TF_VAR_my_email="unused-during-teardown"
-# Same idea as eksctl above: terraform destroy narrates every single resource
-# as it goes, which is exactly the noise that's not useful on a normal run -
-# logged to a temp file, only surfaced in full if the destroy actually fails.
-# -input=false is the important part here: if a variable were ever still
-# missing, this makes it fail immediately with a clear error instead of
-# blocking on an interactive prompt that ends up hidden inside that log file.
+# Same idea as eksctl above: terraform destroy narrates every resource as it
+# goes, which is just noise on a normal run - logged to a temp file, only
+# surfaced in full if the destroy fails. -input=false is the important part:
+# if a variable were ever missing, this fails immediately with a clear error
+# instead of blocking on a prompt hidden inside that log file.
 TF_LOG=$(mktemp)
 if terraform destroy -auto-approve -input=false > "$TF_LOG" 2>&1; then
     grep -E "^(Destroy complete|No changes)" "$TF_LOG" || true

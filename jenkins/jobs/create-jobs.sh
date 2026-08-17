@@ -1,12 +1,12 @@
 #!/bin/bash
 set -e
 
-# Creates or updates ci-application and cd-application via Jenkins' REST API -
-# idempotent (safe to re-run after editing the config.xml files or the
-# Jenkinsfiles they point at). Deliberately NOT run during Jenkins' own boot
-# sequence (see jenkins/values.yaml) - this only ever touches an already
-# running, already healthy controller, so a mistake here can't take down
-# Jenkins itself, only fail this one script.
+# Creates or updates ci-application and cd-application via Jenkins' REST
+# API. Idempotent - safe to re-run after editing the config.xml files or
+# the Jenkinsfiles they point at. Deliberately NOT run during Jenkins' own
+# boot sequence (see jenkins/values.yaml): this only touches an
+# already-running controller, so a mistake here fails just this script,
+# not Jenkins itself.
 #
 # Requires: kubectl pointed at the cluster, and a port-forward to Jenkins
 # already running in another terminal:
@@ -19,11 +19,11 @@ JENKINS_USER="admin"
 JENKINS_PASSWORD=$(MSYS_NO_PATHCONV=1 kubectl exec --namespace jenkins svc/jenkins -c jenkins -- \
     /bin/cat /run/secrets/additional/chart-admin-password | tr -d '\r')
 
-# Jenkins' CSRF crumb is tied to the session it was issued in - fetching it
-# and using it in two separate curl invocations (each its own fresh Basic
-# Auth session, no cookie continuity) makes it invalid by the second
-# request, failing with "403 No valid crumb was included in the request".
-# A shared cookie jar keeps both calls in the same session.
+# Jenkins ties the CSRF crumb to the session that issued it. Fetching it
+# and using it in two separate curl calls (each starting its own fresh
+# Basic Auth session, no cookie continuity) invalidates it by the second
+# request: "403 No valid crumb was included in the request". A shared
+# cookie jar keeps both calls in the same session.
 JAR=$(mktemp)
 trap 'rm -f "$JAR"' EXIT
 

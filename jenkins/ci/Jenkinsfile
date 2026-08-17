@@ -1,31 +1,31 @@
 // CI pipeline: build, test, scan, push. Never deploys - that's
 // jenkins/cd/Jenkinsfile's job (see the CI/CD separation table in the
 // assignment brief). Runs on the "ci-agent" Kubernetes pod template
-// (jenkins/values.yaml), which has two containers: "python" for lint/test,
-// "kaniko" for the actual image build - kept separate from the controller
-// entirely, and never mounts the node's Docker socket (Kaniko builds OCI
-// images without a daemon at all).
+// (jenkins/values.yaml), with two containers: "python" for lint/test,
+// "kaniko" for the image build. Agent pods run separate from the
+// controller and never mount the node's Docker socket - Kaniko builds
+// OCI images without a daemon.
 pipeline {
     agent {
         kubernetes {
             // inheritFrom, not label: "label" alone creates a brand-new
             // inline template (jnlp only, no containers) that just happens
-            // to share this string - it does NOT pull in the ci-agent
-            // template's containers from the Kubernetes cloud config.
-            // inheritFrom is what actually references the pre-defined
-            // template (jenkins/values.yaml) and its python/kaniko containers.
-            // cloud is explicit too - there are two registered clouds (the
-            // chart auto-injects an empty one named "kubernetes"), and
-            // without naming which one to search, ci-agent wasn't resolving.
+            // to share this string - it does not pull in ci-agent's
+            // python/kaniko containers from the Kubernetes cloud config.
+            // inheritFrom references the actual pre-defined template
+            // (jenkins/values.yaml).
+            // cloud is explicit too: two clouds are registered (the chart
+            // auto-injects an empty one named "kubernetes"), and without
+            // naming which one to search, ci-agent wasn't resolving.
             cloud 'devops-agents'
             inheritFrom 'ci-agent'
         }
     }
 
     environment {
-        // Non-secret - the registry hostname and repo names, not credentials.
-        // ECR auth itself goes through ci-build-sa's IRSA role automatically;
-        // Kaniko's ECR credential helper picks it up with no explicit
+        // Non-secret: registry hostname and repo names, not credentials.
+        // ECR auth goes through ci-build-sa's IRSA role automatically -
+        // Kaniko's ECR credential helper picks it up, with no explicit
         // credential ever appearing in this file.
         ECR_REGISTRY = '957905603240.dkr.ecr.us-east-1.amazonaws.com'
     }
@@ -171,9 +171,9 @@ pipeline {
     }
 
     post {
-        // Runs regardless of outcome - workspace (and any transient
-        // credentials the Kubernetes plugin injected for this build) is
-        // cleaned up whether the build passed or failed.
+        // Cleans up the workspace (and any transient credentials the
+        // Kubernetes plugin injected for this build) whether the build
+        // passed or failed.
         always {
             cleanWs()
         }

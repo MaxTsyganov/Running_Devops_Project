@@ -46,9 +46,9 @@ pipeline {
                     }
                 }
                 // Traceability: who triggered this, which image, where it's
-                // going - the actual CI build/commit that produced this tag
-                // is recoverable from ci-application's build history (the
-                // tag itself IS the short commit SHA).
+                // going. The commit that produced this tag is recoverable
+                // from ci-application's build history - the tag itself IS
+                // the short commit SHA.
                 echo "=== Deployment request ==="
                 echo "Triggered by:     ${currentBuild.getBuildCauses()}"
                 echo "Image tag:        ${params.IMAGE_TAG}"
@@ -60,10 +60,9 @@ pipeline {
         stage('Load infra config') {
             steps {
                 // Non-secret infra values (RDS host, S3 bucket, SNS topic,
-                // the Secrets Manager secret NAME) change every time
-                // terraform apply runs, so they're read from a ConfigMap
-                // instead of hardcoded here - keeps this file correct across
-                // redeploys without editing it.
+                // the Secrets Manager secret NAME) change every terraform
+                // apply, so they come from a ConfigMap instead of being
+                // hardcoded here.
                 container('deploy') {
                     script {
                         env.DB_HOST        = sh(script: "kubectl get configmap terraform-outputs -n ${env.TARGET_NAMESPACE} -o jsonpath='{.data.dbHost}'", returnStdout: true).trim()
@@ -150,14 +149,13 @@ pipeline {
                         echo "=== Running image versions ==="
                         kubectl get pods -n ${TARGET_NAMESPACE} -o custom-columns='NAME:.metadata.name,IMAGE:.spec.containers[0].image'
 
-                        # Excludes pods with a deletionTimestamp set (Terminating): with
+                        # Excludes pods with a deletionTimestamp set (Terminating). With
                         # maxSurge=0/maxUnavailable=1, the old ReplicaSet's replica count
-                        # drops as soon as a pod is marked for deletion, but the pod itself
-                        # stays visible in `kubectl get pods` (status.phase still "Running")
-                        # until its terminationGracePeriodSeconds actually elapses. Without
-                        # this filter, a Verify that happens to run in that window sees the
-                        # about-to-be-gone old pod as a false "wrong version" failure - the
-                        # rollout is genuinely complete, that pod is just still exiting.
+                        # drops as soon as a pod is marked for deletion, but the pod stays
+                        # visible in `kubectl get pods` (status.phase still "Running") until
+                        # its terminationGracePeriodSeconds elapses. Without this filter,
+                        # Verify can catch that pod mid-exit and report a false "wrong
+                        # version" failure - the rollout is actually done.
                         WRONG_VERSION=$(kubectl get pods -n ${TARGET_NAMESPACE} \
                             -o custom-columns='IMAGE:.spec.containers[0].image,DELETING:.metadata.deletionTimestamp' --no-headers \
                             | awk '$2 == "<none>" {print $1}' \

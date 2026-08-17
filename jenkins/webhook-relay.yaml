@@ -6,19 +6,18 @@
 # to Jenkins' internal ClusterIP service. Jenkins never gets an inbound port,
 # public IP, Ingress, or LoadBalancer of its own.
 #
-# NOT using the official smee-client npm package here - confirmed by direct testing that
-# smee-client (every version checked, including 2.0.4 and current 5.0.0) has
-# a real bug: its forwarding code does `mode: data["sec-fetch-mode"]`,
-# blindly reusing whatever incoming header value GitHub's delivery happened
-# to include as the `mode` option on its own OUTGOING fetch call. A real
-# GitHub push includes that header (via GitHub's Hookshot agent / smee.io's
-# Azure App Service front-end); a synthetic test request doesn't - which is
-# exactly why manual curl/wget tests against this same endpoint succeeded
-# while real GitHub deliveries got HTTP 405 from Jenkins every time. Root-
-# caused via direct inspection of smee-client's source and confirmed with
-# webhook.site captures of the real payload/headers. The replacement below
-# has been proven against a real GitHub push - ci-application started on
-# its own, no manual Build Now.
+# Not using the official smee-client npm package. Every version checked
+# (2.0.4 through current 5.0.0) has a real bug: its forwarding code does
+# `mode: data["sec-fetch-mode"]`, blindly reusing whatever incoming header
+# value GitHub's delivery included as the `mode` option on its own outgoing
+# fetch call. A real GitHub push includes that header (via GitHub's
+# Hookshot agent / smee.io's Azure App Service front-end); a synthetic
+# test request doesn't - which is why manual curl/wget tests against this
+# endpoint succeeded while real GitHub deliveries got HTTP 405 from
+# Jenkins every time. Root-caused by reading smee-client's source and
+# confirmed with webhook.site captures of the real payload/headers. The
+# replacement below has been proven against a real GitHub push -
+# ci-application started on its own, no manual Build Now.
 #
 # The script below talks the same SSE protocol smee.io uses (a chunked
 # text/event-stream GET) directly via Node's stable fetch/streams - no
@@ -43,7 +42,7 @@ data:
     async function forward(data) {
       // smee.io sends housekeeping messages (e.g. an empty {} on connect)
       // through the same channel alongside real GitHub deliveries - only
-      // actual webhook payloads have an event type and a body.
+      // real webhook payloads have an event type and a body.
       if (!data["x-github-event"] || !data.body) {
         return;
       }

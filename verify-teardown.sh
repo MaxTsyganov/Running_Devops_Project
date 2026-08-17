@@ -1,9 +1,9 @@
 #!/bin/bash
 # Confirms teardown.sh actually left nothing behind that could keep costing
-# money - checks every category of resource that either costs money while
-# it exists (compute, storage, load balancers, NAT gateways) or that
-# teardown.sh has ever been found to miss (see its own commit history).
-# Read-only: never deletes anything itself, just reports.
+# money - checks every category of resource that either costs money while it
+# exists (compute, storage, load balancers, NAT gateways) or that
+# teardown.sh has been found to miss before (see its own commit history).
+# Read-only: never deletes anything, just reports.
 
 BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; RESET='\033[0m'
 ok()   { echo -e "${GREEN}✔ $1${RESET}"; }

@@ -134,11 +134,10 @@ def health():
 
 @app.get("/healthz")
 def healthz():
-    # Liveness only: the process can serve a request, nothing more. A
-    # transient RDS outage should make the pod not-ready (via /api/health,
-    # used for readinessProbe), not get it killed and restarted (this is
-    # what livenessProbe uses instead) over a dependency that isn't the
-    # process itself being stuck.
+    # Liveness only: confirms the process can serve a request, nothing more.
+    # A transient RDS outage should mark the pod not-ready (via /api/health,
+    # used by readinessProbe) rather than get it killed and restarted
+    # (livenessProbe's job) - the process itself isn't what's stuck.
     return jsonify({"status": "alive"}), 200
 
 

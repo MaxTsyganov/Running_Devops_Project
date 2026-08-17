@@ -33,7 +33,7 @@ flowchart TB
 
                     subgraph JenkinsNS["namespace: jenkins"]
                         direction TB
-                        Relay["webhook-relay Pod\n(smee-client, outbound only -\nJenkins itself has no inbound\nport, Ingress, or public IP)"]
+                        Relay["webhook-relay Pod\n(custom SSE relay, outbound only -\nJenkins itself has no inbound\nport, Ingress, or public IP)"]
                         Controller["Jenkins controller Pod\n(StatefulSet, 1 replica, fixed -\nnever runs builds itself)"]
                         PVC[("PVC: Jenkins home\nebs-gp3")]
                         JSvc[["Service: jenkins\n(ClusterIP only)"]]

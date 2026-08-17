@@ -1,11 +1,10 @@
 # Least-Privilege IAM Policies
 #
-# Split by workload instead of one shared policy: backend is the only service
-# that touches S3 (file uploads), worker only ever calls SNS Publish. This is
-# the ONE thing in this file the Kubernetes side still depends on: setup.sh
-# attaches these exact policies (by their fixed names below) to the
-# backend-sa/worker-sa IAM roles it creates via `eksctl create iamserviceaccount`
-# (IRSA). Don't rename them without also updating the POLICY_ARN lines in setup.sh.
+# Split by workload instead of one shared policy: backend is the only
+# service that touches S3 (file uploads); worker only calls SNS Publish.
+# setup.sh attaches these exact policies, by name, to the backend-sa/
+# worker-sa IAM roles it creates via `eksctl create iamserviceaccount`
+# (IRSA). Don't rename them without updating the POLICY_ARN lines in setup.sh.
 resource "aws_iam_policy" "backend_least_privilege_policy" {
   name        = "DevOps-Backend-Least-Privilege-Policy"
   description = "Minimal permissions required for the backend to access its specific S3 bucket and SNS topic."
@@ -64,8 +63,7 @@ resource "aws_iam_policy" "worker_least_privilege_policy" {
 
 # Separate policy for External Secrets Operator (setup.sh attaches this to
 # external-secrets-sa via IRSA). Scoped to GetSecretValue on exactly the one
-# secret it needs to read - it has no reason to see anything else in this
-# AWS account's Secrets Manager.
+# secret it needs - nothing else in this account's Secrets Manager.
 resource "aws_iam_policy" "external_secrets_policy" {
   name        = "DevOps-ExternalSecrets-Policy"
   description = "Minimal permissions for External Secrets Operator to read the DB password from Secrets Manager - nothing else."
@@ -110,9 +108,9 @@ resource "aws_iam_policy" "ci_ecr_push_policy" {
           "ecr:UploadLayerPart",
           "ecr:CompleteLayerUpload",
           "ecr:PutImage",
-          # Pull actions - Kaniko never needed these (it only pushes), but
-          # Trivy scanning the image straight from ECR after Kaniko pushes
-          # it does: it has to read back what was just pushed.
+          # Pull actions - Kaniko doesn't need these (it only pushes), but
+          # Trivy does: it scans the image straight from ECR after Kaniko
+          # pushes it, so it has to read back what was just pushed.
           "ecr:BatchGetImage",
           "ecr:GetDownloadUrlForLayer",
         ]
@@ -124,8 +122,8 @@ resource "aws_iam_policy" "ci_ecr_push_policy" {
 
 # Separate policy for Fluent Bit (setup.sh attaches this to fluent-bit-sa via
 # IRSA, same pattern as above). No logs:CreateLogGroup here on purpose - the
-# log group is created by Terraform (logging.tf), not by Fluent Bit itself,
-# so it never needs permission to create one.
+# log group is created by Terraform (logging.tf), not Fluent Bit, so it
+# never needs permission to create one.
 resource "aws_iam_policy" "fluent_bit_logging_policy" {
   name        = "DevOps-FluentBit-Logging-Policy"
   description = "Minimal permissions for Fluent Bit to write container logs to this project's CloudWatch log group."

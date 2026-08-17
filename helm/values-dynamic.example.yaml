@@ -1,7 +1,7 @@
 # Template for deploying the chart by hand with `helm upgrade`, bypassing
-# ArgoCD. setup.sh doesn't use this file at all - it builds the same values
-# from Terraform outputs and embeds them directly into the ArgoCD Application
-# it applies. To deploy manually instead:
+# Jenkins CD. Neither setup.sh nor CD use this file - CD builds the same
+# values from a ConfigMap (terraform-outputs) at deploy time. To deploy
+# manually instead:
 #   cp helm/values-dynamic.example.yaml helm/values-dynamic.yaml
 #   (edit the placeholders below, then:)
 #   helm upgrade --install devops-app ./helm/devops-app \

@@ -26,9 +26,9 @@ crash.log
 # Local-only notes, never meant to be committed
 AWS_NOTES.md
 
-# Real per-run values (RDS endpoint, S3 bucket, credentials) never touch disk
-# during a normal deploy - setup.sh embeds them straight into the ArgoCD
-# Application it applies. This file only exists for anyone deploying the
-# chart manually with `helm upgrade -f`, so it's ignored just in case.
+# Real per-run values (RDS endpoint, S3 bucket, credentials) never touch
+# disk during a normal deploy - Jenkins CD reads them from a ConfigMap at
+# deploy time. This file only exists for deploying the chart manually with
+# `helm upgrade -f`, so it's ignored just in case.
 helm/values-dynamic.yaml
 !helm/values-dynamic.example.yaml

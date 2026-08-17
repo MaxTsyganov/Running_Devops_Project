@@ -197,7 +197,7 @@ A couple of deliberate choices worth calling out:
 ## 4. Application deployment: history
 
 **As of Assignment 4, the app is deployed by Jenkins CD** (`jenkins/cd/Jenkinsfile`), not ArgoCD -
-see [§14.5](#145-cd-pipeline-jenkinscdjenkinsfile) for how that actually works. This section is
+see [§14.6](#146-cd-pipeline-jenkinscdjenkinsfile) for how that actually works. This section is
 kept as a record of the Assignment 3 approach it replaced and why.
 
 <details>
@@ -605,7 +605,7 @@ jenkins namespace                          devops-app namespace
 ```
 
 **Security boundary**: the Jenkins UI has no public IP, Ingress, or LoadBalancer - it's a plain
-`ClusterIP` Service, reachable only via `kubectl port-forward` (see [§14.7](#147-network-and-exposure)).
+`ClusterIP` Service, reachable only via `kubectl port-forward` (see [§14.9](#149-security)).
 Inbound webhook traffic never reaches Jenkins directly either: GitHub POSTs to a public
 [smee.io](https://smee.io) channel, and a `webhook-relay` Deployment inside the cluster holds an
 *outbound* connection to that channel and forwards matching events to Jenkins' internal
@@ -702,7 +702,7 @@ first build has already run with it configured).
 | Validation | Confirms every service's `Dockerfile`/`.dockerignore` and the Helm chart exist |
 | Static Analysis / Lint | `pyflakes` against `backend/app.py` and `worker/worker.py` |
 | Tests | `pytest` against `backend/test_app.py`, results published via `junit` |
-| Build | Kaniko builds and pushes all three images in one step (no Docker socket - see [§14.7](#147-container-security)) |
+| Build | Kaniko builds and pushes all three images in one step (no Docker socket - see [§14.9](#149-security)) |
 | Scan | Trivy scans each pushed image straight from ECR - HIGH+CRITICAL reported non-blocking (archived as a build artifact), fixable CRITICAL findings fail the build (`--ignore-unfixed`, `.trivyignore` for documented exceptions) |
 | Publish Metadata | Archives `image-metadata.txt` (tag + digest per service) as a build artifact |
 
@@ -808,8 +808,10 @@ structurally impossible, not just discouraged). No agent mounts the node's Docke
 builds with Kaniko (daemonless OCI image builds), CD uses a prebuilt `kubectl`+`helm` image. Every
 container in both agent templates sets explicit CPU/memory requests and limits. The webhook-relay
 Pod runs as `runAsNonRoot`, `allowPrivilegeEscalation: false`, all capabilities dropped, read-only
-root filesystem. Both the Jenkins controller image and agent container images are pinned to a fixed
-tag, never `latest`.
+root filesystem. The Jenkins controller itself runs under the official chart's own default
+`containerSecurityContext` - `runAsUser: 1000`, `runAsGroup: 1000`, `readOnlyRootFilesystem: true`,
+`allowPrivilegeEscalation: false` - never overridden to anything looser. Both the Jenkins controller
+image and agent container images are pinned to a fixed tag, never `latest`.
 
 **Network**: Jenkins UI is `ClusterIP` only - not exposed publicly, reachable only via
 `kubectl port-forward svc/jenkins -n jenkins 8080:8080`. Inbound webhook traffic never reaches

@@ -20,20 +20,18 @@ rules:
     verbs: ["get", "list", "watch", "create", "delete", "update"]
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "watch"]  # in-namespace only - the Kubernetes
-                             # Credentials Provider plugin reads Secrets here
-                             # for credential injection into pipelines, and
-                             # watches them to pick up changes live instead of
-                             # only at controller startup. Missing "watch"
-                             # doesn't break credential reads, but logs a
-                             # continuous stream of "403 Forbidden ... watch=true"
-                             # errors from the plugin retrying - confirmed via
-                             # `kubectl logs` on a real controller.
+    # In-namespace only. The Kubernetes Credentials Provider plugin reads
+    # Secrets here for credential injection into pipelines, and watches them
+    # to pick up changes live instead of only at controller startup. Missing
+    # "watch" doesn't break credential reads, but logs a continuous stream of
+    # "403 Forbidden ... watch=true" errors from the plugin retrying -
+    # confirmed via `kubectl logs` on a real controller.
+    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get", "list", "watch"]  # the chart's config-reload-init sidecar
-                                       # reads ConfigMaps in-namespace to load
-                                       # JCasC config onto the shared volume
+    # The chart's config-reload-init sidecar reads ConfigMaps in-namespace
+    # to load JCasC config onto the shared volume.
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

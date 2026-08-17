@@ -6,10 +6,10 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 COPY requirements.txt .
-# --force-reinstall: see worker/Dockerfile for why - same shared-container
-# Kaniko build order can just as easily let a LATER build in the sequence
-# leave stale/partial state for this one; forcing a real reinstall keeps
-# this image's layer correct regardless of build order.
+# --force-reinstall: see worker/Dockerfile for the full explanation. Same
+# shared-container Kaniko issue - a later build in the sequence can leave
+# stale/partial state for this one, so force a real reinstall to keep this
+# image's layers correct regardless of build order.
 RUN pip install --no-cache-dir --force-reinstall -r requirements.txt
 
 COPY app.py .

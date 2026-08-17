@@ -39,7 +39,6 @@ SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "") or None
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "") or None
 
-# Polling interval in seconds
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "30"))
 
 # Heartbeat file used by Kubernetes readiness/liveness probes (worker has no HTTP port)
@@ -152,9 +151,9 @@ def run_one_cycle():
 
     except Exception:
         # Covers fetch_pending_items and publish_sns - e.g. the items table
-        # not existing yet if this pod's first cycle races backend's own
-        # startup (backend creates it, worker doesn't). Log and retry next
-        # cycle instead of crashing the process over what's usually transient.
+        # not existing yet if this pod's first cycle races backend's startup
+        # (backend creates the table, worker doesn't). Log and retry next
+        # cycle instead of crashing over what's usually transient.
         logger.exception("Poll cycle failed")
     finally:
         conn.close()

@@ -2,10 +2,10 @@
 set -e
 
 # Installs Jenkins from scratch onto the existing EKS cluster (devops-cluster,
-# built for Assignment 3/the app itself - this script assumes it and the
-# devops-app namespace already exist, it doesn't create a cluster). Every
-# permission, plugin, agent template, and job definition Jenkins ends up with
-# comes from files in this repo - nothing here is a manual UI step.
+# built for Assignment 3/the app itself). Assumes the cluster and devops-app
+# namespace already exist - doesn't create a cluster. Every permission,
+# plugin, agent template, and job definition Jenkins ends up with comes from
+# files in this repo - nothing here is a manual UI step.
 #
 # Idempotent: safe to re-run. kubectl apply/eksctl --override-existing-
 # serviceaccounts/helm upgrade --install all no-op cleanly on an existing,
@@ -20,12 +20,12 @@ fail()    { echo -e "${RED}✘ $1${RESET}"; exit 1; }
 
 CLUSTER_NAME="devops-cluster"
 AWS_REGION="us-east-1"
-# Pinned against Artifact Hub at the time this was written - not "latest",
-# same reasoning as EKSCTL_VERSION/ARGOCD_VERSION in setup.sh. The Jenkins
-# CORE version is pinned separately, inside jenkins/values.yaml
-# (controller.image.tag) - the chart version below only has to be new enough
-# to support the JCasC/Kubernetes-cloud schema this project's values.yaml
-# uses, independent of which controller image it deploys.
+# Pinned against Artifact Hub at the time it was checked - not "latest",
+# same reasoning as EKSCTL_VERSION in setup.sh. The Jenkins CORE version is
+# pinned separately, in jenkins/values.yaml (controller.image.tag) - the
+# chart version below only has to be new enough to support the
+# JCasC/Kubernetes-cloud schema this project's values.yaml uses,
+# independent of which controller image it deploys.
 JENKINS_CHART_VERSION="5.9.54"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -50,25 +50,26 @@ kubectl create namespace jenkins --dry-run=client -o yaml | kubectl apply -f -
 success "Namespace 'jenkins' ready (never running Jenkins in 'default', per the assignment's requirement)."
 
 step "[2/7] Applying RBAC (controller + cd-deploy-sa)..."
-# controller-rbac.yaml: Role/RoleBinding scoped to the jenkins namespace only
-# - what the controller needs to launch/manage ephemeral agent Pods, nothing
-#   about devops-app.
+# controller-rbac.yaml: Role/RoleBinding scoped to the jenkins namespace
+# only - what the controller needs to launch/manage ephemeral agent Pods,
+# nothing about devops-app.
 # cd-deploy-rbac.yaml: creates cd-deploy-sa itself (a plain ServiceAccount,
-# not IRSA - it only ever calls the in-cluster Kubernetes API via kubectl/
-# helm, never an AWS API, so it doesn't need an IAM role at all) plus the
-# namespace-scoped Role/RoleBinding in devops-app and the one unavoidable
-# narrow ClusterRole for reading the Namespace object itself (see that file's
-# own header comment for why a namespace-scoped Role can never cover that).
+# not IRSA - it only calls the in-cluster Kubernetes API via kubectl/helm,
+# never an AWS API, so it needs no IAM role) plus the namespace-scoped
+# Role/RoleBinding in devops-app and the one unavoidable narrow ClusterRole
+# for reading the Namespace object itself (see that file's own header
+# comment for why a namespace-scoped Role can never cover that).
 kubectl apply -f jenkins/rbac/controller-rbac.yaml
 kubectl apply -f jenkins/rbac/cd-deploy-rbac.yaml
 success "controller and cd-deploy-sa RBAC applied."
 
 step "[3/7] Creating ci-build-sa (IRSA, for pushing images to ECR)..."
-# Unlike cd-deploy-sa, ci-build-sa DOES need IRSA: Kaniko pushes images
+# Unlike cd-deploy-sa, ci-build-sa does need IRSA: Kaniko pushes images
 # straight to ECR, a real AWS API call, so it needs the AWS IAM role behind
-# it - not just Kubernetes RBAC. It needs no Kubernetes Role at all (it never
-# calls the Kubernetes API - Kaniko builds are pure container-filesystem
-# work), which is why there's no ci-build-rbac.yaml alongside it.
+# it - not just Kubernetes RBAC. It needs no Kubernetes Role at all (it
+# never calls the Kubernetes API - Kaniko builds are pure
+# container-filesystem work), which is why there's no ci-build-rbac.yaml
+# alongside it.
 eksctl create iamserviceaccount \
     --cluster "$CLUSTER_NAME" --region "$AWS_REGION" \
     --namespace jenkins --name ci-build-sa \
@@ -83,10 +84,10 @@ step "[4/7] Installing the EBS CSI driver addon and ebs-gp3 StorageClass..."
 # needed until Jenkins showed up needing a persistent home directory
 # (jenkins/values.yaml: persistence.storageClass: ebs-gp3). Without this,
 # the jenkins PVC sits Pending forever with "storageclass ... not found".
-# --attach-policy-arn: has eksctl create the IRSA role for the addon's own
+# --attach-policy-arn has eksctl create the IRSA role for the addon's own
 # service account (ebs-csi-controller-sa) in one step, same pattern as the
-# iamserviceaccount calls above - the OIDC provider it depends on was already
-# associated by setup.sh (step 6) before this script ever runs.
+# iamserviceaccount calls above - the OIDC provider it depends on was
+# already associated by setup.sh (step 6) before this script ever runs.
 if ! aws eks describe-addon --cluster-name "$CLUSTER_NAME" --region "$AWS_REGION" \
     --addon-name aws-ebs-csi-driver >/dev/null 2>&1; then
     eksctl create addon --cluster "$CLUSTER_NAME" --region "$AWS_REGION" \
@@ -94,10 +95,10 @@ if ! aws eks describe-addon --cluster-name "$CLUSTER_NAME" --region "$AWS_REGION
         --attach-policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
         --force
     # `eksctl create addon` returns as soon as the CreateAddon API call is
-    # accepted - the actual ebs-csi-controller Deployment gets created
+    # accepted - the ebs-csi-controller Deployment itself gets created
     # asynchronously afterward by EKS's own addon manager, so checking
-    # rollout status immediately can race a Deployment that doesn't exist
-    # yet ("NotFound"). Wait for it to appear before waiting for it to roll out.
+    # rollout status right away can race a Deployment that doesn't exist yet
+    # ("NotFound"). Wait for it to appear before waiting for it to roll out.
     for _ in $(seq 1 30); do
         kubectl get deployment/ebs-csi-controller -n kube-system >/dev/null 2>&1 && break
         sleep 5

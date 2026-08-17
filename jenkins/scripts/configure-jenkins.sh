@@ -6,8 +6,7 @@ set -e
 # Wires up the GitHub webhook relay and prepares the shared-secret credential
 # for validating incoming webhook payloads. Idempotent - re-running reuses
 # the existing smee.io channel and secret instead of rotating them, since
-# rotating either would desync from whatever's already configured on the
-# GitHub repo's webhook settings.
+# rotating either would desync from the GitHub repo's webhook settings.
 
 BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; RESET='\033[0m'
 step()    { echo -e "\n${BOLD}${YELLOW}==> $1${RESET}"; }
@@ -24,8 +23,8 @@ kubectl get statefulset/jenkins -n jenkins >/dev/null 2>&1 \
 step "[1/4] Admin credentials..."
 # MSYS_NO_PATHCONV=1: on Windows Git Bash, MSYS rewrites any argument that
 # looks like a Unix absolute path (like /bin/cat here) into a literal
-# Windows path BEFORE it reaches kubectl - the exec then fails inside the
-# Linux container looking for "C:/Program Files/Git/usr/bin/cat". A no-op
+# Windows path before it reaches kubectl - the exec then fails inside the
+# Linux container looking for "C:/Program Files/Git/usr/bin/cat". No-op
 # everywhere else (Linux/Mac), so it's safe to set unconditionally.
 ADMIN_PASSWORD=$(MSYS_NO_PATHCONV=1 kubectl exec --namespace jenkins svc/jenkins -c jenkins -- \
     /bin/cat /run/secrets/additional/chart-admin-password | tr -d '\r')
@@ -57,14 +56,14 @@ step "[4/4] Webhook shared-secret credential..."
 # Made available to Jenkins via the Kubernetes Credentials Provider plugin
 # (any Secret in this namespace labeled jenkins.io/credentials-type shows up
 # as a real Jenkins credential automatically - no JCasC edit, no restart).
-# NOTE: this makes the credential exist and be usable, but Jenkins' GitHub
-# plugin still needs to be told (System config, "Manage hooks" - a one-time
-# global setting) to actually validate incoming payloads against it. Until
-# that's set, the webhook still works (GitHub allows a webhook with no
-# secret, or Jenkins simply won't check it) - this just isn't signature-
-# verified yet. Documented as a follow-up in the README's security section
-# rather than scripted here, since it needs verifying against the exact
-# GitHub plugin version this chart resolves, not guessing at a JCasC schema.
+# This makes the credential exist and usable, but Jenkins' GitHub plugin
+# still needs to be told (System config, "Manage hooks" - a one-time global
+# setting) to actually validate incoming payloads against it. Until that's
+# set, the webhook still works (GitHub allows a webhook with no secret, or
+# Jenkins simply won't check it) - it just isn't signature-verified yet.
+# Documented as a follow-up in the README's security section rather than
+# scripted here, since it needs verifying against the exact GitHub plugin
+# version this chart resolves, not guessing at a JCasC schema.
 if kubectl get secret git-webhook-secret -n jenkins >/dev/null 2>&1; then
     info "git-webhook-secret already exists, leaving it as-is."
 else

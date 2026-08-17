@@ -1,7 +1,7 @@
 # Values for the official Jenkins Helm chart (jenkinsci/jenkins).
-# Every version below was checked against the actual current release before
-# being pinned here (Docker Hub / plugins.jenkins.io / GitHub releases APIs),
-# not guessed - see the project's history of getting burned by guessed tags.
+# Every version below was checked against the current release before being
+# pinned here (Docker Hub / plugins.jenkins.io / GitHub releases APIs) -
+# not guessed. This project has been burned by guessed tags before.
 
 controller:
   image:
@@ -22,14 +22,14 @@ controller:
           # trips JCasC's ErrorOnConflictMergeStrategy (two sources defining
           # the same key is treated as a hard error, not a silent override).
           clouds:
-            # Named "devops-agents", not "kubernetes" - the Helm chart's own
-            # defaultConfig auto-injects a second, separate cloud already
-            # named "kubernetes" (empty, no templates, serverUrl without
-            # ".svc"). Two clouds sharing one name caused the scheduler to
-            # resolve the chart's empty one first and fall back to a bare
-            # jnlp-only pod, silently ignoring our ci-agent/cd-agent
-            # templates below - confirmed via the CasC "export" endpoint,
-            # which is the only way this was actually visible.
+            # Named "devops-agents", not "kubernetes": the Helm chart's own
+            # defaultConfig auto-injects a second cloud already named
+            # "kubernetes" (empty, no templates, serverUrl without ".svc").
+            # Two clouds sharing a name made the scheduler resolve the
+            # chart's empty one first and fall back to a bare jnlp-only pod,
+            # silently ignoring the ci-agent/cd-agent templates below.
+            # Confirmed via the CasC "export" endpoint - the only way this
+            # was actually visible.
             - kubernetes:
                 name: "devops-agents"
                 serverUrl: "https://kubernetes.default.svc"
@@ -47,17 +47,15 @@ controller:
                     containers:
                       # Lint/test tooling - same base image the app's own
                       # Dockerfiles use, so results reflect the real runtime.
-                      # Originally tuned against a t3.small cluster's real
-                      # headroom constraints (~900Mi free per node with the
-                      # app + Jenkins controller already resident) - the
-                      # original 512Mi/1Gi + 1Gi/2Gi made this pod
-                      # unschedulable on any node regardless of bin-packing,
-                      # confirmed via `kubectl describe nodes`. Kept these
-                      # smaller values even after moving to t3.medium: these
-                      # are small builds (python-slim/nginx-alpine based
-                      # images), so lower requests are realistic, not just a
-                      # workaround, and leaving them small keeps more of the
-                      # extra t3.medium headroom free for CI/CD agent bursts.
+                      # Sized against a t3.small node's real headroom (~900Mi
+                      # free with the app + Jenkins controller already
+                      # resident): the original 512Mi/1Gi + 1Gi/2Gi made this
+                      # pod unschedulable on any node, confirmed via
+                      # `kubectl describe nodes`. Kept small even after
+                      # moving to t3.medium - these are small builds
+                      # (python-slim/nginx-alpine based), so lower requests
+                      # are realistic, and it leaves more of the extra
+                      # headroom free for CI/CD agent bursts.
                       - name: "python"
                         image: "python:3.11-slim"
                         command: "sleep"
@@ -102,25 +100,24 @@ controller:
                         resourceLimitCpu: "500m"
                         resourceLimitMemory: "1Gi"
 
-  # Job creation deliberately does NOT happen here. An earlier attempt tried
-  # bootstrapping a seed job through JCasC's own jobs: section (executed
-  # during Jenkins' startup sequence) - a syntax slip in that script crashed
-  # the entire controller boot, since job-creation and core startup shared
-  # the same failure path. jenkins/jobs/create-jobs.sh creates
-  # ci-application/cd-application afterwards instead, as a separate action
-  # against an already-running Jenkins (via its REST API) - a bug there now
-  # just fails that one script, not the whole controller.
+  # Job creation deliberately does not happen here. An earlier attempt
+  # bootstrapped a seed job through JCasC's own jobs: section, which runs
+  # during Jenkins' startup - a syntax slip in that script crashed the
+  # whole controller boot, since job creation and core startup shared the
+  # same failure path. jenkins/jobs/create-jobs.sh creates
+  # ci-application/cd-application afterward instead, via Jenkins' REST API
+  # against an already-running controller - a bug there now fails just
+  # that script, not the controller.
 
-  # Plugin names only, no individual version pins. An earlier attempt pinned
-  # each plugin to whatever version plugins.jenkins.io reported at the
-  # moment it was checked - those versions turned out mutually incompatible
-  # (a snakeyaml/credentials ClassNotFoundException killed the controller on
-  # boot), because each plugin's dependency graph was verified in isolation,
-  # not as a set. Reproducibility instead comes from the pinned Jenkins core
-  # image tag above (controller.image.tag) - for the same core version, the
-  # plugin installer resolves the same mutually-compatible set every time,
-  # which is real reproducibility without hand-solving a dependency graph
-  # that's the installer's job to solve, not ours.
+  # Plugin names only, no individual version pins. An earlier attempt
+  # pinned each plugin to whatever version plugins.jenkins.io reported at
+  # the time - those versions turned out mutually incompatible (a
+  # snakeyaml/credentials ClassNotFoundException killed the controller on
+  # boot), because each plugin's dependency graph was checked in isolation,
+  # not as a set. Reproducibility instead comes from the pinned Jenkins
+  # core image tag above (controller.image.tag): for the same core
+  # version, the plugin installer resolves the same compatible set every
+  # time - that's the installer's job to solve, not ours to hand-solve.
   installPlugins:
     - "kubernetes"
     - "kubernetes-credentials-provider"
@@ -146,12 +143,12 @@ agent:
   enabled: false
 
 rbac:
-  create: false # we supply our own Role/RoleBinding (jenkins/rbac/controller-rbac.yaml)
+  create: false # own Role/RoleBinding supplied instead (jenkins/rbac/controller-rbac.yaml)
 
-# NOTE: serviceAccount is a top-level key in this chart, not nested under
-# controller - confirmed against the chart's actual default values (an
-# earlier attempt had it nested and the override was silently ignored,
-# leaving the pod on the chart's autogenerated SA name instead).
+# serviceAccount is a top-level key in this chart, not nested under
+# controller - confirmed against the chart's default values. An earlier
+# attempt nested it, and the override was silently ignored, leaving the
+# pod on the chart's autogenerated SA name.
 serviceAccount:
   create: true
   name: jenkins-controller

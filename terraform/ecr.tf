@@ -1,11 +1,9 @@
 # ECR repositories for the app's three images.
 #
-# Previously these were created by hand, outside any script or Terraform -
-# teardown.sh even had a dedicated step to delete them again since nothing
-# else owned them. That broke the "rebuild from code alone" requirement:
-# a fresh setup.sh run had nowhere to push images, since nothing recreated
-# these repos after teardown. Bringing them into Terraform, alongside every
-# other piece of this project's infra, closes that gap.
+# Used to be created by hand, outside Terraform - teardown.sh had its own
+# step to delete them since nothing else owned them. That broke rebuilding
+# from code alone: a fresh setup.sh run had nowhere to push images after a
+# teardown. Now Terraform owns them like everything else.
 resource "aws_ecr_repository" "app_repos" {
   for_each = toset(["devops-frontend", "devops-backend", "devops-worker"])
 
@@ -16,8 +14,8 @@ resource "aws_ecr_repository" "app_repos" {
     scan_on_push = true
   }
 
-  # force_delete: `terraform destroy` (via teardown.sh) must be able to
-  # remove these even with images still pushed into them - otherwise destroy
-  # fails mid-run and leaves the repos (and their storage cost) behind.
+  # force_delete: `terraform destroy` (via teardown.sh) needs to remove
+  # these even with images still in them, or destroy fails mid-run and
+  # leaves the repos - and their storage cost - behind.
   force_delete = true
 }

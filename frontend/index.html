@@ -401,7 +401,7 @@
       const fileInput = document.getElementById("fileInput");
       if (!fileInput.files.length) return;
 
-      // Automatically builds the payload using the form's native 'name' attributes
+      // Builds the payload from the form's native 'name' attributes
       const formData = new FormData(form);
 
       setBtn("uploadBtn", "Uploading…", true);

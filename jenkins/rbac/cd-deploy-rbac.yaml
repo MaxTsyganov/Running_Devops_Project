@@ -1,10 +1,10 @@
 # RBAC for the CD agent Pod. The ServiceAccount object lives in the jenkins
 # namespace - CD agent Pods are scheduled there (same as the controller and
 # CI agents), and a Pod can only use a ServiceAccount from its own namespace.
-# The Role it's bound to grants access only in devops-app (where it actually
-# needs to act), via a cross-namespace RoleBinding - a normal, supported RBAC
-# pattern: the Role/RoleBinding live in devops-app, the subject they name
-# lives in jenkins.
+# The Role it's bound to grants access only in devops-app (where it needs to
+# act), via a cross-namespace RoleBinding - a normal, supported RBAC pattern:
+# the Role/RoleBinding live in devops-app, the subject they name lives in
+# jenkins.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
