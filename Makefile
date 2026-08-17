@@ -8,7 +8,7 @@ help:
 	@echo "  plan          - Generate and show the Terraform execution plan"
 	@echo "  apply         - Deploy AWS infrastructure using Terraform (RDS, S3, SNS, IAM)"
 	@echo "  destroy       - Tear down all Terraform-provisioned infrastructure"
-	@echo "  k8s-deploy    - Build/push images and deploy the app to Kubernetes (see setup.sh)"
+	@echo "  k8s-deploy    - Bring up infra, build/push images (see setup.sh) - app deploy is Jenkins CD's job"
 	@echo "  k8s-teardown  - Remove Kubernetes workloads, the EKS cluster, and Terraform infra"
 
 init:

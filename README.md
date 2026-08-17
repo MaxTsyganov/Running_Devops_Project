@@ -1,15 +1,19 @@
-# DevOps on AWS - 3-Tier App on Kubernetes (Assignment 3)
+# DevOps on AWS - 3-Tier App on Kubernetes with Jenkins CI/CD (Assignments 3-4)
 
 This project runs a 3-tier app (nginx frontend, Flask backend, a background worker) on
 **Kubernetes (EKS)**, backed by managed AWS services (**RDS PostgreSQL, S3, SNS**) provisioned
-with **Terraform**. Deployment is fully automated with a shell script, the Kubernetes side is
-packaged as a **Helm chart**, and the chart is deployed and kept in sync by **ArgoCD** (GitOps)
-instead of a manual `helm upgrade`.
+with **Terraform**. Infra bring-up (`setup.sh`) is fully automated, the Kubernetes side is packaged
+as a **Helm chart**, and - as of Assignment 4 - the chart is built, tested, and deployed by a
+self-hosted **Jenkins** running inside the same cluster: a real Git-push-triggered CI pipeline
+builds and pushes immutable-tagged images, and a separate CD pipeline deploys the exact image CI
+built via `helm upgrade --install`. See [§14](#14-jenkins-cicd-assignment-4) for the whole CI/CD
+setup, or [History](#history) for what changed since Assignment 3 (which used ArgoCD/GitOps
+instead - since replaced, see [§4](#4-application-deployment-history)).
 
-This is the third iteration of the project. Assignments 1-2 ran the same three services directly
+This is the fourth iteration of the project. Assignments 1-2 ran the same three services directly
 on EC2 instances, configured with Ansible. That setup is gone now - `terraform/` only provisions
-the managed AWS backing services (RDS, S3, SNS, IAM), and all compute happens inside the cluster.
-See [History](#history) at the bottom for what changed and why.
+the managed AWS backing services (RDS, S3, SNS, ECR, IAM), and all compute happens inside the
+cluster. See [History](#history) at the bottom for what changed and why.
 
 Built solo, not in a pair.
 
@@ -20,7 +24,7 @@ Built solo, not in a pair.
 1. [Architecture](#1-architecture)
 2. [Building and pushing images](#2-building-and-pushing-images)
 3. [The Helm chart](#3-the-helm-chart)
-4. [GitOps with ArgoCD](#4-gitops-with-argocd)
+4. [Application deployment: history](#4-application-deployment-history)
 5. [Deploying: `make k8s-deploy`](#5-deploying-make-k8s-deploy)
 6. [Verifying the system works](#6-verifying-the-system-works)
 7. [Tearing it down: `make k8s-teardown`](#7-tearing-it-down-make-k8s-teardown)
@@ -30,7 +34,8 @@ Built solo, not in a pair.
 11. [Trade-offs](#11-trade-offs)
 12. [EKS and RDS network connectivity](#12-eks-and-rds-network-connectivity)
 13. [Repository layout](#13-repository-layout)
-14. [History](#history)
+14. [Jenkins CI/CD (Assignment 4)](#14-jenkins-cicd-assignment-4)
+15. [History](#history)
 
 ---
 
@@ -55,8 +60,8 @@ flowchart TB
             NAT["🔀 NAT Gateway<br/>public subnets"]
 
             subgraph EKS["EKS: devops-cluster, 3x t3.medium nodes, private subnets"]
-                subgraph NsArgo["namespace: argocd"]
-                    ArgoCD["🔄 ArgoCD"]
+                subgraph NsJenkins["namespace: jenkins"]
+                    CD["🔧 Jenkins CD<br/>helm upgrade --install"]
                 end
                 subgraph NsApp["namespace: devops-app"]
                     FE["frontend Deployment<br/>nginx, 2 pods"]
@@ -81,8 +86,8 @@ flowchart TB
     BE --> SNS
     WK --> RDS
     WK --> SNS
-    GH -. watched + synced .-> ArgoCD
-    ArgoCD -. applies .-> NsApp
+    GH -. push triggers CI, CI triggers this .-> CD
+    CD -. deploys the exact image CI built .-> NsApp
 
     classDef aws fill:#FF9900,stroke:#232F3E,color:#232F3E,stroke-width:1.5px
     classDef k8s fill:#326CE5,stroke:#16305e,color:#ffffff,stroke-width:1.5px
@@ -91,9 +96,13 @@ flowchart TB
 
     class RDS,S3,SNS,NAT aws
     class FE,BE,WK,CFG,LB k8s
-    class ArgoCD tooling
+    class CD tooling
     class Internet,GH external
 ```
+
+Full Jenkins CI/CD architecture (controller, agents, RBAC, the webhook path) is its own diagram -
+see [`jenkins/architecture.mmd`](jenkins/architecture.mmd) and
+[`jenkins/pipeline-flow.mmd`](jenkins/pipeline-flow.mmd), covered in [§14](#14-jenkins-cicd-assignment-4).
 
 The worker has no inbound arrow on purpose - it only makes outbound calls (to RDS and SNS) and
 accepts no inbound traffic at all, which is also enforced at the NetworkPolicy level (§8). Only
@@ -112,10 +121,10 @@ or has no Service object at all.
 | Inside the cluster | Outside the cluster (Terraform) |
 |---|---|
 | frontend, backend, worker pods | RDS PostgreSQL instance |
-| ArgoCD (own `argocd` namespace) | S3 bucket |
+| Jenkins (own `jenkins` namespace, Assignment 4 - see §14) | S3 bucket |
 | cert-manager (own `cert-manager` namespace) | SNS topic + email subscription |
 | Fluent Bit (own `amazon-cloudwatch` namespace) | CloudWatch Logs log group |
-| ConfigMap / Secret / ServiceAccounts | IAM policies for S3/SNS/CloudWatch access, VPC/subnets |
+| ConfigMap / Secret / ServiceAccounts | IAM policies for S3/SNS/CloudWatch access, ECR, VPC/subnets |
 | NetworkPolicies, Services, HPA, PDB | |
 
 We use **RDS** instead of running PostgreSQL as a pod because it already existed from the earlier
@@ -161,10 +170,11 @@ x3, `PodDisruptionBudget` x2, `HorizontalPodAutoscaler` x2.
 `values.yaml` only holds non-sensitive defaults (replica counts, resource requests/limits, HPA
 thresholds). Anything that's real infrastructure data - the RDS endpoint, the S3 bucket name, the
 Secrets Manager secret *name* holding the DB password (never the password itself, see
-[§8](#8-security)) - is left blank there and supplied at deploy time (see
-[§4](#4-gitops-with-argocd)). `helm/values-dynamic.example.yaml` shows the shape of those values,
-for anyone who wants to `helm upgrade` by hand instead of going through ArgoCD. TLS isn't part of
-this at all - cert-manager issues the frontend's certificate directly in-cluster (see §8).
+[§8](#8-security)) - is left blank there and supplied at deploy time (as of Assignment 4, by
+Jenkins CD reading a ConfigMap - see [§14.6](#146-cd-pipeline-jenkinscdjenkinsfile)).
+`helm/values-dynamic.example.yaml` shows the shape of those values, for anyone who wants to
+`helm upgrade` by hand instead of going through Jenkins CD. TLS isn't part of this at all -
+cert-manager issues the frontend's certificate directly in-cluster (see §8).
 
 A couple of deliberate choices worth calling out:
 
@@ -174,44 +184,44 @@ A couple of deliberate choices worth calling out:
   OIDC provider is set up - something a chart template can't know in advance.
 * **There's no `Secret` template at all.** `app-secrets` is created entirely by External Secrets
   Operator (`SecretStore` + `ExternalSecret`), which reads the real password directly from AWS
-  Secrets Manager at sync time - the value never passes through this chart, Helm, or the ArgoCD
-  `Application` object. See [§8](#8-security) for why this replaced an earlier, simpler approach.
-* **The `Namespace` is templated in the chart, but also applied once by itself before the chart's
-  first real install** (`helm template --show-only templates/namespace.yaml | kubectl apply -f -`,
-  in `setup.sh` step 6). IRSA needs the namespace to exist before `eksctl create iamserviceaccount`
-  can put `backend-sa`/`worker-sa` inside it - which happens before ArgoCD ever runs.
+  Secrets Manager at sync time - the value never passes through this chart, Helm, or this repo at
+  any point. See [§8](#8-security) for why this replaced an earlier, simpler approach.
+* **There's no `Namespace` template either**, as of Assignment 4 - `setup.sh` creates `devops-app`
+  directly (`kubectl create namespace`), before IRSA needs it to exist. An earlier version of the
+  chart *did* template the Namespace, which worked fine under ArgoCD (broader permissions, its own
+  `CreateNamespace=true`) but broke under Jenkins CD's deliberately narrow, namespace-scoped RBAC -
+  see [§14.6](#146-cd-pipeline-jenkinscdjenkinsfile) for the exact failure.
 
 ---
 
-## 4. GitOps with ArgoCD
+## 4. Application deployment: history
 
-The app is deployed and kept in sync by **ArgoCD** watching this GitHub repository, not by a
-direct `helm upgrade --install` call. `setup.sh` installs ArgoCD into its own `argocd` namespace
-(idempotent - skipped if already present) and creates an `Application` resource pointing at
-`helm/devops-app` on the `main` branch, with:
+**As of Assignment 4, the app is deployed by Jenkins CD** (`jenkins/cd/Jenkinsfile`), not ArgoCD -
+see [§14.5](#145-cd-pipeline-jenkinscdjenkinsfile) for how that actually works. This section is
+kept as a record of the Assignment 3 approach it replaced and why.
 
-```yaml
-syncPolicy:
-  automated:
-    prune: true      # remove resources that are no longer in git
-    selfHeal: true    # revert manual kubectl edits back to what git says
-```
+<details>
+<summary>Assignment 3: GitOps with ArgoCD (superseded)</summary>
 
-Real per-run values (RDS endpoint, S3 bucket name, the Secrets Manager secret *name* holding the
-DB password) can't live in git, so they're embedded directly into the generated `Application`
-object's `spec.source.helm.valuesObject` instead - applied with `kubectl`, never committed. Note
-that this is a resource *name*, not the password itself: the actual value is read straight from
-AWS Secrets Manager by External Secrets Operator, so it's never present anywhere in this
-`Application` object, readable or not (see [§8](#8-security)). ArgoCD only ever reads the chart
-*templates* from git. The TLS certificate never goes through this path at all - cert-manager
-issues it directly inside the cluster once the chart's `Certificate` resource is applied.
+The app used to be deployed and kept in sync by **ArgoCD** watching this GitHub repository, not by
+a direct `helm upgrade --install` call. `setup.sh` installed ArgoCD into its own `argocd` namespace
+and created an `Application` resource pointing at `helm/devops-app` on the `main` branch, with
+`syncPolicy.automated: { prune: true, selfHeal: true }` - drift correction and prune-on-delete for
+free.
 
-The `Application` also carries a `resources-finalizer.argocd.argoproj.io` finalizer, so deleting
-it cascades: ArgoCD prunes every resource it manages before the `Application` object itself goes
-away. `teardown.sh` relies on exactly this to clean up before deleting the cluster.
+This was retired for Assignment 4 for one concrete reason: `selfHeal: true` means ArgoCD reverts
+any change to the live cluster that doesn't match what's committed in git. Jenkins CD deploys by
+calling `helm upgrade --install` directly with a specific image tag - from ArgoCD's point of view,
+that's drift from whatever's last synced, and it would revert it right back. Running both would
+mean every Jenkins CD deployment gets silently undone a few seconds later. Since Assignment 4's
+whole point is that Jenkins owns build *and* deploy, ArgoCD had to go - not just to avoid the
+conflict, but because keeping an idle GitOps controller around (server, repo-server,
+application-controller, redis, dex, notifications-controller - about 6-7 Pods) would burn cluster
+headroom for a controller with no actual job left to do.
 
-Once deployed, `setup.sh` prints ArgoCD's URL, admin username, and admin password. The ArgoCD UI
-itself is never exposed to the internet; reaching it requires a `kubectl port-forward`.
+</details>
+
+---
 
 ---
 
@@ -239,10 +249,10 @@ make k8s-deploy      # runs setup.sh
    (`enableNetworkPolicy: true`). Off by default on EKS - without this, the chart's `NetworkPolicy`
    objects would exist as API objects but nothing in the cluster would actually enforce them.
 6. **Firewall rule** - opens the RDS security group to the EKS cluster's security group on 5432.
-7. **IRSA** - renders and applies just the chart's `Namespace` template (so it exists before
-   anything needs it), associates an OIDC provider with the cluster, then creates `backend-sa` and
-   `worker-sa`, each bound to its own least-privilege IAM policy (backend: S3 + SNS; worker: SNS
-   only - see [§8](#8-security)).
+7. **IRSA** - creates the `devops-app` namespace directly (so it exists before anything needs it),
+   associates an OIDC provider with the cluster, then creates `backend-sa` and `worker-sa`, each
+   bound to its own least-privilege IAM policy (backend: S3 + SNS; worker: SNS only - see
+   [§8](#8-security)).
 8. **External Secrets Operator** - creates `external-secrets-sa` (IRSA, scoped to `GetSecretValue`
    on exactly the one Secrets Manager secret from step 3) and installs ESO, which the chart's
    `SecretStore`/`ExternalSecret` templates depend on to populate `app-secrets`.
@@ -250,10 +260,14 @@ make k8s-deploy      # runs setup.sh
    The chart's `Certificate` resource uses this later to issue the frontend's TLS cert.
 10. **Fluent Bit** - creates `fluent-bit-sa` (IRSA, scoped to just this project's CloudWatch log
     group) and installs Fluent Bit, which starts shipping container logs to CloudWatch immediately.
-11. **Images** - builds, scans (Trivy, if available), tags, and pushes all three images to ECR.
-12. **ArgoCD** - installs ArgoCD if needed, creates the `Application`, waits for it to report
-    `Synced`/`Healthy`, waits for all three Deployments to roll out, then prints the app URL,
-    ArgoCD's admin credentials, and a link to the CloudWatch log group.
+11. **Images** - builds, scans (Trivy, if available), tags, and pushes all three images to ECR
+    (idempotent - skips a push if that exact immutable tag is already there).
+12. **Publish infra config for CD** - publishes the `terraform-outputs` ConfigMap (RDS host, S3
+    bucket, SNS topic ARN, the Secrets Manager secret name) in `devops-app`, then stops. **The app
+    itself is not deployed by this script** - that's Jenkins CD's job (`cd-application`'s first
+    run), once Jenkins is installed via [§14](#14-jenkins-cicd-assignment-4). This is a deliberate
+    change from Assignment 3, where this same step installed ArgoCD and deployed the app itself -
+    see [§4](#4-application-deployment-history) for why.
 
 The whole run takes roughly 20-30 minutes on a first run, most of it waiting for the EKS cluster
 to boot. Re-running it is safe: every step checks whether its target already exists before
@@ -272,7 +286,7 @@ kubectl get services -n devops-app
 kubectl get ingress -n devops-app
 kubectl describe pod <pod-name> -n devops-app
 kubectl logs <pod-name> -n devops-app
-kubectl get application devops-app -n argocd
+helm list -n devops-app
 ```
 
 `kubectl get ingress` will correctly show no resources - this project exposes the app through a
@@ -316,22 +330,32 @@ make k8s-teardown     # runs teardown.sh
 ```
 
 Run this when you're done, since the EKS control plane, the RDS instance, and any LoadBalancer
-all bill hourly. Order matters here more than it looks:
+all bill hourly. This one script tears down both the app and Jenkins (Assignment 4) together -
+`jenkins/scripts/uninstall-jenkins.sh` exists separately for removing just Jenkins while leaving
+the app running (see [§14.10](#1410-cleanup)). Order matters here more than it looks:
 
-1. Delete the ArgoCD `Application` (its finalizer cascades to remove the actual app resources,
-   including the frontend's LoadBalancer Service), then the `devops-app` namespace. ArgoCD itself
-   is left alone - it has no AWS resources of its own, so the cluster deletion in step 5 removes
-   it for free.
+1. Delete the `devops-app` namespace directly (cascades to the frontend's LoadBalancer Service and
+   everything else in it). Also attempts `kubectl delete application devops-app -n argocd` first as
+   a harmless no-op fallback, in case this cluster still has an Assignment-3-style ArgoCD
+   Application from before the Jenkins CD switch ([§4](#4-application-deployment-history)).
 2. Wait for the AWS load balancer to fully release. Deleting the Service only removes the
    Kubernetes object; the actual ELB is cleaned up asynchronously by a controller inside the
    cluster, and deleting the cluster too early orphans it.
 3. Revoke the RDS security-group rule that references the EKS cluster's security group, so EKS
    can clean up its own security group properly.
-4. Delete the IRSA IAM roles for `backend-sa`/`worker-sa`/`fluent-bit-sa`/`external-secrets-sa`
-   (separate CloudFormation stacks from the cluster itself).
-5. Delete the EKS cluster.
-6. `terraform destroy` - removes RDS, S3, SNS, IAM, and the VPC.
-7. Remove the local `terraform.tfvars` (recreated on the next `setup.sh` run).
+4. Delete the Jenkins PVC (and confirm its underlying EBS volume actually finishes deleting) while
+   the EBS CSI driver is still running - `helm uninstall`/`eksctl delete cluster` never delete a
+   StatefulSet's PVC on their own, and the volume would otherwise silently outlive the cluster.
+5. Delete the IRSA IAM roles for `backend-sa`/`worker-sa`/`fluent-bit-sa`/`external-secrets-sa`/
+   `ci-build-sa` (each its own CloudFormation stack, separate from the cluster itself).
+6. Delete the EKS cluster.
+7. `terraform destroy` - removes RDS, S3, SNS, the now-Terraform-managed ECR repos
+   ([§14.11](#1411-trade-offs-specific-to-assignment-4)), IAM, and the VPC.
+8. Remove the local `terraform.tfvars` (recreated on the next `setup.sh` run).
+
+`verify-teardown.sh` is a separate, read-only script that checks every category of resource that
+either bills continuously or that `teardown.sh` has previously been found to miss - run it right
+after every teardown, not just as an afterthought.
 
 ---
 
@@ -437,16 +461,18 @@ load balancer.
   like node drains don't take both replicas down at once. The worker has no PDB: with only one
   replica, `minAvailable: 1` would forbid ever evicting it, blocking node drains instead of just
   slowing them down.
-* **ArgoCD selfHeal** reverts drift from the declared state automatically, and `prune: true`
-  removes anything that's no longer in git.
+* **Jenkins CD's Verify stage** confirms every Pod is running the expected image tag on every
+  deploy, and fails the build (with a printed rollback command) if rollout, verification, or the
+  smoke test don't pass - see [§14.6](#146-cd-pipeline-jenkinscdjenkinsfile). (Assignment 3 used
+  ArgoCD's `selfHeal`/`prune` for this instead - see [§4](#4-application-deployment-history).)
 
 ---
 
 ## 10. Logging
 
 Container logs (all three services) are shipped to **CloudWatch Logs** by **Fluent Bit**, running
-as a DaemonSet via AWS's own `aws-for-fluent-bit` chart. Like ArgoCD and cert-manager, this is
-cluster infrastructure installed directly by `setup.sh`, not part of `helm/devops-app` - it isn't
+as a DaemonSet via AWS's own `aws-for-fluent-bit` chart. Like cert-manager, this is cluster
+infrastructure installed directly by `setup.sh`, not part of `helm/devops-app` - it isn't
 application logic, and none of the three services need to know it exists.
 
 * **The log group is Terraform-managed** (`terraform/logging.tf`), not auto-created by Fluent Bit.
@@ -473,11 +499,11 @@ something closer to production.
 | RDS instead of in-cluster Postgres | Reuse an existing managed DB with real backups | One more AWS resource to run and pay for |
 | IRSA instead of static AWS keys in a Secret | Short-lived credentials, no manual rotation | Requires an OIDC provider and per-SA IAM roles |
 | Helm chart instead of raw manifests | Single source of truth, reusable values | A little more indirection to read through |
-| ArgoCD instead of `helm upgrade` in the script | Real GitOps: drift correction, auditable history | Another component running in the cluster |
+| Jenkins CD (`helm upgrade --install`) instead of ArgoCD/GitOps | Assignment 4 requires a real CI/CD pipeline owning deploy directly - see [§4](#4-application-deployment-history) for why the two can't coexist | Deploy history lives in Helm release revisions, not a GitOps `Application`'s sync history |
 | `LoadBalancer` Service instead of Ingress | Only one public route, no controller needed | No path-based routing |
 | cert-manager with a self-signed issuer, not a real CA | No domain name to get a real cert for; cert-manager itself is still real | Browser warning on every visit |
-| External Secrets Operator + AWS Secrets Manager, not a plain Kubernetes Secret | The password never has to pass through Helm, ArgoCD, or this repo at any point, and gets real encryption at rest | Another operator running in the cluster, another IAM role to manage |
-| 3 nodes instead of 2 | Pod ceiling per node is set by network interface IP limits, not CPU/memory - kube-system + ArgoCD + cert-manager + this app need more than 2 nodes' worth of slots | Small added hourly node cost |
+| External Secrets Operator + AWS Secrets Manager, not a plain Kubernetes Secret | The password never has to pass through Helm or this repo at any point, and gets real encryption at rest | Another operator running in the cluster, another IAM role to manage |
+| 3 nodes instead of 2 | Pod ceiling per node is set by network interface IP limits, not CPU/memory - kube-system + cert-manager + Jenkins + this app need more than 2 nodes' worth of slots | Small added hourly node cost |
 | `t3.medium` nodes instead of `t3.small` (bumped for Assignment 4) | Adding Jenkins (a resident controller Pod, a resident webhook-relay Pod, and bursts of ephemeral CI/CD agent Pods) on top of an already-tight `t3.small` cluster (11 pods/node) risked agent Pods stuck `Pending` mid-build; `t3.medium` doubles memory per node and raises the ceiling to 17/node for the same node count | Roughly doubles hourly node cost |
 | One shared CloudWatch log group, not per-service | This is basic logging, not a full observability stack | Harder to filter one service's logs out from the others |
 | AWS-managed KMS keys, not customer-managed | S3/SNS encrypted at rest either way | Doesn't satisfy scanners requiring CMKs; ~$1/month each to fix |
@@ -512,17 +538,19 @@ creates for RDS. Two things make them work together:
 ## 13. Repository layout
 
 ```
-setup.sh, teardown.sh      Full deploy / full teardown automation
+setup.sh, teardown.sh, verify-teardown.sh   Infra bring-up / full teardown / clean-teardown check
 Makefile                   make k8s-deploy / make k8s-teardown / raw terraform targets
 .github/workflows/ci.yml   terraform validate + helm lint + Trivy on every push/PR
 .trivyignore               Accepted-risk CVE allowlist for image scanning (empty - nothing needed yet)
-terraform/                 RDS, S3, SNS, Secrets Manager, CloudWatch log group, IAM policies,
+terraform/                 RDS, S3, SNS, ECR, Secrets Manager, CloudWatch log group, IAM policies,
                            VPC/subnets - no compute
-helm/devops-app/           The Kubernetes side: one Helm chart, deployed via ArgoCD
-helm/values-dynamic.example.yaml   Template for deploying the chart by hand, bypassing ArgoCD
+helm/devops-app/           The Kubernetes side: one Helm chart, deployed by Jenkins CD (§14)
+helm/values-dynamic.example.yaml   Template for deploying the chart by hand, bypassing Jenkins
 frontend/                  nginx (unprivileged), static UI, reverse proxy to backend
 backend/                   Flask + Gunicorn API (RDS, S3, SNS)
 worker/                    Background poller (RDS, SNS)
+jenkins/                   Assignment 4: Jenkins install/config scripts, CI+CD Jenkinsfiles,
+                           JCasC values, RBAC, job configs, architecture diagrams (see §14)
 Screenshots+txt_Files/     Evidence captures: required commands, functional checks,
                            resilience test, and bonus objectives (see §6)
 ```
@@ -541,6 +569,272 @@ for visibility - unfixable CVEs included), and once scoped to fixable `CRITICAL`
 `.trivyignore` with a documented reason, not a blanket `exit-code` override. Every misconfiguration
 `trivy config` currently knows about in this repo has already been fixed or explicitly suppressed
 with a documented reason in the code itself; a clean run should always pass.
+
+---
+
+## 14. Jenkins CI/CD (Assignment 4)
+
+Jenkins runs *inside* the same EKS cluster as the app, as a Kubernetes-native controller with
+ephemeral build agents - not a separate box, not a SaaS CI. This section covers everything
+specific to Assignment 4: installing Jenkins from code, the CI and CD pipelines, how they connect,
+security, and cleanup.
+
+### 14.1 Architecture and environment choice
+
+Jenkins runs in the same `devops-cluster` EKS cluster as the app (a separate cluster was the other
+option the assignment allows, but would mean a second cluster's worth of cost and a cross-cluster
+credential the CD pipeline would need to manage, for no real isolation benefit at this scale - the
+`jenkins` and `devops-app` namespaces already provide the separation that matters: distinct RBAC,
+distinct ServiceAccounts, no shared secrets).
+
+```
+jenkins namespace                          devops-app namespace
+┌─────────────────────────────┐            ┌──────────────────────────┐
+│ jenkins-0 (controller)       │            │ frontend/backend/worker  │
+│  - never runs builds         │            │  deployments             │
+│  - PVC: jenkins home (8Gi)   │            │                          │
+│ webhook-relay                │  CD agent  │                          │
+│                               │  deploys → │                          │
+│ ci-agent Pod (ephemeral)  ────┼── pushes ─→│ ECR (958...:us-east-1)  │
+│ cd-agent Pod (ephemeral)  ────┼───────────→│                          │
+└─────────────────────────────┘            └──────────────────────────┘
+```
+
+**Security boundary**: the Jenkins UI has no public IP, Ingress, or LoadBalancer - it's a plain
+`ClusterIP` Service, reachable only via `kubectl port-forward` (see [§14.7](#147-network-and-exposure)).
+Inbound webhook traffic never reaches Jenkins directly either: GitHub POSTs to a public
+[smee.io](https://smee.io) channel, and a `webhook-relay` Deployment inside the cluster holds an
+*outbound* connection to that channel and forwards matching events to Jenkins' internal
+`/github-webhook/` endpoint over the in-cluster network. Jenkins ends up with zero inbound ports
+open to the internet, in either direction.
+
+**How CD authenticates to the target cluster**: since Jenkins and the app share a cluster, the CD
+agent Pod authenticates via its own `cd-deploy-sa` Kubernetes ServiceAccount token (automatically
+mounted, in-cluster) - no kubeconfig, no static credential, nothing to rotate. If the target were a
+different cluster, this would instead need a stored kubeconfig/token as a Jenkins Credential, scoped
+as narrowly as `cd-deploy-sa` is now.
+
+### 14.2 Prerequisites and versions
+
+| Tool | Version | Where pinned |
+|---|---|---|
+| EKS cluster | Kubernetes 1.34 | `setup.sh` (`eksctl create cluster`) |
+| Jenkins controller image | `jenkins/jenkins:2.541.3-lts-jdk17` | `jenkins/values.yaml` |
+| Jenkins Helm chart | `5.9.54` (jenkinsci/jenkins) | `jenkins/scripts/install-jenkins.sh` |
+| eksctl | `v0.229.0`/`0.230.0` | `setup.sh`, `jenkins/scripts/install-jenkins.sh` |
+| Helm | `v3.21.4` | client-side, any recent 3.x |
+| kubectl / aws-cli | any recent version | client-side |
+
+Also requires: an EKS cluster and `devops-app` namespace already brought up via this repo's own
+`setup.sh` (Jenkins is layered on top of Assignment 3's infra, it doesn't create a cluster itself),
+and a GitHub repository with permission to add a webhook.
+
+### 14.3 Installing Jenkins from code
+
+Four scripts, each idempotent (safe to re-run) and each doing exactly one thing:
+
+```bash
+bash jenkins/scripts/install-jenkins.sh     # namespace, RBAC, ci-build-sa, EBS CSI driver +
+                                             # StorageClass, the Jenkins Helm release + JCasC
+bash jenkins/scripts/configure-jenkins.sh   # prints admin password, mints the smee.io channel,
+                                             # deploys webhook-relay, creates the webhook secret
+bash jenkins/jobs/create-jobs.sh            # creates/updates ci-application + cd-application
+                                             # via Jenkins' REST API (needs a port-forward - see below)
+bash jenkins/scripts/verify-jenkins.sh      # read-only health check against everything above
+bash jenkins/scripts/uninstall-jenkins.sh   # removes Jenkins only - app and cluster untouched
+```
+
+`create-jobs.sh` needs Jenkins reachable at `http://localhost:8080`:
+
+```bash
+kubectl port-forward svc/jenkins -n jenkins 8080:8080 &
+bash jenkins/jobs/create-jobs.sh
+```
+
+None of this is done through the Jenkins UI. `install-jenkins.sh` applies RBAC and IRSA from files
+in this repo, then installs the official `jenkinsci/jenkins` Helm chart with
+[JCasC](https://github.com/jenkinsci/configuration-as-code-plugin) (`jenkins/values.yaml`) driving
+the plugin list, the Kubernetes cloud, and both agent pod templates - the controller comes up
+already fully configured, no manual "click through setup wizard" step exists. `create-jobs.sh`
+creates the two jobs from the `config.xml` files in `jenkins/jobs/` via Jenkins' own REST API - the
+one alternative to a Job DSL seed job or a Multibranch Pipeline, and the one this project uses
+because an earlier attempt at a JCasC-driven seed job crashed the controller's entire boot
+sequence on a syntax slip (see `jenkins/values.yaml`'s own comment): a bug in job creation now
+only fails `create-jobs.sh`, never brings the controller down.
+
+**A note on Windows**: if running these scripts from Git Bash on Windows, `kubectl exec ... --
+/bin/cat ...` needs `MSYS_NO_PATHCONV=1` set (already done inside the three scripts that need it) -
+without it, MSYS rewrites the Unix path argument into a Windows path before it reaches the
+container. No-op on Linux/Mac.
+
+### 14.4 Jenkins Configuration as Code (JCasC)
+
+Everything under `controller.JCasC.configScripts` in `jenkins/values.yaml` becomes live controller
+configuration on boot - no manual System Config page was ever touched:
+
+- **Kubernetes cloud** (`devops-agents`): where ephemeral agent Pods get scheduled from, pointed at
+  the in-cluster API server, capped at 10 concurrent agent Pods, `podRetention: never` (agents are
+  deleted immediately after their build, not kept around).
+- **Agent templates**: `ci-agent` (two containers - `python` for lint/test, `kaniko` for the image
+  build; `serviceAccount: ci-build-sa`) and `cd-agent` (one `deploy` container with `kubectl`+`helm`;
+  `serviceAccount: cd-deploy-sa`). Both templates set explicit `resourceRequest*`/`resourceLimit*`
+  on every container.
+- **Plugin list**: `kubernetes`, `kubernetes-credentials-provider`, `workflow-aggregator`, `git`,
+  `github`, `job-dsl`, `configuration-as-code`, `credentials-binding`, `timestamper`, `ws-cleanup` -
+  named only, no individual version pins (an earlier attempt pinning each plugin's version hit a
+  `ClassNotFoundException` from mutually-incompatible pinned versions; the installer resolves a
+  compatible set for a given Jenkins core version far more reliably than hand-pinning each one).
+
+### 14.5 CI Pipeline (`jenkins/ci/Jenkinsfile`)
+
+Trigger: `triggers { githubPush() }`, wired to the job via `com.cloudbees.jenkins.GitHubPushTrigger`
+in `jenkins/jobs/ci-application-config.xml` (the trigger has to be declared there too - `githubPush()`
+alone inside the Jenkinsfile isn't enough for Jenkins to register it as a live trigger before a
+first build has already run with it configured).
+
+| Stage | What it does |
+|---|---|
+| Checkout | Pulls the repo, computes `IMAGE_TAG` = short (8-char) commit SHA |
+| Validation | Confirms every service's `Dockerfile`/`.dockerignore` and the Helm chart exist |
+| Static Analysis / Lint | `pyflakes` against `backend/app.py` and `worker/worker.py` |
+| Tests | `pytest` against `backend/test_app.py`, results published via `junit` |
+| Build | Kaniko builds all three images (no Docker socket - see [§14.7](#147-container-security)) |
+| Publish Metadata | Archives `image-metadata.txt` (tag + digest per service) as a build artifact |
+
+Runs on the `ci-agent` template as `ci-build-sa` (IRSA - pushes to ECR via a real AWS IAM role, no
+static registry credential anywhere in the pipeline). Images are tagged with the immutable 8-char
+commit SHA - never `latest` - and the three ECR repos are `IMAGE_TAG_MUTABILITY: IMMUTABLE`
+(`terraform/ecr.tf`), so even a mistake can't silently overwrite a tag already in use. A failed
+Test/Lint/Build stage fails the whole build (Declarative Pipeline's default), pushes nothing, and
+never reaches the `success` post-block that triggers CD.
+
+### 14.6 CD Pipeline (`jenkins/cd/Jenkinsfile`)
+
+Never builds an image, never touches application source - checks out only to read the Helm chart.
+Takes one parameter, `IMAGE_TAG`, and refuses to run without one or with `latest`.
+
+| Stage | What it does |
+|---|---|
+| Checkout | Pulls the Helm chart only |
+| Input Validation | Rejects a missing or `latest` `IMAGE_TAG` |
+| Load infra config | Reads `dbHost`/`s3BucketName`/`snsTopicArn`/`dbPasswordSecretName` from the `terraform-outputs` ConfigMap `setup.sh` publishes in `devops-app` (these change every `terraform apply`, so they're read at deploy time, never hardcoded) |
+| Manifest Validation | `helm lint --strict` + a full `helm template` render |
+| Deploy | `helm upgrade --install devops-app ./helm/devops-app --set image.tag=$IMAGE_TAG ... --wait --timeout 10m` |
+| Rollout | `kubectl rollout status` on all three Deployments |
+| Verify | Confirms every Pod's image ends in `:$IMAGE_TAG` - fails the build if any doesn't |
+| Smoke Test | Real HTTP request to the frontend LoadBalancer, retried for up to 2 minutes while its DNS propagates |
+
+Runs on the `cd-agent` template as `cd-deploy-sa` - a plain (non-IRSA) ServiceAccount, since it only
+ever calls the in-cluster Kubernetes API, never an AWS API directly.
+
+**Traceability**: a CD build's console log shows exactly who triggered it
+(`currentBuild.getBuildCauses()`), the image tag, target namespace/cluster, and - if triggered by
+CI - the CI build that produced that tag is one click away (`ci-application`'s own build history,
+keyed by the same commit SHA that *is* the image tag). `kubectl get pods -n devops-app -o
+jsonpath='{..image}'` independently confirms the deployed tag matches.
+
+**Rollback**: documented and tested via `helm rollback devops-app -n devops-app` (reverts to the
+previous Helm release revision - a real command against a real Helm release history, not a
+placeholder). The `post { failure { ... } }` block in `cd-Jenkinsfile` prints this exact command
+plus `kubectl get events`/`describe pod` pointers whenever Rollout, Verify, or Smoke Test fails, so
+the person looking at a failed build's console log has the fix in front of them immediately. Full
+automated rollback-on-smoke-test-failure is listed as a bonus in the assignment brief and wasn't
+implemented - a failed smoke test fails the build and leaves the previous, working revision live
+underneath the (also live) failed one, rather than making an unattended decision to roll back
+traffic on its own.
+
+### 14.7 Jobs as code, and how CI connects to CD
+
+Both jobs are created via `jenkins/jobs/create-jobs.sh` calling Jenkins' REST API with the
+`config.xml` files in that same directory - `POST .../createItem` if the job doesn't exist yet,
+`POST .../config.xml` (an update) if it does, so re-running after editing a Jenkinsfile or a
+`config.xml` is a normal, safe operation. Creating either job by hand through the Jenkins UI is
+explicitly out of scope for this assignment and isn't how these two ever get created here.
+
+CI connects to CD via `build job: 'cd-application', parameters: [string(name: 'IMAGE_TAG', value:
+env.IMAGE_TAG)], wait: false` in `ci-Jenkinsfile`'s `post { success { ... } }` block - CI hands CD
+the exact tag it just pushed, `wait: false` so CI's own build finishes and frees its agent Pod
+immediately rather than blocking on the entire CD run. Even though CD fires automatically, it still
+exists as its own job with its own Jenkinsfile, satisfying the assignment's requirement that CI and
+CD stay visibly separate pipelines.
+
+### 14.8 Credentials and secrets
+
+| Where a secret lives | How |
+|---|---|
+| ECR push (CI) | IRSA (`ci-build-sa` → `DevOps-CI-ECR-Push-Policy`) - no static credential exists |
+| kubectl/helm access (CD) | `cd-deploy-sa`'s own ServiceAccount token, auto-mounted in-cluster |
+| DB password | AWS Secrets Manager, read by External Secrets Operator - never touches Jenkins at all |
+| GitHub webhook signature | Jenkins Credential `git-webhook-secret` (Secret text), created from a Kubernetes Secret labeled `jenkins.io/credentials-type: secretText` - picked up automatically by the Kubernetes Credentials Provider plugin, no JCasC edit or restart needed |
+
+`jenkins/secrets/credentials.example.yaml` documents the one credential this project expects to
+exist and what it's for - never a real value. `configure-jenkins.sh` generates the actual webhook
+secret at runtime (`openssl rand -hex 20`), prints it once, and never writes it to git; the
+credential is idempotent to re-run (an existing `git-webhook-secret` Secret is left alone rather
+than rotated, so it never desyncs from what's actually configured on GitHub's side).
+
+**To replace/revoke a credential**: delete the Kubernetes Secret it's backed by
+(`kubectl delete secret git-webhook-secret -n jenkins`), re-run `configure-jenkins.sh` to mint a
+new one, and update the webhook's secret on the GitHub side to match. No Jenkins restart needed -
+the Credentials Provider plugin watches for the Secret to reappear.
+
+Console log masking: Jenkins' `credentials-binding` plugin masks any credential value it injects
+automatically. Nothing in either Jenkinsfile ever echoes a credential directly, and image tags/ECR
+URLs/namespaces are all non-secret by design (see [§14.2](#142-prerequisites-and-versions) table),
+so there's nothing sensitive to accidentally print in the first place.
+
+### 14.9 Security
+
+**RBAC**: no `cluster-admin` anywhere. `jenkins-controller` (Role, namespace-scoped to `jenkins`)
+can only manage Pods/PVCs/events in its own namespace and read Secrets/ConfigMaps there - it never
+gets `devops-app` access, since the controller itself never deploys anything. `cd-deploy-sa` (Role,
+namespace-scoped to `devops-app`) can manage exactly the resource types Helm needs there
+(Deployments, Services, ConfigMaps, Secrets, Ingresses, NetworkPolicies, HPAs, Certificates,
+ExternalSecrets) - plus one unavoidable narrow `ClusterRole`, `get`-only and `resourceNames`-scoped
+to exactly `devops-app`, since a namespace-scoped Role can never grant access to the (cluster-scoped)
+Namespace object itself, which `helm upgrade --install` always checks for regardless of
+`--create-namespace`. `ci-build-sa` needs no Kubernetes RBAC at all - Kaniko builds are pure
+container-filesystem work, it never calls the Kubernetes API.
+
+**Container/agent security**: no build ever runs on the controller (`numExecutors: 0` -
+structurally impossible, not just discouraged). No agent mounts the node's Docker socket - CI
+builds with Kaniko (daemonless OCI image builds), CD uses a prebuilt `kubectl`+`helm` image. Every
+container in both agent templates sets explicit CPU/memory requests and limits. The webhook-relay
+Pod runs as `runAsNonRoot`, `allowPrivilegeEscalation: false`, all capabilities dropped, read-only
+root filesystem. Both the Jenkins controller image and agent container images are pinned to a fixed
+tag, never `latest`.
+
+**Network**: Jenkins UI is `ClusterIP` only - not exposed publicly, reachable only via
+`kubectl port-forward svc/jenkins -n jenkins 8080:8080`. Inbound webhook traffic never reaches
+Jenkins directly (see [§14.1](#141-architecture-and-environment-choice)'s relay explanation).
+`NetworkPolicy` objects specifically for the `jenkins` namespace aren't implemented - the app side
+already has them (`helm/devops-app`, see [§8](#8-security)), and Jenkins' own traffic pattern
+(controller ↔ ephemeral agents ↔ Kubernetes/ECR/GitHub APIs) is broad enough by nature that a
+meaningfully restrictive policy would need per-agent-template rules this project didn't get to -
+documented here as a known gap rather than left silently unaddressed.
+
+**Endpoints this setup actually talks to**: GitHub (`github.com`, checkout + webhook delivery via
+smee.io), ECR (`*.dkr.ecr.us-east-1.amazonaws.com`, image push/pull), the in-cluster Kubernetes API
+server (`kubernetes.default.svc`), and AWS Secrets Manager (via External Secrets Operator, not
+Jenkins directly).
+
+### 14.10 Cleanup
+
+`jenkins/scripts/uninstall-jenkins.sh` removes Jenkins, its PVC, RBAC, the webhook relay, and
+`ci-build-sa` - leaving `devops-app` and the cluster itself running. For tearing down everything
+(cluster, RDS, Jenkins, all of it), `teardown.sh` already includes the Jenkins-specific steps this
+assignment added (deleting the Jenkins PVC/EBS volume and `ci-build-sa`'s IRSA stack before the
+cluster disappears - see `teardown.sh`'s own step comments for why order matters here).
+
+### 14.11 Trade-offs specific to Assignment 4
+
+| Decision | Why | Trade-off |
+|---|---|---|
+| Jenkins in the same cluster as the app | No second cluster's cost, no cross-cluster credential for CD to manage | Less blast-radius isolation than a fully separate Jenkins cluster |
+| Job creation via REST API script, not Job DSL seed job or Multibranch Pipeline | A JCasC-driven seed job crashed the whole controller boot on a syntax slip - a bug here now only fails one script | An extra manual step (`create-jobs.sh`) instead of jobs appearing automatically on controller boot |
+| No automated rollback on smoke-test failure | Rolling back traffic unattended is itself a risky automated decision; a failed build with a clear rollback command in the log is safer for a human to review first | Slightly slower recovery than full automation (a bonus item, not required) |
+| Custom webhook relay instead of the official `smee-client` npm package | `smee-client` (all versions checked) has a real upstream bug reusing an incoming header value on its own outgoing request - reproduced only with real GitHub traffic, not synthetic test POSTs | ~100 lines of relay code to maintain instead of a dependency |
+| `webhook_content_type: json` via a raw API request, not `gh api`'s `-f config[key]=value` flags | `gh api -f config[content_type]=json` silently failed to nest into GitHub's webhook config - GitHub defaulted to form-encoding instead, which broke the Jenkins GitHub plugin's payload parser (`GHEventPayload$Push.getRepository()` returned null) until this was caught via a captured raw payload and the hook was recreated with an explicit JSON body | One more thing to get right if this hook is ever recreated by hand |
 
 ---
 
@@ -567,3 +861,15 @@ non-root user of its own (switched to `nginxinc/nginx-unprivileged`); backend's 
 failing on RDS outages instead of just its readiness probe; a non-blocking CI image scan; and a
 few smaller code-quality fixes (a connection-leak pattern, a tuple-instead-of-scalar bug, pinned
 `eksctl`/ArgoCD versions instead of `latest`/`stable`).
+
+Assignment 4 added a self-hosted Jenkins running inside the same cluster, with real CI (build,
+test, scan, push - triggered by an actual GitHub webhook) and CD (deploy the exact image CI built,
+verify, smoke-test) pipelines, fully covered in [§14](#14-jenkins-cicd-assignment-4). ArgoCD was
+retired as part of this - see [§4](#4-application-deployment-history) for why running both would
+have meant ArgoCD reverting every Jenkins CD deployment. Rebuilding the infrastructure for this
+assignment also surfaced (and fixed) several gaps left over from Assignment 3 that had never been
+exercised by a from-scratch rebuild before: the ECR repositories turned out to have been created by
+hand outside Terraform entirely ([§14.11](#1411-trade-offs-specific-to-assignment-4)), the EKS
+cluster had no way to satisfy a `PersistentVolumeClaim` (never needed until Jenkins' own storage
+requirement), and the app chart's own `Namespace` template silently depended on ArgoCD's broader
+permissions to work at all.
