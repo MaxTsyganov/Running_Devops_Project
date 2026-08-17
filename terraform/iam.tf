@@ -88,8 +88,6 @@ resource "aws_iam_policy" "external_secrets_policy" {
 # ecr:GetAuthorizationToken has to be Resource "*" (ECR doesn't support
 # resource-level restriction on that one action), but everything else is
 # locked to the specific repo ARNs below.
-data "aws_caller_identity" "current" {}
-
 resource "aws_iam_policy" "ci_ecr_push_policy" {
   name        = "DevOps-CI-ECR-Push-Policy"
   description = "Minimal permissions for Jenkins CI to push images to this project's ECR repositories - nothing else."
@@ -113,11 +111,7 @@ resource "aws_iam_policy" "ci_ecr_push_policy" {
           "ecr:CompleteLayerUpload",
           "ecr:PutImage",
         ]
-        Resource = [
-          "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/devops-frontend",
-          "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/devops-backend",
-          "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/devops-worker",
-        ]
+        Resource = [for repo in aws_ecr_repository.app_repos : repo.arn]
       }
     ]
   })
