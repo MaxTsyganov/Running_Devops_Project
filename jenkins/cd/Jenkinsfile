@@ -150,8 +150,17 @@ pipeline {
                         echo "=== Running image versions ==="
                         kubectl get pods -n ${TARGET_NAMESPACE} -o custom-columns='NAME:.metadata.name,IMAGE:.spec.containers[0].image'
 
+                        # Excludes pods with a deletionTimestamp set (Terminating): with
+                        # maxSurge=0/maxUnavailable=1, the old ReplicaSet's replica count
+                        # drops as soon as a pod is marked for deletion, but the pod itself
+                        # stays visible in `kubectl get pods` (status.phase still "Running")
+                        # until its terminationGracePeriodSeconds actually elapses. Without
+                        # this filter, a Verify that happens to run in that window sees the
+                        # about-to-be-gone old pod as a false "wrong version" failure - the
+                        # rollout is genuinely complete, that pod is just still exiting.
                         WRONG_VERSION=$(kubectl get pods -n ${TARGET_NAMESPACE} \
-                            -o custom-columns='IMAGE:.spec.containers[0].image' --no-headers \
+                            -o custom-columns='IMAGE:.spec.containers[0].image,DELETING:.metadata.deletionTimestamp' --no-headers \
+                            | awk '$2 == "<none>" {print $1}' \
                             | grep -v ":${IMAGE_TAG}$" || true)
                         if [ -n "$WRONG_VERSION" ]; then
                             echo "Pod(s) running an unexpected image tag (expected :${IMAGE_TAG}):"
