@@ -698,15 +698,18 @@ first build has already run with it configured).
 | Validation | Confirms every service's `Dockerfile`/`.dockerignore` and the Helm chart exist |
 | Static Analysis / Lint | `pyflakes` against `backend/app.py` and `worker/worker.py` |
 | Tests | `pytest` against `backend/test_app.py`, results published via `junit` |
-| Build | Kaniko builds all three images (no Docker socket - see [§14.7](#147-container-security)) |
+| Build | Kaniko builds and pushes all three images in one step (no Docker socket - see [§14.7](#147-container-security)) |
+| Scan | Trivy scans each pushed image straight from ECR - HIGH+CRITICAL reported non-blocking (archived as a build artifact), fixable CRITICAL findings fail the build (`--ignore-unfixed`, `.trivyignore` for documented exceptions) |
 | Publish Metadata | Archives `image-metadata.txt` (tag + digest per service) as a build artifact |
 
-Runs on the `ci-agent` template as `ci-build-sa` (IRSA - pushes to ECR via a real AWS IAM role, no
-static registry credential anywhere in the pipeline). Images are tagged with the immutable 8-char
-commit SHA - never `latest` - and the three ECR repos are `IMAGE_TAG_MUTABILITY: IMMUTABLE`
+Runs on the `ci-agent` template as `ci-build-sa` (IRSA - pushes to/pulls from ECR via a real AWS IAM
+role, no static registry credential anywhere in the pipeline). Images are tagged with the immutable
+8-char commit SHA - never `latest` - and the three ECR repos are `IMAGE_TAG_MUTABILITY: IMMUTABLE`
 (`terraform/ecr.tf`), so even a mistake can't silently overwrite a tag already in use. A failed
-Test/Lint/Build stage fails the whole build (Declarative Pipeline's default), pushes nothing, and
-never reaches the `success` post-block that triggers CD.
+Test/Lint/Build/Scan stage fails the whole build (Declarative Pipeline's default) and never reaches
+the `success` post-block that triggers CD - so a scan failure still guarantees nothing gets
+deployed, even though (see [§14.11](#1411-trade-offs-specific-to-assignment-4)) Kaniko's build and
+push happen as one atomic step, before the scan runs.
 
 ### 14.6 CD Pipeline (`jenkins/cd/Jenkinsfile`)
 
@@ -835,6 +838,7 @@ cluster disappears - see `teardown.sh`'s own step comments for why order matters
 | No automated rollback on smoke-test failure | Rolling back traffic unattended is itself a risky automated decision; a failed build with a clear rollback command in the log is safer for a human to review first | Slightly slower recovery than full automation (a bonus item, not required) |
 | Custom webhook relay instead of the official `smee-client` npm package | `smee-client` (all versions checked) has a real upstream bug reusing an incoming header value on its own outgoing request - reproduced only with real GitHub traffic, not synthetic test POSTs | ~100 lines of relay code to maintain instead of a dependency |
 | `webhook_content_type: json` via a raw API request, not `gh api`'s `-f config[key]=value` flags | `gh api -f config[content_type]=json` silently failed to nest into GitHub's webhook config - GitHub defaulted to form-encoding instead, which broke the Jenkins GitHub plugin's payload parser (`GHEventPayload$Push.getRepository()` returned null) until this was caught via a captured raw payload and the hook was recreated with an explicit JSON body | One more thing to get right if this hook is ever recreated by hand |
+| Trivy scans the image *after* Kaniko has already pushed it, not before | Kaniko builds and pushes as one atomic `--destination` step - there's no local, daemon-accessible image to scan first without a separate build-to-tarball-then-push flow | A build that fails the Scan stage still leaves that (immutable-tagged, never referenced by any deploy) image sitting in ECR; the actual safety property - nothing gets deployed - still holds, since CD only ever triggers from CI's `success` post-block |
 
 ---
 

@@ -117,6 +117,41 @@ pipeline {
             }
         }
 
+        stage('Scan') {
+            steps {
+                container('trivy') {
+                    sh '''
+                        set -e
+                        for svc in frontend backend worker; do
+                            IMAGE="${ECR_REGISTRY}/devops-$svc:${IMAGE_TAG}"
+                            echo "=== Scanning $IMAGE ==="
+                            # Full report (HIGH+CRITICAL, including unfixed) - non-blocking,
+                            # kept purely for visibility, archived as a build artifact.
+                            # Same two-scan pattern as .github/workflows/ci.yml.
+                            trivy image --severity HIGH,CRITICAL --exit-code 0 \
+                                --format json --output "trivy-$svc.json" \
+                                --ignorefile .trivyignore "$IMAGE"
+                            trivy image --severity HIGH,CRITICAL --exit-code 0 \
+                                --format table --ignorefile .trivyignore "$IMAGE"
+                        done
+                    '''
+                    archiveArtifacts artifacts: 'trivy-*.json', fingerprint: true
+                    sh '''
+                        set -e
+                        # The actual gate: fails the build on fixable CRITICAL findings.
+                        # --ignore-unfixed excludes CVEs with no available patch (nothing
+                        # actionable from this project alone); accepted-risk exceptions go
+                        # in .trivyignore with a documented reason, never a blanket override.
+                        for svc in frontend backend worker; do
+                            IMAGE="${ECR_REGISTRY}/devops-$svc:${IMAGE_TAG}"
+                            trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed \
+                                --ignorefile .trivyignore "$IMAGE"
+                        done
+                    '''
+                }
+            }
+        }
+
         stage('Publish Metadata') {
             steps {
                 container('kaniko') {

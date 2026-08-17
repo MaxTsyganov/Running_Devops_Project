@@ -74,6 +74,19 @@ controller:
                         resourceRequestMemory: "400Mi"
                         resourceLimitCpu: "1"
                         resourceLimitMemory: "800Mi"
+                      # Scans the images Kaniko just pushed, straight from ECR
+                      # via ci-build-sa's IRSA (needs the pull actions added
+                      # alongside the push ones in terraform/iam.tf - Kaniko
+                      # only ever needed to push, scanning is the first thing
+                      # in this pipeline that reads an image back).
+                      - name: "trivy"
+                        image: "aquasec/trivy:0.74.0"
+                        command: "sleep"
+                        args: "99d"
+                        resourceRequestCpu: "250m"
+                        resourceRequestMemory: "300Mi"
+                        resourceLimitCpu: "500m"
+                        resourceLimitMemory: "700Mi"
                   - name: "cd-agent"
                     label: "cd-agent"
                     namespace: "jenkins"

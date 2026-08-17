@@ -84,13 +84,13 @@ resource "aws_iam_policy" "external_secrets_policy" {
 }
 
 # Separate policy for Jenkins CI (attached to ci-build-sa via IRSA). Scoped
-# to pushing images into exactly this project's three ECR repositories -
-# ecr:GetAuthorizationToken has to be Resource "*" (ECR doesn't support
-# resource-level restriction on that one action), but everything else is
-# locked to the specific repo ARNs below.
+# to pushing AND pulling images in exactly this project's three ECR
+# repositories - nothing else. ecr:GetAuthorizationToken has to be Resource
+# "*" (ECR doesn't support resource-level restriction on that one action),
+# but everything else is locked to the specific repo ARNs below.
 resource "aws_iam_policy" "ci_ecr_push_policy" {
   name        = "DevOps-CI-ECR-Push-Policy"
-  description = "Minimal permissions for Jenkins CI to push images to this project's ECR repositories - nothing else."
+  description = "Minimal permissions for Jenkins CI to push/pull images in this project's ECR repositories - nothing else."
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -110,6 +110,11 @@ resource "aws_iam_policy" "ci_ecr_push_policy" {
           "ecr:UploadLayerPart",
           "ecr:CompleteLayerUpload",
           "ecr:PutImage",
+          # Pull actions - Kaniko never needed these (it only pushes), but
+          # Trivy scanning the image straight from ECR after Kaniko pushes
+          # it does: it has to read back what was just pushed.
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer",
         ]
         Resource = [for repo in aws_ecr_repository.app_repos : repo.arn]
       }
