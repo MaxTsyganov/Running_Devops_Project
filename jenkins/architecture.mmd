@@ -1,47 +1,106 @@
-%% Jenkins CI/CD architecture - Assignment 4
-%% Groundwork skeleton: structure only, matches the PDF's required-elements
-%% list (section 7). Styling/colors and exact resource names still TODO -
-%% will be polished the same way the Assignment 3 diagram was.
+%% Jenkins CI/CD architecture - Assignment 4 - Deployment View
+%% Shows where everything actually runs: clusters, namespaces, Pods,
+%% Services, storage, and network boundaries. For the logical order of a
+%% single pipeline run (commit -> CI -> build -> registry -> CD -> rollout
+%% -> smoke test -> rollback), see pipeline-flow.mmd instead - cramming both
+%% views into one diagram made it unreadable.
 
 flowchart TB
-    Dev[Developer] -->|push / PR| Git[Git repository]
-    Git -->|webhook| CIJob
+    Dev[Developer]
+    User[End user]
+    GH[GitHub repository]
+    Smee[["smee.io channel\n(public relay, outbound-only from our side)"]]
 
-    subgraph AWS[AWS Account]
-        subgraph EKS[EKS Cluster]
-            subgraph JenkinsNS["jenkins namespace"]
-                Controller[Jenkins controller Pod\nfixed, never runs builds]
-                PVC[(PersistentVolumeClaim\nJenkins home)]
-                Controller --- PVC
-                CIJob[ci-application job]
-                CDJob[cd-application job]
-                CIAgent["CI agent Pod (ephemeral)\nci-build-sa"]
-                CDAgent["CD agent Pod (ephemeral)\ncd-deploy-sa"]
-                Controller -.spawns.-> CIAgent
-                Controller -.spawns.-> CDAgent
-                CIJob --> CIAgent
-                CDJob --> CDAgent
+    Dev -->|push| GH
+    GH -->|webhook POST\nHTTPS, HMAC-signed| Smee
+    User -->|HTTPS| ALB
+
+    subgraph AWSAcct["AWS Account"]
+        direction TB
+
+        subgraph VPC["VPC"]
+            direction TB
+
+            subgraph PubSubnet["Public subnet(s)"]
+                ALB[/"frontend-service\n(LoadBalancer)"/]
             end
 
-            subgraph AppNS["devops-app namespace"]
-                Deployments[Deployments: frontend / backend / worker]
-                Services[Services]
-                Ingress[Ingress / LoadBalancer]
-            end
+            subgraph PrivSubnet["Private subnet(s)"]
+                direction TB
 
-            CDAgent -->|kubectl / helm\nvia cd-deploy-sa RBAC| Deployments
+                subgraph EKS["EKS Cluster - devops-cluster"]
+                    direction TB
+
+                    subgraph JenkinsNS["namespace: jenkins"]
+                        direction TB
+                        Relay["webhook-relay Pod\n(smee-client, outbound only -\nJenkins itself has no inbound\nport, Ingress, or public IP)"]
+                        Controller["Jenkins controller Pod\n(StatefulSet, 1 replica, fixed -\nnever runs builds itself)"]
+                        PVC[("PVC: Jenkins home\nebs-gp3")]
+                        JSvc[["Service: jenkins\n(ClusterIP only)"]]
+                        Controller --- PVC
+                        Controller --- JSvc
+                        CIAgent["CI agent Pod (ephemeral)\npython + kaniko containers\nSA: ci-build-sa"]
+                        CDAgent["CD agent Pod (ephemeral)\nkubectl+helm container\nSA: cd-deploy-sa"]
+                        Controller -.spawns, deletes after build.-> CIAgent
+                        Controller -.spawns, deletes after build.-> CDAgent
+                    end
+
+                    subgraph AppNS["namespace: devops-app"]
+                        direction TB
+                        FE["frontend-deployment\n(2 replicas)"]
+                        BE["backend-deployment\n(2 replicas)\nSA: backend-sa"]
+                        WK["worker-deployment\n(1 replica)\nSA: worker-sa"]
+                        BESvc[["backend-service\n(ClusterIP)"]]
+                    end
+
+                    subgraph ESONS["namespace: external-secrets"]
+                        ESO["External Secrets Operator\nSA: external-secrets-sa"]
+                    end
+
+                    RDS[("RDS PostgreSQL")]
+                end
+            end
         end
 
-        ECR[(ECR registry)]
-        CIAgent -->|push image\nvia IRSA| ECR
-        CDAgent -.reads tag/digest.-> ECR
+        subgraph AWSMgd["AWS managed services (regional, outside the VPC)"]
+            direction LR
+            ECR[("ECR\ndevops-frontend / -backend / -worker")]
+            S3[("S3 bucket")]
+            SNS(["SNS topic"])
+            SecMgr[("Secrets Manager\nRDS password")]
+        end
     end
 
-    User[End user] --> Ingress
-    Ingress --> Services --> Deployments
+    Smee -->|forwarded| Relay
+    Relay -->|POST /github-webhook/\ninternal, ClusterIP only| JSvc
+    JSvc --> Controller
+    Controller -.triggers on push.-> CIAgent
 
-    %% TODO once decisions are locked in:
-    %% - RDS / S3 / SNS boxes (reused from Assignment 3)
-    %% - public/private subnet boundaries, node groups
-    %% - ServiceAccount/RBAC/Secret boundaries drawn explicitly
-    %% - Jenkins UI exposure path (Ingress vs LoadBalancer vs port-forward)
+    CIAgent -->|docker push\nvia ci-build-sa IRSA| ECR
+    CDAgent -->|kubectl / helm\nvia cd-deploy-sa RBAC\nRole+RoleBinding, devops-app only| FE
+    CDAgent --> BE
+    CDAgent --> WK
+    CDAgent -.reads image tag/digest.-> ECR
+
+    ALB --> FE
+    FE -->|reverse proxy| BESvc --> BE
+    BE -->|reads/writes\nvia backend-sa IRSA| RDS
+    BE -->|uploads\nvia backend-sa IRSA| S3
+    BE -->|publishes\nvia backend-sa IRSA| SNS
+    WK -->|polls\nvia worker-sa IRSA| RDS
+    WK -->|publishes\nvia worker-sa IRSA| SNS
+    ESO -->|reads password\nvia external-secrets-sa IRSA| SecMgr
+    ESO -.writes app-secrets Secret.-> BE
+    ESO -.writes app-secrets Secret.-> WK
+
+    Admin["Admin (developer machine)"] -.->|kubectl port-forward\nnever public| JSvc
+
+    classDef external fill:#eee,stroke:#999,color:#333
+    classDef aws fill:#fff3e0,stroke:#e65100,color:#333
+    classDef jenkins fill:#e3f2fd,stroke:#1565c0,color:#333
+    classDef app fill:#e8f5e9,stroke:#2e7d32,color:#333
+    classDef data fill:#fce4ec,stroke:#ad1457,color:#333
+    class Dev,User,GH,Smee,Admin external
+    class ALB,RDS,ECR,S3,SNS,SecMgr aws
+    class Relay,Controller,PVC,JSvc,CIAgent,CDAgent jenkins
+    class FE,BE,WK,BESvc,ESO app

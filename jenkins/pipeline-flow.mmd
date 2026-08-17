@@ -1,0 +1,66 @@
+%% Jenkins CI/CD architecture - Assignment 4 - Pipeline Flow View
+%% Logical order of a single run: commit -> CI -> image build -> registry ->
+%% CD -> rollout -> smoke test -> rollback. For where each of these actually
+%% runs (clusters/namespaces/Pods/network boundaries), see architecture.mmd.
+
+sequenceDiagram
+    actor Dev as Developer
+    participant GH as GitHub repo
+    participant Relay as webhook-relay Pod
+    participant Ctrl as Jenkins controller
+    participant CI as CI agent Pod
+    participant ECR as ECR registry
+    participant CD as CD agent Pod
+    participant K8s as Kubernetes (devops-app)
+    actor User as End user
+
+    Dev->>GH: git push (main)
+    GH->>Relay: webhook POST (HMAC-signed)
+    Relay->>Ctrl: forward to /github-webhook/ (internal only)
+    Ctrl->>CI: spawn ephemeral agent Pod, run ci-application
+
+    rect rgb(232, 245, 233)
+        note over CI: CI Pipeline (ci-Jenkinsfile)
+        CI->>CI: Checkout (branch, commit SHA, build #)
+        CI->>CI: Validation (Dockerfiles, chart files present)
+        CI->>CI: Static Analysis / Lint
+        CI->>CI: Tests (unit tests, results published to Jenkins)
+        alt tests fail
+            CI--xCtrl: build marked failed
+            note over Ctrl: no image pushed, CD never triggered
+        else tests pass
+            CI->>CI: Build image per service (Kaniko, no Docker socket)
+            CI->>CI: Tag with immutable commit SHA (never latest)
+            CI->>ECR: Push image, per service
+            ECR-->>CI: digest
+            CI->>CI: Publish metadata (tag + digest, archived as build artifact)
+            CI->>Ctrl: build succeeded
+            Ctrl->>CD: trigger cd-application(IMAGE_TAG=<sha>)
+        end
+    end
+
+    rect rgb(227, 242, 253)
+        note over CD: CD Pipeline (cd-Jenkinsfile) - never rebuilds the image
+        CD->>CD: Checkout (Helm chart only)
+        CD->>CD: Input Validation (tag/digest exists, not latest)
+        CD->>CD: Manifest Validation (helm lint, helm template)
+        CD->>K8s: Authenticate via cd-deploy-sa ServiceAccount
+        CD->>K8s: helm upgrade --install (same tag CI just pushed)
+        CD->>K8s: kubectl rollout status, per Deployment
+        alt rollout fails or times out
+            K8s--xCD: rollout incomplete
+            CD--xCtrl: build marked failed, logs/events surfaced
+            note over Dev: documented rollback:<br/>helm rollback devops-app -n devops-app
+        else rollout succeeds
+            CD->>K8s: Verify - every Pod running the expected tag
+            CD->>User: Smoke test - real HTTP request to the LoadBalancer
+            alt smoke test fails
+                CD--xCtrl: build marked failed
+                note over Dev: documented rollback:<br/>helm rollback devops-app -n devops-app
+            else smoke test passes
+                CD->>Ctrl: build succeeded
+            end
+        end
+    end
+
+    User->>K8s: normal traffic, once deployed
