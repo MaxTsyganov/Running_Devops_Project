@@ -234,13 +234,19 @@ step "[6/11] Setting up IRSA so backend/worker get AWS access without static key
 # plus a role per ServiceAccount, trusted only by that SA, using the same
 # least-privilege policy from terraform/iam.tf. frontend-sa gets no role -
 # it never talks to AWS.
-# The namespace is templated in the chart (helm/devops-app/templates/namespace.yaml)
-# rather than created as a one-off raw manifest, so it stays defined in one place.
-# It still has to exist now, before IRSA setup below: eksctl needs somewhere
-# to put backend-sa/worker-sa. Rendering just that one template keeps this in
-# sync with the chart instead of duplicating the Namespace definition here.
-helm template devops-app ./helm/devops-app --namespace devops-app \
-    --show-only templates/namespace.yaml | kubectl apply -f -
+# Created directly, NOT as a chart template: cd-deploy-sa's RBAC
+# (jenkins/rbac/cd-deploy-rbac.yaml) is deliberately read-only, resourceName-
+# scoped to exactly "devops-app" on Namespace - it can check the namespace
+# exists, but can never create/own one (Namespace is cluster-scoped, so even
+# that narrow ClusterRole is the one unavoidable exception to this project's
+# namespace-scoped RBAC). A chart-templated Namespace resource would make
+# `helm upgrade --install` (which CD runs as cd-deploy-sa) try to adopt/manage
+# this object as part of the release - confirmed failing two different ways:
+# "invalid ownership metadata" on first install (this namespace wasn't
+# created by Helm), and would need write permissions CD deliberately doesn't
+# have even if that were fixed. It still has to exist now, before IRSA setup
+# below: eksctl needs somewhere to put backend-sa/worker-sa.
+kubectl create namespace devops-app --dry-run=client -o yaml | kubectl apply -f -
 
 eksctl utils associate-iam-oidc-provider \
     --cluster "$CLUSTER_NAME" --region "$AWS_REGION" --approve
