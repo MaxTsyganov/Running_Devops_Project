@@ -8,18 +8,18 @@ info()    { echo "    $1"; }
 success() { echo -e "${GREEN}✔ $1${RESET}"; }
 fail()    { echo -e "${RED}✘ $1${RESET}"; exit 1; }
 
-# Pinned versions for tools installed straight from GitHub releases (not a
+# Pinned version for eksctl, installed straight from GitHub releases (not a
 # package manager) - reviewed and bumped deliberately, instead of always
 # pulling whatever "latest"/"stable" happens to resolve to on a given run.
 EKSCTL_VERSION="v0.229.0"
-ARGOCD_VERSION="v3.5.0"
 
 echo -e "${BOLD}=================================================================="
-echo "  DevOps App - Kubernetes Deployment"
-echo "  This will: apply Terraform (RDS/S3/SNS), create or reuse an EKS"
-echo "  cluster, build & push images, install ArgoCD, cert-manager, and"
-echo "  Fluent Bit, then deploy the app via GitOps (ArgoCD watching this"
-echo "  repo's Helm chart)."
+echo "  DevOps App - Infra Bring-Up"
+echo "  This will: apply Terraform (RDS/S3/SNS/ECR), create or reuse an EKS"
+echo "  cluster, install cert-manager and Fluent Bit, build & push images to"
+echo "  ECR, then prepare the devops-app namespace for Jenkins CD - it does"
+echo "  NOT deploy the app itself. That's the cd-application Jenkins job's"
+echo "  first run (see jenkins/scripts/)."
 echo "  Total time: ~20-30 minutes on a first run (mostly EKS cluster boot)."
 echo -e "==================================================================${RESET}"
 
@@ -175,11 +175,17 @@ if eksctl get cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2
     info "Cluster already exists, reusing it."
 else
     info "Creating cluster inside the existing VPC/subnets (this takes 15-20 minutes)..."
-    # 3 nodes, not 2: t3.small's pod ceiling is set by its network interfaces'
-    # IP capacity (EKS/VPC CNI), not CPU/memory - 11 pods/node regardless of
-    # how much compute is actually free. With kube-system, CoreDNS, ArgoCD,
-    # cert-manager, and this app all scheduled, 2 nodes (22 slots) isn't
-    # enough headroom; 3 nodes (33 slots) is, for a small added cost.
+    # 3 nodes, not 2: pod ceiling per node is set by ENI IP capacity
+    # (EKS/VPC CNI), not CPU/memory. With kube-system, CoreDNS, ArgoCD,
+    # cert-manager, and this app all scheduled, 2 nodes isn't enough
+    # headroom; 3 is, for a small added cost.
+    # t3.medium, not t3.small: Assignment 4 adds a resident Jenkins
+    # controller Pod, a resident webhook-relay Pod, and bursts of ephemeral
+    # CI/CD agent Pods on top of everything already competing for the same
+    # 3 nodes. t3.small's pod ceiling (11/node, 33 total) was already tight
+    # before Jenkins existed; t3.medium doubles the memory per node and
+    # raises the ceiling to 17/node (51 total) for the same node count -
+    # cheap insurance against CI agent Pods stuck Pending mid-build.
     # --node-private-networking: passing both public and private subnets only
     # tells eksctl which subnets exist - without this flag it can still place
     # the managed node group in the public ones, which (since map_public_ip_on_launch
@@ -192,7 +198,7 @@ else
         --vpc-private-subnets="$PRIVATE_SUBNET_IDS" \
         --node-private-networking \
         --nodes 3 \
-        --node-type t3.small \
+        --node-type t3.medium \
         --managed
 fi
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
@@ -230,9 +236,9 @@ step "[6/11] Setting up IRSA so backend/worker get AWS access without static key
 # it never talks to AWS.
 # The namespace is templated in the chart (helm/devops-app/templates/namespace.yaml)
 # rather than created as a one-off raw manifest, so it stays defined in one place.
-# It still has to exist now, before ArgoCD ever runs: eksctl needs somewhere to
-# put backend-sa/worker-sa. Rendering just that one template keeps this in sync
-# with the chart instead of duplicating the Namespace definition here.
+# It still has to exist now, before IRSA setup below: eksctl needs somewhere
+# to put backend-sa/worker-sa. Rendering just that one template keeps this in
+# sync with the chart instead of duplicating the Namespace definition here.
 helm template devops-app ./helm/devops-app --namespace devops-app \
     --show-only templates/namespace.yaml | kubectl apply -f -
 
@@ -385,120 +391,53 @@ for service in frontend backend worker; do
     fi
 
     docker tag devops-$service:latest "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/devops-$service:v1.0.0"
-    docker push -q "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/devops-$service:v1.0.0" >/dev/null
+    # ECR repos are IMMUTABLE (terraform/ecr.tf) - re-pushing an existing tag
+    # errors instead of silently overwriting it, which is exactly the
+    # behavior that policy is for. v1.0.0 is a fixed baseline tag (unlike
+    # Jenkins CI's per-commit-SHA tags), so re-running this script on an
+    # unchanged Dockerfile/app needs to treat "tag already exists" as a
+    # no-op, not a failure - the content is identical either way.
+    if aws ecr describe-images --region "$AWS_REGION" --repository-name "devops-$service" \
+        --image-ids imageTag=v1.0.0 >/dev/null 2>&1; then
+        info "devops-$service:v1.0.0 already in ECR, skipping push."
+    else
+        docker push -q "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/devops-$service:v1.0.0" >/dev/null
+    fi
 done
 success "All 3 images built, scanned, and pushed as :v1.0.0."
 
-step "[11/11] Installing ArgoCD and deploying via GitOps..."
-# From here on the app is kept in sync by ArgoCD watching this repo, not by a
-# direct `helm upgrade` call. Push a chart change to git (or wait for ArgoCD's
-# poll cycle) and it reconciles the cluster to match; selfHeal also reverts
-# any manual kubectl edit back to what's in git.
-REPO_URL="https://github.com/MaxTsyganov/Running_Devops_Project.git"
-REPO_BRANCH="main"
-
-if ! kubectl get deployment argocd-server -n argocd >/dev/null 2>&1; then
-    info "Installing ArgoCD (first run only - this takes a couple of minutes)..."
-    # Checking the deployment, not just the namespace, keeps this idempotent
-    # even after a previous run failed partway through the install.
-    kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-    # --server-side: plain `kubectl apply` stores the whole manifest in an
-    # annotation for diffing, and ArgoCD's CRDs are big enough to blow past
-    # etcd's 256KB annotation limit. Server-side apply avoids that annotation.
-    kubectl apply -n argocd --server-side --force-conflicts \
-        -f "https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml" >/dev/null
-else
-    info "ArgoCD already installed, reusing it."
-fi
-kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout=180s
-kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
-success "ArgoCD is ready."
-
-# Dynamic values (RDS host, S3/SNS names, password, TLS cert) can't live in
-# git, so they're embedded straight into this Application object instead,
-# generated fresh here and applied via kubectl - never committed. ArgoCD
-# only reads the chart templates from git.
-ARGOCD_APP=$(mktemp)
-cat <<EOF > "$ARGOCD_APP"
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: devops-app
-  namespace: argocd
-  finalizers:
-  - resources-finalizer.argocd.argoproj.io
-spec:
-  project: default
-  source:
-    repoURL: ${REPO_URL}
-    targetRevision: ${REPO_BRANCH}
-    path: helm/devops-app
-    helm:
-      valuesObject:
-        image:
-          registry: "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-        config:
-          dbHost: "${DB_HOST}"
-          s3BucketName: "${S3_BUCKET}"
-          snsTopicArn: "${SNS_TOPIC}"
-        secrets:
-          dbPasswordSecretName: "${DB_PASSWORD_SECRET_NAME}"
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: devops-app
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-    - CreateNamespace=true
-EOF
-kubectl apply -f "$ARGOCD_APP"
-rm -f "$ARGOCD_APP"
-success "ArgoCD Application created - watching $REPO_URL ($REPO_BRANCH) at helm/devops-app."
-
-info "Waiting for ArgoCD to sync (first sync of a new Application is usually quick)..."
-WAITED=0
-while true; do
-    SYNC=$(kubectl get application devops-app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
-    HEALTH=$(kubectl get application devops-app -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
-    [ "$SYNC" = "Synced" ] && [ "$HEALTH" = "Healthy" ] && break
-    if [ "$WAITED" -ge 300 ]; then
-        fail "ArgoCD didn't reach Synced/Healthy within 5 minutes (last seen: sync=$SYNC health=$HEALTH). Check 'kubectl describe application devops-app -n argocd'."
-    fi
-    sleep 10
-    WAITED=$((WAITED + 10))
-done
-success "ArgoCD reports the app as Synced and Healthy."
-
-kubectl rollout status deployment/frontend-deployment -n devops-app --timeout=180s
-kubectl rollout status deployment/backend-deployment -n devops-app --timeout=180s
-kubectl rollout status deployment/worker-deployment -n devops-app --timeout=180s
-success "All deployments are healthy."
-
-info "Waiting for AWS to provision the Load Balancer URL (usually under a minute)..."
-EXTERNAL_IP=""
-while [ -z "$EXTERNAL_IP" ]; do
-  sleep 5
-  EXTERNAL_IP=$(kubectl get svc frontend-service -n devops-app --template="{{range .status.loadBalancer.ingress}}{{.hostname}}{{end}}")
-done
-
-ARGOCD_PASSWORD=$(kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
+step "[11/11] Publishing the terraform-outputs ConfigMap for Jenkins CD..."
+# Assignment 3 deployed via ArgoCD (Application valuesObject + selfHeal).
+# Assignment 4 replaced that with Jenkins CD deploying straight via
+# `helm upgrade --install` (jenkins/cd/Jenkinsfile) - running both would mean
+# ArgoCD's selfHeal reverts every Jenkins CD deploy back to whatever's last
+# synced from git, fighting the exact pipeline this assignment is about.
+# So infra bring-up stops here: it prepares the namespace and the one thing
+# CD can't get any other way (the non-secret Terraform outputs - RDS host,
+# S3 bucket, SNS topic ARN, the Secrets Manager secret name - which change
+# every time `terraform apply` runs and so can't be hardcoded into the
+# Jenkinsfile). CD's own Jenkinsfile deliberately never creates this
+# namespace itself (see its "Deploy" stage) - first deploy is Jenkins CD's
+# job, not this script's. The namespace already exists from step [6/11]
+# (rendered from the chart's own namespace.yaml), so only the ConfigMap is
+# new here.
+kubectl create configmap terraform-outputs -n devops-app \
+    --from-literal=dbHost="${DB_HOST}" \
+    --from-literal=s3BucketName="${S3_BUCKET}" \
+    --from-literal=snsTopicArn="${SNS_TOPIC}" \
+    --from-literal=dbPasswordSecretName="${DB_PASSWORD_SECRET_NAME}" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+success "terraform-outputs ConfigMap published in devops-app for Jenkins CD to read."
 
 echo -e "\n${GREEN}${BOLD}=================================================================="
-echo "  DEPLOYMENT COMPLETE"
+echo "  INFRA READY - IMAGES PUSHED - NO APP DEPLOYED YET"
 echo -e "==================================================================${RESET}"
-echo "  App URL (HTTP):   http://$EXTERNAL_IP"
-echo "  App URL (HTTPS):  https://$EXTERNAL_IP  (self-signed cert - browser will warn, that's expected)"
-echo "  Check pods:      kubectl get pods -n devops-app"
-echo "  Check services:  kubectl get svc -n devops-app"
-echo "  Tail logs:       kubectl logs -f deployment/backend-deployment -n devops-app"
+echo "  Images pushed to ECR:  ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/{devops-frontend,devops-backend,devops-worker}:v1.0.0"
+echo "  Next: install Jenkins (jenkins/scripts/install-jenkins.sh, configure-jenkins.sh,"
+echo "  create-jobs.sh) - the app's first deployment happens via the cd-application"
+echo "  Jenkins job, not this script."
 echo ""
-echo "  ArgoCD UI (not exposed to the internet - port-forward to reach it):"
-echo "    kubectl port-forward svc/argocd-server -n argocd 8080:443"
-echo "    then open https://localhost:8080  (self-signed cert, browser will warn)"
-echo "    username: admin"
-echo "    password: ${ARGOCD_PASSWORD}"
+echo "  Check namespace/configmap: kubectl get configmap terraform-outputs -n devops-app -o yaml"
 echo ""
 echo "  Container logs (CloudWatch Logs console):"
 echo "    https://$AWS_REGION.console.aws.amazon.com/cloudwatch/home?region=$AWS_REGION#logsV2:log-groups/log-group/\$252Fdevops-app\$252Fcontainers"

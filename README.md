@@ -54,7 +54,7 @@ flowchart TB
             LB["⚖️ frontend-service<br/>LoadBalancer, public subnets"]
             NAT["🔀 NAT Gateway<br/>public subnets"]
 
-            subgraph EKS["EKS: devops-cluster, 3x t3.small nodes, private subnets"]
+            subgraph EKS["EKS: devops-cluster, 3x t3.medium nodes, private subnets"]
                 subgraph NsArgo["namespace: argocd"]
                     ArgoCD["🔄 ArgoCD"]
                 end
@@ -477,7 +477,8 @@ something closer to production.
 | `LoadBalancer` Service instead of Ingress | Only one public route, no controller needed | No path-based routing |
 | cert-manager with a self-signed issuer, not a real CA | No domain name to get a real cert for; cert-manager itself is still real | Browser warning on every visit |
 | External Secrets Operator + AWS Secrets Manager, not a plain Kubernetes Secret | The password never has to pass through Helm, ArgoCD, or this repo at any point, and gets real encryption at rest | Another operator running in the cluster, another IAM role to manage |
-| 3 `t3.small` nodes instead of 2 | `t3.small`'s pod ceiling is 11/node (network interface IP limits, not CPU/memory) - kube-system + ArgoCD + cert-manager + this app need more than 2 nodes' worth of slots | Small added hourly node cost |
+| 3 nodes instead of 2 | Pod ceiling per node is set by network interface IP limits, not CPU/memory - kube-system + ArgoCD + cert-manager + this app need more than 2 nodes' worth of slots | Small added hourly node cost |
+| `t3.medium` nodes instead of `t3.small` (bumped for Assignment 4) | Adding Jenkins (a resident controller Pod, a resident webhook-relay Pod, and bursts of ephemeral CI/CD agent Pods) on top of an already-tight `t3.small` cluster (11 pods/node) risked agent Pods stuck `Pending` mid-build; `t3.medium` doubles memory per node and raises the ceiling to 17/node for the same node count | Roughly doubles hourly node cost |
 | One shared CloudWatch log group, not per-service | This is basic logging, not a full observability stack | Harder to filter one service's logs out from the others |
 | AWS-managed KMS keys, not customer-managed | S3/SNS encrypted at rest either way | Doesn't satisfy scanners requiring CMKs; ~$1/month each to fix |
 | CI fails only on fixable `CRITICAL` image findings, not `HIGH` too | `HIGH` findings are still reported (non-blocking) for visibility; failing on every `HIGH` finding would block the pipeline on OS-level CVEs this project alone can't fix | A fixable `HIGH` vulnerability won't block a merge on its own |
