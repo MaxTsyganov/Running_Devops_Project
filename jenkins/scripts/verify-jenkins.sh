@@ -51,7 +51,9 @@ if ! curl -sf -o /dev/null http://localhost:8080/login 2>/dev/null; then
     PF_PID=$!
     sleep 3
 fi
-JENKINS_PASSWORD=$(kubectl exec --namespace jenkins svc/jenkins -c jenkins -- \
+# MSYS_NO_PATHCONV=1: no-op outside Windows Git Bash - see configure-jenkins.sh
+# for why it's needed there (MSYS mangles the /bin/cat path argument).
+JENKINS_PASSWORD=$(MSYS_NO_PATHCONV=1 kubectl exec --namespace jenkins svc/jenkins -c jenkins -- \
     /bin/cat /run/secrets/additional/chart-admin-password 2>/dev/null | tr -d '\r')
 for job in ci-application cd-application; do
     STATUS=$(curl -s -o /dev/null -w '%{http_code}' -u "admin:${JENKINS_PASSWORD}" \

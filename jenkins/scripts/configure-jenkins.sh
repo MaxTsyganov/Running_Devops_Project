@@ -22,7 +22,12 @@ kubectl get statefulset/jenkins -n jenkins >/dev/null 2>&1 \
     || fail "Jenkins isn't installed yet - run jenkins/scripts/install-jenkins.sh first."
 
 step "[1/4] Admin credentials..."
-ADMIN_PASSWORD=$(kubectl exec --namespace jenkins svc/jenkins -c jenkins -- \
+# MSYS_NO_PATHCONV=1: on Windows Git Bash, MSYS rewrites any argument that
+# looks like a Unix absolute path (like /bin/cat here) into a literal
+# Windows path BEFORE it reaches kubectl - the exec then fails inside the
+# Linux container looking for "C:/Program Files/Git/usr/bin/cat". A no-op
+# everywhere else (Linux/Mac), so it's safe to set unconditionally.
+ADMIN_PASSWORD=$(MSYS_NO_PATHCONV=1 kubectl exec --namespace jenkins svc/jenkins -c jenkins -- \
     /bin/cat /run/secrets/additional/chart-admin-password | tr -d '\r')
 info "User:     admin"
 info "Password: $ADMIN_PASSWORD"

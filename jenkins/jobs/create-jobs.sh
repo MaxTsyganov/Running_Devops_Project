@@ -14,7 +14,9 @@ set -e
 
 JENKINS_URL="${JENKINS_URL:-http://localhost:8080}"
 JENKINS_USER="admin"
-JENKINS_PASSWORD=$(kubectl exec --namespace jenkins svc/jenkins -c jenkins -- \
+# MSYS_NO_PATHCONV=1: no-op outside Windows Git Bash - see configure-jenkins.sh
+# for why it's needed there (MSYS mangles the /bin/cat path argument).
+JENKINS_PASSWORD=$(MSYS_NO_PATHCONV=1 kubectl exec --namespace jenkins svc/jenkins -c jenkins -- \
     /bin/cat /run/secrets/additional/chart-admin-password | tr -d '\r')
 
 # Jenkins' CSRF crumb is tied to the session it was issued in - fetching it
