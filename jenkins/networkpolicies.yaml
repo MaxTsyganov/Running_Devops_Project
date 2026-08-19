@@ -197,16 +197,34 @@ spec:
       ports:
         - protocol: TCP
           port: 443 # GitHub, ECR, AWS KMS, PyPI, Cosign/Trivy-DB downloads, and (for cd-agent) the in-VPC Kubernetes API
+    - to:
+        - ipBlock:
+            cidr: 172.20.0.0/16 # this cluster's Service CIDR, same one and same reason as
+            # jenkins-controller-policy's Kubernetes-API rule - NOT a podSelector for
+            # `app: frontend`, even though that's what was tried first and is what the
+            # comment below explains. cd-agent's Smoke Test hits frontend-service by its
+            # in-cluster Service DNS, and a podSelector rule for `app: frontend` resolves
+            # correctly at the control-plane level (confirmed via the generated
+            # PolicyEndpoint object listing the real frontend Pod IPs) but is never
+            # actually matched at enforcement time: AWS VPC CNI's NetworkPolicy agent
+            # evaluates egress against the pre-DNAT destination - the Service's ClusterIP
+            # - not the Pod IP kube-proxy later rewrites it to, so traffic to the Service
+            # never matched a Pod-IP-scoped rule at all. Confirmed live three ways: a
+            # podSelector rule timed out against both the ClusterIP and the DNS name;
+            # curling a frontend Pod's IP directly got a real "connection refused" (its
+            # container listens on 8080/8443, not 80 - the Service does that mapping, so
+            # this proves the packet WAS reaching the Pod when addressed directly, just
+            # not through the Service); and this ipBlock, once applied, worked instantly
+            # on the very same ClusterIP and DNS name that timed out before. Still tighter
+            # than port 443's necessarily-unpredictable 0.0.0.0/0 above (GitHub/ECR/KMS/
+            # PyPI/smee.io) - this is scoped to "anything inside this cluster," not the
+            # open internet, since port 80 has exactly one real destination in this whole
+            # pipeline. Also grants ci-agent pods this same access, since both templates
+            # share one policy (see header comment #2) - harmless, since nothing in
+            # ci-agent's own steps ever makes any HTTP call anywhere in-cluster.
+      ports:
         - protocol: TCP
-          port: 80 # cd-agent's Smoke Test (plain HTTP against frontend-service) - real
-          # bug caught live: this port was missing entirely at first, and the resulting
-          # connection timeout looked exactly like an unrelated AWS networking problem
-          # (a Classic ELB same-VPC hairpin limitation) until testing port 443 vs 80 to
-          # the identical external host proved it was this policy blocking port 80, full
-          # stop, nothing to do with which host was being reached. Also grants ci-agent
-          # pods port 80 they don't use - unavoidable given both templates share this one
-          # policy (see header comment #2), and harmless since nothing in ci-agent's own
-          # steps ever makes a plain-HTTP call.
+          port: 80
     - to:
         - namespaceSelector:
             matchLabels:

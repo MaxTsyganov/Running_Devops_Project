@@ -185,15 +185,28 @@ pipeline {
                 container('deploy') {
                     sh '''
                         set -e
-                        EXTERNAL_HOST=$(kubectl get svc frontend-service -n ${TARGET_NAMESPACE} \
-                            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-                        for i in $(seq 1 12); do
-                            if wget -q -O- --timeout=5 "http://${EXTERNAL_HOST}/" >/dev/null 2>&1; then
-                                echo "Smoke test passed: frontend responded on http://${EXTERNAL_HOST}/"
+                        # In-cluster Service DNS, not the public ELB hostname - deliberately,
+                        # for a NetworkPolicy reason, not a connectivity one: cd-agent's
+                        # egress on port 80 (this smoke test is plain HTTP) can be scoped
+                        # tightly to exactly `app: frontend` Pods in devops-app
+                        # (jenkins/networkpolicies.yaml) only because this target resolves to
+                        # a real Pod IP NetworkPolicy can match against. The public ELB's
+                        # hostname resolves to AWS IPs outside the cluster that no podSelector
+                        # can ever reference, which would force that port-80 rule wide open to
+                        # 0.0.0.0/0 instead - unlike port 443 (GitHub/ECR/KMS/PyPI/smee.io),
+                        # port 80 here has exactly one real destination, so there's no reason
+                        # to accept that broader exposure. Still proves the actual thing a
+                        # smoke test needs to prove: the newly-deployed code is up and serving
+                        # real HTTP responses - Rollout/Verify already confirm the Pods
+                        # themselves are Ready.
+                        INTERNAL_HOST="frontend-service.${TARGET_NAMESPACE}.svc.cluster.local"
+                        for i in $(seq 1 6); do
+                            if wget -q -O- --timeout=5 "http://${INTERNAL_HOST}/" >/dev/null 2>&1; then
+                                echo "Smoke test passed: frontend responded on http://${INTERNAL_HOST}/"
                                 exit 0
                             fi
-                            echo "Waiting for LoadBalancer DNS to propagate... ($i/12)"
-                            sleep 10
+                            echo "Waiting for Service endpoints to propagate... ($i/6)"
+                            sleep 5
                         done
                         echo "Smoke test FAILED: frontend never responded"
                         exit 1
