@@ -208,14 +208,28 @@ pipeline {
                                     # has neither curl nor wget either (checked directly, not assumed).
                                     python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64', '/tmp/cosign')"
                                     chmod +x /tmp/cosign
+                                    # Cosign's AWS SDK usage covers KMS (signing) via ci-build-sa's IRSA
+                                    # identity automatically, but - unlike Kaniko, which has an ECR
+                                    # credential helper built directly into its executor - go-
+                                    # containerregistry (what Cosign uses to read the image) has no
+                                    # built-in ECR support at all without an external Docker credential
+                                    # helper on PATH. Confirmed live: signing failed with a 401 reading
+                                    # the manifest until this token was passed explicitly. boto3, not
+                                    # awscli, to avoid a much heavier runtime install for one API call -
+                                    # same boto3 version already pinned in backend/requirements.txt.
+                                    pip install --quiet --no-cache-dir boto3==1.34.131
+                                    ECR_TOKEN="$(python3 -c "
+import base64, boto3
+token = boto3.client('ecr', region_name='us-east-1').get_authorization_token()['authorizationData'][0]['authorizationToken']
+print(base64.b64decode(token).decode().split(':', 1)[1])
+")"
                                     DIGEST="$(cat digest.txt)"
                                     IMAGE_REF="${ECR_REGISTRY}/devops-${SERVICE}@${DIGEST}"
                                     echo "Signing $IMAGE_REF with ${COSIGN_KMS_KEY}..."
-                                    # Signs by digest, not by mutable tag - and reuses ci-build-sa's
-                                    # same IRSA identity Kaniko already authenticates to ECR with
-                                    # (cosign's AWS SDK picks up the pod's IRSA env vars automatically,
-                                    # no separate credential wiring).
-                                    /tmp/cosign sign --key "${COSIGN_KMS_KEY}" --yes "$IMAGE_REF"
+                                    # Signs by digest, not by mutable tag.
+                                    /tmp/cosign sign --key "${COSIGN_KMS_KEY}" \
+                                        --registry-username AWS --registry-password "$ECR_TOKEN" \
+                                        --yes "$IMAGE_REF"
                                 '''
                             }
                         }
