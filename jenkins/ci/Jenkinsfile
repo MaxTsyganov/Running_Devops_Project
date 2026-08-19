@@ -147,11 +147,18 @@ pipeline {
                                 sh '''
                                     set -e
                                     echo "Building devops-${SERVICE}:${IMAGE_TAG}..."
+                                    # $(pwd)/digest.txt, not /workspace/digest.txt: /workspace is
+                                    # Kaniko's own private scratch directory inside this one
+                                    # container, not the Pod's shared Jenkins workspace volume
+                                    # (mounted at the same $(pwd) in every container) - confirmed
+                                    # live the hard way, when Sign (running in the python
+                                    # container) couldn't find a file Build had "written" to a path
+                                    # that was never actually shared.
                                     /kaniko/executor \
                                         --context "dir://$(pwd)/${SERVICE}" \
                                         --dockerfile "${SERVICE}/Dockerfile" \
                                         --destination "${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}" \
-                                        --digest-file "/workspace/digest.txt" \
+                                        --digest-file "$(pwd)/digest.txt" \
                                         --cache=false
                                 '''
                             }
@@ -201,7 +208,7 @@ pipeline {
                                     # has neither curl nor wget either (checked directly, not assumed).
                                     python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64', '/tmp/cosign')"
                                     chmod +x /tmp/cosign
-                                    DIGEST="$(cat /workspace/digest.txt)"
+                                    DIGEST="$(cat digest.txt)"
                                     IMAGE_REF="${ECR_REGISTRY}/devops-${SERVICE}@${DIGEST}"
                                     echo "Signing $IMAGE_REF with ${COSIGN_KMS_KEY}..."
                                     # Signs by digest, not by mutable tag - and reuses ci-build-sa's
@@ -220,7 +227,7 @@ pipeline {
                                 {
                                     echo "SERVICE=${SERVICE}"
                                     echo "IMAGE_TAG=${IMAGE_TAG}"
-                                    echo "DIGEST=$(cat /workspace/digest.txt)"
+                                    echo "DIGEST=$(cat digest.txt)"
                                     echo "SIGNED=true"
                                 } > "image-metadata-${SERVICE}.txt"
                                 cat "image-metadata-${SERVICE}.txt"
