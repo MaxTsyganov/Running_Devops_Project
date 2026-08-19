@@ -39,10 +39,11 @@ flowchart TB
                         JSvc[["Service: jenkins\n(ClusterIP only)"]]
                         Controller --- PVC
                         Controller --- JSvc
-                        CIAgent["CI agent Pod (ephemeral)\npython + kaniko containers\nSA: ci-build-sa"]
+                        CIAgent["CI agent Pod(s) (ephemeral)\npython + kaniko + trivy containers\nSA: ci-build-sa\none Pod per matrix cell -\nup to 3 running in parallel"]
                         CDAgent["CD agent Pod (ephemeral)\nkubectl+helm container\nSA: cd-deploy-sa"]
                         Controller -.spawns, deletes after build.-> CIAgent
                         Controller -.spawns, deletes after build.-> CDAgent
+                        NetPol{{"NetworkPolicy: default-deny +\nper-workload allow (jenkins/networkpolicies.yaml)"}}
                     end
 
                     subgraph AppNS["namespace: devops-app"]
@@ -68,6 +69,7 @@ flowchart TB
             S3[("S3 bucket")]
             SNS(["SNS topic"])
             SecMgr[("Secrets Manager\nRDS password")]
+            KMS[("KMS\nasymmetric signing key\nalias/devops-app-cosign")]
         end
     end
 
@@ -77,6 +79,7 @@ flowchart TB
     Controller -.triggers on push.-> CIAgent
 
     CIAgent -->|docker push\nvia ci-build-sa IRSA| ECR
+    CIAgent -->|cosign sign --key awskms://\nvia ci-build-sa IRSA| KMS
     CDAgent -->|kubectl / helm\nvia cd-deploy-sa RBAC\nRole+RoleBinding, devops-app only| FE
     CDAgent --> BE
     CDAgent --> WK
@@ -101,6 +104,6 @@ flowchart TB
     classDef app fill:#e8f5e9,stroke:#2e7d32,color:#333
     classDef data fill:#fce4ec,stroke:#ad1457,color:#333
     class Dev,User,GH,Smee,Admin external
-    class ALB,RDS,ECR,S3,SNS,SecMgr aws
+    class ALB,RDS,ECR,S3,SNS,SecMgr,KMS aws
     class Relay,Controller,PVC,JSvc,CIAgent,CDAgent jenkins
     class FE,BE,WK,BESvc,ESO app

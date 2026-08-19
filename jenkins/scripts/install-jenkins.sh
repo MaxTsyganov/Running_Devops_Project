@@ -31,7 +31,7 @@ JENKINS_CHART_VERSION="5.9.54"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-step "[0/7] Pre-flight checks..."
+step "[0/8] Pre-flight checks..."
 for tool in aws kubectl eksctl helm; do
     command -v "$tool" >/dev/null 2>&1 \
         || fail "'$tool' is not installed or not on your PATH. Install it and re-run this script."
@@ -43,13 +43,16 @@ kubectl get namespace devops-app >/dev/null 2>&1 \
 CI_ECR_POLICY_ARN=$(aws iam list-policies --query "Policies[?PolicyName=='DevOps-CI-ECR-Push-Policy'].Arn" --output text --region "$AWS_REGION")
 [ -n "$CI_ECR_POLICY_ARN" ] \
     || fail "IAM policy 'DevOps-CI-ECR-Push-Policy' not found - run 'terraform apply' in terraform/ first (it defines ci-build-sa's ECR push permissions)."
-success "Cluster reachable, devops-app namespace exists, CI ECR policy found."
+CI_COSIGN_POLICY_ARN=$(aws iam list-policies --query "Policies[?PolicyName=='DevOps-CI-Cosign-Sign-Policy'].Arn" --output text --region "$AWS_REGION")
+[ -n "$CI_COSIGN_POLICY_ARN" ] \
+    || fail "IAM policy 'DevOps-CI-Cosign-Sign-Policy' not found - run 'terraform apply' in terraform/ first (it defines ci-build-sa's KMS signing permissions)."
+success "Cluster reachable, devops-app namespace exists, CI ECR and Cosign policies found."
 
-step "[1/7] Creating the jenkins namespace..."
+step "[1/8] Creating the jenkins namespace..."
 kubectl create namespace jenkins --dry-run=client -o yaml | kubectl apply -f -
 success "Namespace 'jenkins' ready (never running Jenkins in 'default', per the assignment's requirement)."
 
-step "[2/7] Applying RBAC (controller + cd-deploy-sa)..."
+step "[2/8] Applying RBAC (controller + cd-deploy-sa)..."
 # controller-rbac.yaml: Role/RoleBinding scoped to the jenkins namespace
 # only - what the controller needs to launch/manage ephemeral agent Pods,
 # nothing about devops-app.
@@ -63,21 +66,22 @@ kubectl apply -f jenkins/rbac/controller-rbac.yaml
 kubectl apply -f jenkins/rbac/cd-deploy-rbac.yaml
 success "controller and cd-deploy-sa RBAC applied."
 
-step "[3/7] Creating ci-build-sa (IRSA, for pushing images to ECR)..."
+step "[3/8] Creating ci-build-sa (IRSA, for pushing to ECR and signing with Cosign)..."
 # Unlike cd-deploy-sa, ci-build-sa does need IRSA: Kaniko pushes images
-# straight to ECR, a real AWS API call, so it needs the AWS IAM role behind
-# it - not just Kubernetes RBAC. It needs no Kubernetes Role at all (it
-# never calls the Kubernetes API - Kaniko builds are pure
-# container-filesystem work), which is why there's no ci-build-rbac.yaml
-# alongside it.
+# straight to ECR and Cosign signs them via AWS KMS, both real AWS API
+# calls, so it needs the AWS IAM role behind it - not just Kubernetes RBAC.
+# It needs no Kubernetes Role at all (it never calls the Kubernetes API -
+# Kaniko/Trivy/Cosign are all pure container-filesystem-and-AWS-API work),
+# which is why there's no ci-build-rbac.yaml alongside it.
 eksctl create iamserviceaccount \
     --cluster "$CLUSTER_NAME" --region "$AWS_REGION" \
     --namespace jenkins --name ci-build-sa \
     --attach-policy-arn "$CI_ECR_POLICY_ARN" \
+    --attach-policy-arn "$CI_COSIGN_POLICY_ARN" \
     --approve --override-existing-serviceaccounts
-success "ci-build-sa can now push to ECR via IRSA - no static registry credentials involved."
+success "ci-build-sa can now push to ECR and sign with Cosign via IRSA - no static credentials involved."
 
-step "[4/7] Installing the EBS CSI driver addon and ebs-gp3 StorageClass..."
+step "[4/8] Installing the EBS CSI driver addon and ebs-gp3 StorageClass..."
 # eksctl's default managed cluster only installs coredns/kube-proxy/vpc-cni -
 # nothing that can satisfy a PersistentVolumeClaim. Assignment 3's app is
 # fully stateless (no PVC anywhere in helm/devops-app), so this was never
@@ -121,7 +125,7 @@ allowVolumeExpansion: true
 EOF
 success "EBS CSI driver ready; ebs-gp3 StorageClass created."
 
-step "[5/7] Installing Jenkins (Helm chart + JCasC from jenkins/values.yaml)..."
+step "[5/8] Installing Jenkins (Helm chart + JCasC from jenkins/values.yaml)..."
 helm repo add jenkinsci https://charts.jenkins.io >/dev/null
 helm repo update jenkinsci >/dev/null
 helm upgrade --install jenkins jenkinsci/jenkins \
@@ -131,11 +135,21 @@ helm upgrade --install jenkins jenkinsci/jenkins \
     --wait --timeout 10m
 success "Jenkins controller deployed and Ready (JCasC applied the Kubernetes cloud, agent templates, and plugin list automatically on boot)."
 
-step "[6/7] Waiting for the controller Pod to fully settle..."
+step "[6/8] Waiting for the controller Pod to fully settle..."
 kubectl rollout status statefulset/jenkins -n jenkins --timeout=300s
 success "Jenkins controller is up."
 
-step "[7/7] Next steps"
+step "[7/8] Applying NetworkPolicies..."
+# Default-deny plus explicit per-workload allows (jenkins/networkpolicies.yaml
+# - see that file's own header for the exact traffic model and its one real
+# limitation: plain NetworkPolicy can't scope internet-bound HTTPS by
+# destination IP, only by port). Applied after the controller/agents are
+# templated so the label selectors below can be checked against real running
+# Pods, not just assumed from chart/plugin docs.
+kubectl apply -f jenkins/networkpolicies.yaml
+success "NetworkPolicies applied to the jenkins namespace."
+
+step "[8/8] Next steps"
 info "Run jenkins/scripts/configure-jenkins.sh next - it wires up the webhook"
 info "relay and prints the admin password + access instructions."
 success "install-jenkins.sh complete."

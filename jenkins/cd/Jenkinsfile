@@ -121,6 +121,15 @@ pipeline {
                             --wait --timeout 10m
                     '''
                 }
+                // Marks "a Helm revision now exists to roll back to" -
+                // read by post{failure{}} below. Guards automated rollback
+                // so it only ever fires once something was actually
+                // deployed - Checkout/Validation/Manifest-Validation
+                // failures touch the cluster not at all, so there is
+                // nothing to roll back from.
+                script {
+                    env.HELM_DEPLOYED = 'true'
+                }
             }
         }
 
@@ -196,16 +205,27 @@ pipeline {
 
     post {
         failure {
-            echo """
-=== DEPLOYMENT FAILED ===
-Rollback to the previous Helm revision:
-  helm rollback devops-app -n ${env.TARGET_NAMESPACE}
-
-Or investigate first:
+            script {
+                if (env.HELM_DEPLOYED == 'true') {
+                    echo "=== DEPLOYMENT FAILED after a new revision was already live - rolling back automatically ==="
+                    container('deploy') {
+                        sh '''
+                            set -e
+                            helm rollback devops-app -n ${TARGET_NAMESPACE} --wait --timeout 5m
+                            echo "=== Rolled back. Pods now: ==="
+                            kubectl get pods -n ${TARGET_NAMESPACE} -o custom-columns='NAME:.metadata.name,IMAGE:.spec.containers[0].image'
+                        '''
+                    }
+                } else {
+                    echo """
+=== DEPLOYMENT FAILED before any Helm revision was applied ===
+Nothing to roll back - devops-app is unchanged. Investigate:
   kubectl get pods -n ${env.TARGET_NAMESPACE}
   kubectl describe pod <pod-name> -n ${env.TARGET_NAMESPACE}
   kubectl get events -n ${env.TARGET_NAMESPACE} --sort-by=.metadata.creationTimestamp
 """
+                }
+            }
         }
         always {
             cleanWs()

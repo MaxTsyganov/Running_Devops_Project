@@ -120,6 +120,35 @@ resource "aws_iam_policy" "ci_ecr_push_policy" {
   })
 }
 
+# Separate policy for Cosign image signing (attached to ci-build-sa via IRSA,
+# alongside the ECR policy above - kept as its own policy since it's a
+# distinct concern, same pattern as every other single-purpose policy in
+# this file). Scoped to exactly the one signing key (kms.tf) and exactly the
+# three actions `cosign sign --key awskms://...` actually calls: get the
+# public key, describe it (cosign checks key spec/usage before signing), and
+# sign. No kms:Decrypt, no kms:CreateKey/kms:ScheduleKeyDeletion - CI only
+# ever signs, it never manages the key itself.
+resource "aws_iam_policy" "ci_cosign_sign_policy" {
+  name        = "DevOps-CI-Cosign-Sign-Policy"
+  description = "Minimal permissions for Jenkins CI to sign images with this project's Cosign KMS key - nothing else."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "CosignSignWithOurKeyOnly"
+        Effect = "Allow"
+        Action = [
+          "kms:GetPublicKey",
+          "kms:DescribeKey",
+          "kms:Sign",
+        ]
+        Resource = [aws_kms_key.cosign_signing.arn]
+      }
+    ]
+  })
+}
+
 # Separate policy for Fluent Bit (setup.sh attaches this to fluent-bit-sa via
 # IRSA, same pattern as above). No logs:CreateLogGroup here on purpose - the
 # log group is created by Terraform (logging.tf), not Fluent Bit, so it

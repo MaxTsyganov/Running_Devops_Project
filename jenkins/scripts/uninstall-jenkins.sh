@@ -37,7 +37,8 @@ kubectl delete pvc --all -n jenkins --timeout=120s 2>/dev/null \
     && success "Jenkins home PVC deleted." \
     || info "No Jenkins PVC found."
 
-step "[3/4] Removing the webhook relay, RBAC, and ci-build-sa..."
+step "[3/4] Removing NetworkPolicies, the webhook relay, RBAC, and ci-build-sa..."
+kubectl delete -f jenkins/networkpolicies.yaml --ignore-not-found=true
 kubectl delete -f jenkins/webhook-relay.yaml --ignore-not-found=true
 kubectl delete -f jenkins/rbac/cd-deploy-rbac.yaml --ignore-not-found=true
 kubectl delete -f jenkins/rbac/controller-rbac.yaml --ignore-not-found=true

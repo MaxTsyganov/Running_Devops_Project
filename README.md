@@ -80,6 +80,7 @@ as narrowly as `cd-deploy-sa` is now.
 | eksctl | `v0.229.0`/`0.230.0` | `setup.sh`, `jenkins/scripts/install-jenkins.sh` |
 | Helm | `v3.21.4` | client-side, any recent 3.x |
 | kubectl / aws-cli | any recent version | client-side |
+| Cosign | `v3.1.3` (static binary, fetched at runtime by the CI agent) | `jenkins/ci/Jenkinsfile` |
 
 Also requires: an EKS cluster and `devops-app` namespace already brought up via this repo's own
 `setup.sh` (Jenkins is layered on top of that infra - see [§12](#12-supporting-infrastructure) - it
@@ -135,10 +136,15 @@ configuration on boot - no manual System Config page was ever touched:
 - **Kubernetes cloud** (`devops-agents`): where ephemeral agent Pods get scheduled from, pointed at
   the in-cluster API server, capped at 10 concurrent agent Pods, `podRetention: never` (agents are
   deleted immediately after their build, not kept around).
-- **Agent templates**: `ci-agent` (three containers - `python` for lint/test, `kaniko` for the
-  image build, `trivy` for the image scan; `serviceAccount: ci-build-sa`) and `cd-agent` (one
-  `deploy` container with `kubectl`+`helm`; `serviceAccount: cd-deploy-sa`). Both templates set
-  explicit `resourceRequest*`/`resourceLimit*` on every container.
+- **Agent templates**: `ci-agent` (three containers - `python` for lint/test/signing, `kaniko` for
+  the image build, `trivy` for the image scan/SBOM; `serviceAccount: ci-build-sa`) and `cd-agent`
+  (one `deploy` container with `kubectl`+`helm`; `serviceAccount: cd-deploy-sa`). Both templates set
+  explicit `resourceRequest*`/`resourceLimit*` on every container. No fourth container for Cosign -
+  its only official image is distroless (no shell), which breaks the idle-container-then-`exec`
+  pattern every other tool here uses, so the CI pipeline fetches the static binary into the existing
+  `python` container at runtime instead (§5). The same `ci-agent` template is also what each
+  parallel matrix cell in §5's Build/Scan/Sign stage requests a fresh Pod from - no separate
+  template needed for that either.
 - **Plugin list**: `kubernetes`, `kubernetes-credentials-provider`, `workflow-aggregator`, `git`,
   `github`, `job-dsl`, `configuration-as-code`, `credentials-binding`, `timestamper`, `ws-cleanup` -
   named only, no individual version pins (an earlier attempt pinning each plugin's version hit a
@@ -160,18 +166,25 @@ first build has already run with it configured).
 | Validation | Confirms every service's `Dockerfile`/`.dockerignore` and the Helm chart exist |
 | Static Analysis / Lint | `pyflakes` against `backend/app.py` and `worker/worker.py` |
 | Tests | `pytest` against `backend/test_app.py`, results published via `junit` |
-| Build | Kaniko builds and pushes all three images in one step (no Docker socket - see [§9](#9-security)) |
-| Scan | Trivy scans each pushed image straight from ECR - HIGH+CRITICAL reported non-blocking (archived as a build artifact), fixable CRITICAL findings fail the build (`--ignore-unfixed`, `.trivyignore` for documented exceptions) |
-| Publish Metadata | Archives `image-metadata.txt` (tag + digest per service) as a build artifact |
+| **Build, Scan, Sign** (`matrix`) | Runs once per service (`frontend`/`backend`/`worker`), each cell on its **own freshly-provisioned `ci-agent` Pod** - genuine parallel builds, not three processes sharing one container. Each cell: **Build** (Kaniko builds and pushes that one image - no Docker socket, see [§9](#9-security)), **Scan + SBOM** (Trivy scans the pushed image - HIGH+CRITICAL reported non-blocking and archived, fixable CRITICAL findings fail that cell's build - and generates a CycloneDX SBOM, archived as `sbom-<service>.json`), **Sign** (Cosign signs the image *by digest* with the project's AWS KMS key), **Publish Metadata** (archives `image-metadata-<service>.txt`: tag, digest, signed status) |
 
-Runs on the `ci-agent` template as `ci-build-sa` (IRSA - pushes to/pulls from ECR via a real AWS IAM
-role, no static registry credential anywhere in the pipeline). Images are tagged with the immutable
-8-char commit SHA - never `latest` - and the three ECR repos are `IMAGE_TAG_MUTABILITY: IMMUTABLE`
-(`terraform/ecr.tf`), so even a mistake can't silently overwrite a tag already in use. A failed
-Test/Lint/Build/Scan stage fails the whole build (Declarative Pipeline's default) and never reaches
-the `success` post-block that triggers CD - so a scan failure still guarantees nothing gets
-deployed, even though (see [§11](#11-trade-offs)) Kaniko's build and push happen as one atomic
-step, before the scan runs.
+Runs on the `ci-agent` template as `ci-build-sa` (IRSA - pushes to/pulls from ECR and signs via
+AWS KMS through a real AWS IAM role, no static credential anywhere in the pipeline). Images are
+tagged with the immutable 8-char commit SHA - never `latest` - and the three ECR repos are
+`IMAGE_TAG_MUTABILITY: IMMUTABLE` (`terraform/ecr.tf`), so even a mistake can't silently overwrite a
+tag already in use. A failed Test/Lint/Build/Scan/Sign cell fails the whole build (Declarative
+Pipeline's default, including matrix cells) and never reaches the `success` post-block that triggers
+CD - so a scan failure still guarantees nothing gets deployed, even though (see
+[§11](#11-trade-offs)) Kaniko's build and push happen as one atomic step, before the scan runs.
+
+**Signing**: `cosign sign --key awskms:///alias/devops-app-cosign --yes <image>@<digest>` - signs
+the immutable digest, not the mutable tag, using an asymmetric KMS key (`terraform/kms.tf`) with no
+private key material anywhere, ever. `ci-build-sa` gets exactly three KMS actions
+(`DevOps-CI-Cosign-Sign-Policy` in `terraform/iam.tf`): `GetPublicKey`, `DescribeKey`, `Sign` -
+nothing that could delete or manage the key itself. Verifying a signature is a one-liner
+(`cosign verify --key awskms:///alias/devops-app-cosign <image>@<digest>`) but isn't wired into a
+CD gate - the assignment's bonus asks for signing, not a verify-or-block deploy step, and adding one
+would be scope beyond what was asked (see [§11](#11-trade-offs)).
 
 ---
 
@@ -202,15 +215,15 @@ CI - the CI build that produced that tag is one click away (`ci-application`'s o
 keyed by the same commit SHA that *is* the image tag). `kubectl get pods -n devops-app -o
 jsonpath='{..image}'` independently confirms the deployed tag matches.
 
-**Rollback**: documented and tested via `helm rollback devops-app -n devops-app` (reverts to the
-previous Helm release revision - a real command against a real Helm release history, not a
-placeholder). The `post { failure { ... } }` block in `cd-Jenkinsfile` prints this exact command
-plus `kubectl get events`/`describe pod` pointers whenever Rollout, Verify, or Smoke Test fails, so
-the person looking at a failed build's console log has the fix in front of them immediately. Full
-automated rollback-on-smoke-test-failure is listed as a bonus in the assignment brief and wasn't
-implemented - a failed smoke test fails the build and leaves the previous, working revision live
-underneath the (also live) failed one, rather than making an unattended decision to roll back
-traffic on its own.
+**Automated rollback**: `post { failure { ... } }` in `cd-Jenkinsfile` runs
+`helm rollback devops-app -n devops-app --wait --timeout 5m` for real, automatically, whenever
+Deploy has already applied a new Helm revision and something afterward goes wrong (Deploy itself
+timing out, or a subsequent Rollout/Verify/Smoke Test failure) - guarded by an `env.HELM_DEPLOYED`
+flag set right after `helm upgrade --install` succeeds, so an earlier failure (bad `IMAGE_TAG`, a
+`helm lint` error) that never touched the cluster correctly does *not* trigger a rollback of a
+revision that was never replaced. If the rollback itself fails, the build's console log still shows
+exactly where it broke; there was never a scenario tested where the previous revision was itself
+unhealthy, since CI's own scan gate keeps that from happening in the first place.
 
 ---
 
@@ -296,11 +309,16 @@ someone else's image."
 **Network**: Jenkins UI is `ClusterIP` only - not exposed publicly, reachable only via
 `kubectl port-forward svc/jenkins -n jenkins 8080:8080`. Inbound webhook traffic never reaches
 Jenkins directly (see [§1](#1-architecture-and-environment-choice)'s relay explanation).
-`NetworkPolicy` objects specifically for the `jenkins` namespace aren't implemented - the app side
-already has them (see [§12](#12-supporting-infrastructure)), and Jenkins' own traffic pattern
-(controller ↔ ephemeral agents ↔ Kubernetes/ECR/GitHub APIs) is broad enough by nature that a
-meaningfully restrictive policy would need per-agent-template rules this project didn't get to -
-documented here as a known gap rather than left silently unaddressed.
+`NetworkPolicy` objects for the `jenkins` namespace (`jenkins/networkpolicies.yaml`, applied by
+`install-jenkins.sh`) start from default-deny and add back exactly what each workload needs:
+controller accepts ingress only from agent Pods (JNLP, port `50000`) and `webhook-relay` (port
+`8080`), and - since the controller itself never calls GitHub/ECR/KMS, only its ephemeral agents do
+- gets no internet egress at all, only the in-cluster Kubernetes API and DNS. `webhook-relay` and
+both agent templates accept no ingress from anywhere. The one honest limitation: plain L3/L4
+NetworkPolicy can't scope internet-bound HTTPS (GitHub, ECR, KMS, PyPI, smee.io - this cluster has
+no VPC endpoints for any of them, see [§12](#12-supporting-infrastructure)) by destination IP, only
+by port, so agent egress on `443` is necessarily broad. What the policy still meaningfully enforces:
+zero lateral movement between pods in the namespace, and zero unsolicited ingress to anything.
 
 **Endpoints this setup actually talks to**: GitHub (`github.com`, checkout + webhook delivery via
 smee.io), ECR (`*.dkr.ecr.us-east-1.amazonaws.com`, image push/pull), the in-cluster Kubernetes API
@@ -326,7 +344,9 @@ cluster disappears - see `teardown.sh`'s own step comments for why order matters
 |---|---|---|
 | Jenkins in the same cluster as the app | No second cluster's cost, no cross-cluster credential for CD to manage | Less blast-radius isolation than a fully separate Jenkins cluster |
 | Job creation via REST API script, not Job DSL seed job or Multibranch Pipeline | A JCasC-driven seed job crashed the whole controller boot on a syntax slip - a bug here now only fails one script | An extra manual step (`create-jobs.sh`) instead of jobs appearing automatically on controller boot |
-| No automated rollback on smoke-test failure | Rolling back traffic unattended is itself a risky automated decision; a failed build with a clear rollback command in the log is safer for a human to review first | Slightly slower recovery than full automation (a bonus item, not required) |
+| Automated rollback only after a Helm revision actually exists | An earlier-stage failure (bad `IMAGE_TAG`, a lint error) never touched the cluster - rolling back would target a revision nothing was wrong with | An `env.HELM_DEPLOYED` flag to track across `post{}`, instead of an unconditional rollback-on-any-failure |
+| Cosign signs with an AWS KMS key (`awskms://`), not keyless/Sigstore | Matches this project's IRSA-everywhere pattern (`ci-build-sa` just gets one more narrow IAM action) instead of adding a new external dependency (the public Sigstore Fulcio/Rekor infrastructure) this project doesn't otherwise talk to | Verification needs the same AWS account/key reference, not a portable, identity-based verification anyone can run against a public transparency log |
+| SBOM/sign/scan run per-service in a `matrix`, each cell its own Pod | Real parallelism (separate CPU/memory per service) instead of three processes contending inside one shared container | Up to 3 extra `ci-agent` Pods scheduled at once (on top of the pipeline's own top-level Pod) - more momentary cluster resource pressure during that stage |
 | Custom webhook relay instead of the official `smee-client` npm package | `smee-client` (all versions checked) has a real upstream bug reusing an incoming header value on its own outgoing request - reproduced only with real GitHub traffic, not synthetic test POSTs | ~100 lines of relay code to maintain instead of a dependency |
 | `webhook_content_type: json` via a raw API request, not `gh api`'s `-f config[key]=value` flags | `gh api -f config[content_type]=json` silently failed to nest into GitHub's webhook config - GitHub defaulted to form-encoding instead, which broke the Jenkins GitHub plugin's payload parser (`GHEventPayload$Push.getRepository()` returned null) until this was caught via a captured raw payload and the hook was recreated with an explicit JSON body | One more thing to get right if this hook is ever recreated by hand |
 | Trivy scans the image *after* Kaniko has already pushed it, not before | Kaniko builds and pushes as one atomic `--destination` step - there's no local, daemon-accessible image to scan first without a separate build-to-tarball-then-push flow | A build that fails the Scan stage still leaves that (immutable-tagged, never referenced by any deploy) image sitting in ECR; the actual safety property - nothing gets deployed - still holds, since CD only ever triggers from CI's `success` post-block |

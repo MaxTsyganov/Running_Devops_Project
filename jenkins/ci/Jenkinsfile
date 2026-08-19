@@ -1,19 +1,20 @@
-// CI pipeline: build, test, scan, push. Never deploys - that's
+// CI pipeline: build, test, scan, sign, push. Never deploys - that's
 // jenkins/cd/Jenkinsfile's job (see the CI/CD separation table in the
-// assignment brief). Runs on the "ci-agent" Kubernetes pod template
-// (jenkins/values.yaml), with two containers: "python" for lint/test,
-// "kaniko" for the image build. Agent pods run separate from the
-// controller and never mount the node's Docker socket - Kaniko builds
-// OCI images without a daemon.
+// assignment brief). Checkout/Lint/Test run on the "ci-agent" Kubernetes pod
+// template (jenkins/values.yaml). Build/Scan/Sign run per service inside a
+// matrix, each cell on its own freshly-provisioned ci-agent pod - genuine
+// parallelism (separate CPU/memory per service), not three processes
+// contending inside one shared container. Agent pods never mount the node's
+// Docker socket - Kaniko builds OCI images without a daemon.
 pipeline {
     agent {
         kubernetes {
             // inheritFrom, not label: "label" alone creates a brand-new
             // inline template (jnlp only, no containers) that just happens
             // to share this string - it does not pull in ci-agent's
-            // python/kaniko containers from the Kubernetes cloud config.
-            // inheritFrom references the actual pre-defined template
-            // (jenkins/values.yaml).
+            // python/kaniko/trivy containers from the Kubernetes cloud
+            // config. inheritFrom references the actual pre-defined
+            // template (jenkins/values.yaml).
             // cloud is explicit too: two clouds are registered (the chart
             // auto-injects an empty one named "kubernetes"), and without
             // naming which one to search, ci-agent wasn't resolving.
@@ -28,6 +29,20 @@ pipeline {
         // Kaniko's ECR credential helper picks it up, with no explicit
         // credential ever appearing in this file.
         ECR_REGISTRY = '957905603240.dkr.ecr.us-east-1.amazonaws.com'
+        // Pinned release, not "latest" - same reasoning as every other
+        // version pin in this project. Cosign has no official container
+        // image with a shell (distroless), which breaks this project's
+        // idle-container-then-exec agent pattern, so the static binary is
+        // fetched at runtime into the existing "python" container instead -
+        // the same approach already used for pyflakes/pytest, no fourth
+        // agent container needed.
+        COSIGN_VERSION = 'v3.1.3'
+        // awskms:///alias/... - three slashes: awskms:// plus an empty
+        // endpoint (default AWS endpoint) plus the /alias/... path. Signs
+        // with an asymmetric KMS key (terraform/kms.tf) - no private key
+        // material exists anywhere, matching this project's IRSA-everywhere,
+        // zero-static-credentials pattern.
+        COSIGN_KMS_KEY = 'awskms:///alias/devops-app-cosign'
     }
 
     options {
@@ -98,74 +113,122 @@ pipeline {
             }
         }
 
-        stage('Build') {
-            steps {
-                container('kaniko') {
-                    sh '''
-                        set -e
-                        for svc in frontend backend worker; do
-                            echo "Building devops-$svc:${IMAGE_TAG}..."
-                            /kaniko/executor \
-                                --context "dir://$(pwd)/$svc" \
-                                --dockerfile "$svc/Dockerfile" \
-                                --destination "${ECR_REGISTRY}/devops-$svc:${IMAGE_TAG}" \
-                                --digest-file "/workspace/$svc-digest.txt" \
-                                --cache=false
-                        done
-                    '''
+        // One matrix cell per service, each on its own ci-agent pod (the
+        // "agent" below, inside the matrix, overrides the pipeline's
+        // top-level agent for just this stage) - true parallel builds, not
+        // simulated. Each cell is fully self-contained (its own checkout,
+        // its own workspace) since separate pods never share a filesystem;
+        // IMAGE_TAG still comes from the single Checkout stage above so all
+        // three services land on the exact same immutable tag.
+        stage('Build, Scan, Sign') {
+            matrix {
+                axes {
+                    axis {
+                        name 'SERVICE'
+                        values 'frontend', 'backend', 'worker'
+                    }
                 }
-            }
-        }
+                agent {
+                    kubernetes {
+                        cloud 'devops-agents'
+                        inheritFrom 'ci-agent'
+                    }
+                }
+                stages {
+                    stage('Checkout') {
+                        steps {
+                            checkout scm
+                        }
+                    }
 
-        stage('Scan') {
-            steps {
-                container('trivy') {
-                    sh '''
-                        set -e
-                        for svc in frontend backend worker; do
-                            IMAGE="${ECR_REGISTRY}/devops-$svc:${IMAGE_TAG}"
-                            echo "=== Scanning $IMAGE ==="
-                            # Full report (HIGH+CRITICAL, including unfixed) - non-blocking,
-                            # kept purely for visibility, archived as a build artifact.
-                            # Same two-scan pattern as .github/workflows/ci.yml.
-                            trivy image --severity HIGH,CRITICAL --exit-code 0 \
-                                --format json --output "trivy-$svc.json" \
-                                --ignorefile .trivyignore "$IMAGE"
-                            trivy image --severity HIGH,CRITICAL --exit-code 0 \
-                                --format table --ignorefile .trivyignore "$IMAGE"
-                        done
-                    '''
-                    archiveArtifacts artifacts: 'trivy-*.json', fingerprint: true
-                    sh '''
-                        set -e
-                        # The actual gate: fails the build on fixable CRITICAL findings.
-                        # --ignore-unfixed excludes CVEs with no available patch (nothing
-                        # actionable from this project alone); accepted-risk exceptions go
-                        # in .trivyignore with a documented reason, never a blanket override.
-                        for svc in frontend backend worker; do
-                            IMAGE="${ECR_REGISTRY}/devops-$svc:${IMAGE_TAG}"
-                            trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed \
-                                --ignorefile .trivyignore "$IMAGE"
-                        done
-                    '''
-                }
-            }
-        }
+                    stage('Build') {
+                        steps {
+                            container('kaniko') {
+                                sh '''
+                                    set -e
+                                    echo "Building devops-${SERVICE}:${IMAGE_TAG}..."
+                                    /kaniko/executor \
+                                        --context "dir://$(pwd)/${SERVICE}" \
+                                        --dockerfile "${SERVICE}/Dockerfile" \
+                                        --destination "${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}" \
+                                        --digest-file "/workspace/digest.txt" \
+                                        --cache=false
+                                '''
+                            }
+                        }
+                    }
 
-        stage('Publish Metadata') {
-            steps {
-                container('kaniko') {
-                    sh '''
-                        {
-                            echo "IMAGE_TAG=${IMAGE_TAG}"
-                            for svc in frontend backend worker; do
-                                echo "${svc}_DIGEST=$(cat /workspace/$svc-digest.txt)"
-                            done
-                        } > image-metadata.txt
-                        cat image-metadata.txt
-                    '''
+                    stage('Scan + SBOM') {
+                        steps {
+                            container('trivy') {
+                                sh '''
+                                    set -e
+                                    IMAGE="${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}"
+                                    echo "=== Scanning $IMAGE ==="
+                                    # Full report (HIGH+CRITICAL, including unfixed) - non-blocking,
+                                    # kept purely for visibility, archived as a build artifact.
+                                    # Same two-scan pattern as .github/workflows/ci.yml.
+                                    trivy image --severity HIGH,CRITICAL --exit-code 0 \
+                                        --format json --output "trivy-${SERVICE}.json" \
+                                        --ignorefile .trivyignore "$IMAGE"
+                                    trivy image --severity HIGH,CRITICAL --exit-code 0 \
+                                        --format table --ignorefile .trivyignore "$IMAGE"
+                                    echo "=== SBOM for $IMAGE ==="
+                                    trivy image --format cyclonedx --output "sbom-${SERVICE}.json" "$IMAGE"
+                                '''
+                                archiveArtifacts artifacts: "trivy-${SERVICE}.json, sbom-${SERVICE}.json", fingerprint: true
+                                sh '''
+                                    set -e
+                                    # The actual gate: fails the build on fixable CRITICAL findings.
+                                    # --ignore-unfixed excludes CVEs with no available patch (nothing
+                                    # actionable from this project alone); accepted-risk exceptions go
+                                    # in .trivyignore with a documented reason, never a blanket override.
+                                    IMAGE="${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}"
+                                    trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed \
+                                        --ignorefile .trivyignore "$IMAGE"
+                                '''
+                            }
+                        }
+                    }
+
+                    stage('Sign') {
+                        steps {
+                            container('python') {
+                                sh '''
+                                    set -e
+                                    # No official Cosign image has a shell (see COSIGN_VERSION comment
+                                    # above) - fetch the static binary with urllib since this container
+                                    # has neither curl nor wget either (checked directly, not assumed).
+                                    python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64', '/tmp/cosign')"
+                                    chmod +x /tmp/cosign
+                                    DIGEST="$(cat /workspace/digest.txt)"
+                                    IMAGE_REF="${ECR_REGISTRY}/devops-${SERVICE}@${DIGEST}"
+                                    echo "Signing $IMAGE_REF with ${COSIGN_KMS_KEY}..."
+                                    # Signs by digest, not by mutable tag - and reuses ci-build-sa's
+                                    # same IRSA identity Kaniko already authenticates to ECR with
+                                    # (cosign's AWS SDK picks up the pod's IRSA env vars automatically,
+                                    # no separate credential wiring).
+                                    /tmp/cosign sign --key "${COSIGN_KMS_KEY}" --yes "$IMAGE_REF"
+                                '''
+                            }
+                        }
+                    }
+
+                    stage('Publish Metadata') {
+                        steps {
+                            sh '''
+                                {
+                                    echo "SERVICE=${SERVICE}"
+                                    echo "IMAGE_TAG=${IMAGE_TAG}"
+                                    echo "DIGEST=$(cat /workspace/digest.txt)"
+                                    echo "SIGNED=true"
+                                } > "image-metadata-${SERVICE}.txt"
+                                cat "image-metadata-${SERVICE}.txt"
+                            '''
+                            archiveArtifacts artifacts: "image-metadata-${SERVICE}.txt", fingerprint: true
+                        }
+                    }
                 }
-                archiveArtifacts artifacts: 'image-metadata.txt', fingerprint: true
             }
         }
     }

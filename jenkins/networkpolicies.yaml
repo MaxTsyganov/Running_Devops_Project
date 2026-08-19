@@ -1,0 +1,215 @@
+# NetworkPolicy objects for the jenkins namespace. Applied by
+# install-jenkins.sh after the chart is up (labels below have to match what
+# the controller/webhook-relay/agent pods actually run with).
+#
+# Enforcement prerequisite: VPC CNI NetworkPolicy support is off by default
+# on EKS - setup.sh (Assignment 3, step [4/11]) already turns it on
+# cluster-wide via `aws eks update-addon --addon-name vpc-cni
+# --configuration-values '{"enableNetworkPolicy":"true"}'`, the same
+# mechanism the app's own policies (helm/devops-app/templates/
+# networkpolicies.yaml) already depend on. Nothing extra needed here.
+#
+# Honest limitation: this cluster's nodes reach the internet through a plain
+# NAT Gateway (terraform/network.tf) - no VPC endpoints for ECR/KMS/S3.
+# GitHub, ECR, AWS KMS, PyPI, and smee.io are all public internet endpoints
+# with wide, non-static IP ranges, and plain Kubernetes NetworkPolicy is
+# L3/L4 only (no FQDN-based egress filtering - that needs a different CNI
+# feature, e.g. Cilium FQDN policies, out of scope here). So HTTPS egress to
+# those destinations can only be scoped by port (443), not by destination
+# IP. What these policies DO meaningfully enforce: default-deny as the
+# baseline, zero lateral movement between pods inside the namespace (an
+# agent pod can't reach another agent pod, or anything in devops-app), no
+# ingress to any agent/relay pod from anywhere, and the controller itself -
+# which never makes an external call, only its ephemeral agents do - gets no
+# internet egress at all.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jenkins-default-deny-all
+  namespace: jenkins
+spec:
+  podSelector: {} # every pod in this namespace
+  policyTypes:
+    - Ingress
+    - Egress
+  # No rules under either key = deny all by default. Everything below is an
+  # additive allow on top of this baseline (NetworkPolicy semantics: a pod
+  # governed by multiple policies gets the union of their rules).
+
+---
+# Controller: only ephemeral agent pods (JNLP) and webhook-relay (the
+# internal /github-webhook/ POST) ever need to reach it, and it only ever
+# needs to reach the Kubernetes API (to launch/watch/delete agent Pods) -
+# never GitHub/ECR/KMS/PyPI, those are all agent-side work.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jenkins-controller-policy
+  namespace: jenkins
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: jenkins-controller
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              jenkins/label: ci-agent
+        - podSelector:
+            matchLabels:
+              jenkins/label: cd-agent
+        - podSelector:
+            matchLabels:
+              app: webhook-relay
+      ports:
+        - protocol: TCP
+          port: 50000 # JNLP agent tunnel (jenkinsTunnel in values.yaml)
+        - protocol: TCP
+          port: 8080 # agent HTTP handshake + webhook-relay's POST target
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/16 # this project's VPC (terraform/network.tf) - covers the EKS control plane's in-VPC endpoints
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# webhook-relay: holds an outbound SSE connection to smee.io and forwards to
+# the controller's ClusterIP - see jenkins/webhook-relay.yaml's own header
+# for why this exists. Nothing ever calls into it, so ingress is denied
+# entirely by the base policy above and never re-opened here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: webhook-relay-policy
+  namespace: jenkins
+spec:
+  podSelector:
+    matchLabels:
+      app: webhook-relay
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: jenkins-controller
+      ports:
+        - protocol: TCP
+          port: 8080
+    - ports:
+        - protocol: TCP
+          port: 443 # smee.io - public endpoint, can't be scoped by IP (see header)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# ci-agent: checks out from GitHub, builds with Kaniko and pushes to ECR,
+# scans + SBOMs with Trivy, signs with Cosign via KMS - all outbound HTTPS
+# to public AWS/GitHub/PyPI endpoints (see header re: port-only scoping),
+# plus the JNLP callback to the controller. Accepts no ingress from anywhere
+# (nothing ever initiates a connection to a build agent).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ci-agent-policy
+  namespace: jenkins
+spec:
+  podSelector:
+    matchLabels:
+      jenkins/label: ci-agent
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: jenkins-controller
+      ports:
+        - protocol: TCP
+          port: 50000
+        - protocol: TCP
+          port: 8080
+    - ports:
+        - protocol: TCP
+          port: 443 # GitHub, ECR, AWS KMS, PyPI, Cosign/Trivy-DB downloads
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# cd-agent: checks out the Helm chart from GitHub and calls the in-cluster
+# Kubernetes API (kubectl/helm) to deploy into devops-app - never touches
+# ECR, KMS, or PyPI (CD never rebuilds anything). Same JNLP callback and
+# ingress posture as ci-agent.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cd-agent-policy
+  namespace: jenkins
+spec:
+  podSelector:
+    matchLabels:
+      jenkins/label: cd-agent
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: jenkins-controller
+      ports:
+        - protocol: TCP
+          port: 50000
+        - protocol: TCP
+          port: 8080
+    - ports:
+        - protocol: TCP
+          port: 443 # GitHub (checkout) and the in-VPC Kubernetes API
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

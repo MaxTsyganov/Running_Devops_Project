@@ -29,12 +29,19 @@ sequenceDiagram
             CI--xCtrl: build marked failed
             note over Ctrl: no image pushed, CD never triggered
         else tests pass
-            CI->>CI: Build image per service (Kaniko, no Docker socket)
-            CI->>CI: Tag with immutable commit SHA (never latest)
-            CI->>ECR: Push image, per service
-            ECR-->>CI: digest
-            CI->>CI: Publish metadata (tag + digest, archived as build artifact)
-            CI->>Ctrl: build succeeded
+            par matrix cell: frontend
+                CI->>CI: Build (Kaniko, own Pod, no Docker socket)
+                CI->>ECR: Push, tagged with immutable commit SHA
+                ECR-->>CI: digest
+                CI->>CI: Scan (Trivy, blocks on fixable CRITICAL) + SBOM (CycloneDX)
+                CI->>CI: Sign digest (Cosign, AWS KMS key)
+                CI->>CI: Publish metadata (tag + digest, archived)
+            and matrix cell: backend
+                CI->>CI: same 5 steps, own Pod
+            and matrix cell: worker
+                CI->>CI: same 5 steps, own Pod
+            end
+            CI->>Ctrl: build succeeded (any cell failing fails the whole build)
             Ctrl->>CD: trigger cd-application(IMAGE_TAG=<sha>)
         end
     end
@@ -50,13 +57,13 @@ sequenceDiagram
         alt rollout fails or times out
             K8s--xCD: rollout incomplete
             CD--xCtrl: build marked failed, logs/events surfaced
-            note over Dev: documented rollback:<br/>helm rollback devops-app -n devops-app
+            CD->>K8s: automated rollback: helm rollback devops-app (only if a revision was already live)
         else rollout succeeds
             CD->>K8s: Verify - every Pod running the expected tag
             CD->>User: Smoke test - real HTTP request to the LoadBalancer
             alt smoke test fails
                 CD--xCtrl: build marked failed
-                note over Dev: documented rollback:<br/>helm rollback devops-app -n devops-app
+                CD->>K8s: automated rollback: helm rollback devops-app (only if a revision was already live)
             else smoke test passes
                 CD->>Ctrl: build succeeded
             end
