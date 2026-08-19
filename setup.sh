@@ -362,7 +362,17 @@ helm repo update eks-charts >/dev/null
 # serviceAccount.create=false: fluent-bit-sa already exists (created above,
 # with the IRSA role annotation) - letting the chart create its own would
 # mean a plain ServiceAccount with no AWS permissions at all.
-helm upgrade --install aws-for-fluent-bit eks-charts/aws-for-fluent-bit --version 0.2.0 \
+# MSYS_NO_PATHCONV=1: on Windows Git Bash, MSYS rewrites any argument that
+# looks like a Unix absolute path - and $CLOUDWATCH_LOG_GROUP (/devops-app/
+# containers) is exactly that - into a literal Windows path before helm ever
+# sees it. Confirmed live: Fluent Bit was stuck in CrashLoopBackOff trying
+# to CreateLogStream in a log group literally named "C:/Program Files/Git/
+# devops-app/containers", not the real one Terraform created - a silent
+# failure nothing in this script's own checks caught, since `--wait` only
+# confirms the Deployment rolled out, not that the container stayed healthy
+# afterward. No-op everywhere else (Linux/Mac), same as the other scripts
+# that already needed this.
+MSYS_NO_PATHCONV=1 helm upgrade --install aws-for-fluent-bit eks-charts/aws-for-fluent-bit --version 0.2.0 \
     --namespace amazon-cloudwatch \
     --set serviceAccount.create=false \
     --set serviceAccount.name=fluent-bit-sa \
