@@ -1,0 +1,23 @@
+=== 3 separate agent Pods provisioned for the same build, one per matrix cell (kubectl get pods, captured mid-build) ===
+ci-application-8-g25j1-c6tpg-0p1ck   4/4   Running   (matrix cell)
+ci-application-8-kvs39-0jzz4-0gz9m   4/4   Running   (matrix cell)
+ci-application-8-lq1bp-3dths-gvc0s   4/4   Running   (top-level: checkout/lint/test)
+ci-application-8-nkg0m-l3zmj-gbg42   4/4   Running   (matrix cell)
+
+=== Matrix branches starting (all 3 launch together, confirmed by interleaved timestamps below) ===
+290:[Pipeline] { (Branch: Matrix - SERVICE = 'frontend')
+291:[Pipeline] { (Branch: Matrix - SERVICE = 'backend')
+292:[Pipeline] { (Branch: Matrix - SERVICE = 'worker')
+
+=== Real interleaving proof: Kaniko build-start lines from all 3 branches, in actual log order ===
+[2026-08-19T17:14:57.802Z] + echo 'Building devops-frontend:ae251bfc...'
+[2026-08-19T17:14:57.802Z] Building devops-frontend:ae251bfc...
+[2026-08-19T17:14:58.785Z] + echo 'Building devops-backend:ae251bfc...'
+[2026-08-19T17:14:58.785Z] Building devops-backend:ae251bfc...
+[2026-08-19T17:15:57.965Z] + echo 'Building devops-worker:ae251bfc...'
+[2026-08-19T17:15:57.965Z] Building devops-worker:ae251bfc...
+
+=== All 3 branches completing (Publish Metadata) ===
+[2026-08-19T17:15:43.866Z] SIGNED=true
+[2026-08-19T17:16:04.453Z] SIGNED=true
+[2026-08-19T17:17:01.777Z] SIGNED=true

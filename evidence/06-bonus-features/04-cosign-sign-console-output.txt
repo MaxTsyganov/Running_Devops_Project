@@ -1,0 +1,30 @@
+=== Sign stage console output for each service (from ci-application build #8) ===
+[2026-08-19T17:15:41.216Z] + DIGEST=sha256:058c55b8bafa3b8a2115407fa5590584191cbfb9f500174a2cc0dec13c756b8c
+[2026-08-19T17:15:41.216Z] + IMAGE_REF=957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend@sha256:058c55b8bafa3b8a2115407fa5590584191cbfb9f500174a2cc0dec13c756b8c
+[2026-08-19T17:15:41.216Z] + echo Signing 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend@sha256:058c55b8bafa3b8a2115407fa5590584191cbfb9f500174a2cc0dec13c756b8c with awskms:///alias/devops-app-cosign...
+[2026-08-19T17:15:41.216Z] Signing 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend@sha256:058c55b8bafa3b8a2115407fa5590584191cbfb9f500174a2cc0dec13c756b8c with awskms:///alias/devops-app-cosign...
+[2026-08-19T17:15:41.216Z] + /tmp/cosign sign --key awskms:///alias/devops-app-cosign --registry-username AWS --registry-password [REDACTED - short-lived ECR auth token] --yes 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend@sha256:058c55b8bafa3b8a2115407fa5590584191cbfb9f500174a2cc0dec13c756b8c
+[2026-08-19T17:15:41.820Z] Signing artifact...
+[2026-08-19T17:15:42.388Z] Pushing signature to: 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend
+[Pipeline] }
+[Pipeline] // container
+--
+[2026-08-19T17:16:01.120Z] + DIGEST=sha256:b39f797fcb0234ac594bb0b274efaf5dd6478d7a4207e2e3d2625491c098cae3
+[2026-08-19T17:16:01.120Z] + IMAGE_REF=957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:b39f797fcb0234ac594bb0b274efaf5dd6478d7a4207e2e3d2625491c098cae3
+[2026-08-19T17:16:01.120Z] + echo Signing 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:b39f797fcb0234ac594bb0b274efaf5dd6478d7a4207e2e3d2625491c098cae3 with awskms:///alias/devops-app-cosign...
+[2026-08-19T17:16:01.120Z] Signing 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:b39f797fcb0234ac594bb0b274efaf5dd6478d7a4207e2e3d2625491c098cae3 with awskms:///alias/devops-app-cosign...
+[2026-08-19T17:16:01.121Z] + /tmp/cosign sign --key awskms:///alias/devops-app-cosign --registry-username AWS --registry-password [REDACTED - short-lived ECR auth token] --yes 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend@sha256:b39f797fcb0234ac594bb0b274efaf5dd6478d7a4207e2e3d2625491c098cae3
+[2026-08-19T17:16:01.910Z] Signing artifact...
+[2026-08-19T17:16:02.712Z] [36mINFO[0m[0004] Cmd: /bin/sh                                 
+[2026-08-19T17:16:02.712Z] [36mINFO[0m[0004] Args: [-c pip install --no-cache-dir --force-reinstall -r requirements.txt] 
+[2026-08-19T17:16:02.712Z] [36mINFO[0m[0004] Running: [/bin/sh -c pip install --no-cache-dir --force-reinstall -r requirements.txt] 
+--
+[2026-08-19T17:16:57.358Z] + DIGEST=sha256:17f22f74d236a33bab061210da6b47e1996e8374a61a3c30de6748960323ffaf
+[2026-08-19T17:16:57.359Z] + IMAGE_REF=957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker@sha256:17f22f74d236a33bab061210da6b47e1996e8374a61a3c30de6748960323ffaf
+[2026-08-19T17:16:57.359Z] + echo Signing 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker@sha256:17f22f74d236a33bab061210da6b47e1996e8374a61a3c30de6748960323ffaf with awskms:///alias/devops-app-cosign...
+[2026-08-19T17:16:57.359Z] Signing 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker@sha256:17f22f74d236a33bab061210da6b47e1996e8374a61a3c30de6748960323ffaf with awskms:///alias/devops-app-cosign...
+[2026-08-19T17:16:57.359Z] + /tmp/cosign sign --key awskms:///alias/devops-app-cosign --registry-username AWS --registry-password [REDACTED - short-lived ECR auth token] --yes 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker@sha256:17f22f74d236a33bab061210da6b47e1996e8374a61a3c30de6748960323ffaf
+[2026-08-19T17:16:57.936Z] Signing artifact...
+[2026-08-19T17:17:00.494Z] Pushing signature to: 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker
+[Pipeline] }
+[Pipeline] // container

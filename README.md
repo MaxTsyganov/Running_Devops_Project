@@ -321,9 +321,18 @@ cluster's actual Service CIDR - blocked the controller's own Pod-watch connectio
 `webhook-relay` and both agent templates accept no ingress from anywhere. The one honest limitation:
 plain L3/L4 NetworkPolicy can't scope internet-bound HTTPS (GitHub, ECR, KMS, PyPI, smee.io - this
 cluster has no VPC endpoints for any of them, see [§12](#12-supporting-infrastructure)) by
-destination IP, only by port, so that egress is necessarily broad wherever it's needed. What the
-policy still meaningfully enforces: zero lateral movement between pods in the namespace, and zero
-unsolicited ingress to anything.
+destination IP, only by port, so port `443` egress is necessarily broad. Port `80` isn't: it has
+exactly one real destination in this whole pipeline (`cd-agent`'s Smoke Test against
+`frontend-service`), so it's scoped to this cluster's Service CIDR rather than left open the same
+way - a `podSelector` scoped to just the frontend Pods was tried first and looked right in the
+applied `NetworkPolicy`, but was silently never enforced, because AWS VPC CNI's NetworkPolicy agent
+matches egress against the pre-DNAT Service ClusterIP, not the Pod IP a `podSelector` resolves to;
+confirmed live by curling a frontend Pod's real IP directly (got a real "connection refused" - its
+container listens on `8080`/`8443`, the Service does that mapping) versus the Service's ClusterIP
+(timed out, silently, until the CIDR-based rule replaced it). What the policy still meaningfully
+enforces: zero lateral movement between pods in the namespace, and zero unsolicited ingress to
+anything. Real evidence for all of this - including the live allow/deny proof and the debugging
+trail above - is in `evidence/06-bonus-features/`.
 
 **Endpoints this setup actually talks to**: GitHub (`github.com`, checkout + webhook delivery via
 smee.io), ECR (`*.dkr.ecr.us-east-1.amazonaws.com`, image push/pull), the in-cluster Kubernetes API
@@ -562,7 +571,9 @@ jenkins/                   Jenkins install/config scripts, CI+CD Jenkinsfiles, J
 evidence/                  Captured proof for every item on the assignment's evidence checklist:
                            Jenkins-on-Kubernetes state, CI pipeline (including a deliberately-failed
                            run that never triggers CD), CD pipeline (rollout/traceability/smoke
-                           test/maxSurge:0 live capture), rollback, and the Jenkins-image scans
+                           test/maxSurge:0 live capture), rollback, the Jenkins-image scans, and
+                           (06-bonus-features/) the four bonus items - parallel matrix builds, SBOM,
+                           Cosign signing, automated rollback, and NetworkPolicies
 ```
 
 `.github/workflows/ci.yml` runs `terraform fmt`/`validate`, `helm lint` plus a full `helm template`

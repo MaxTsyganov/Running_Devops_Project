@@ -1,0 +1,28 @@
+=== POSITIVE: allowed egress works (agent pod -> AWS KMS/ECR domain style, port 443) ===
+pod/enforcement-test created
+pod/enforcement-test condition met
+--- allowed: agent pod egress to github.com:443 ---
+wget: note: TLS certificate validation not implemented
+  HTTP/1.1 200 OK
+  Date: Wed, 19 Aug 2026 17:13:28 GMT
+  Content-Type: text/html; charset=utf-8
+  content-language: en-US
+
+--- allowed: agent pod egress to frontend-service (in-cluster Service CIDR):80 ---
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name
+
+=== NEGATIVE: default-deny actually blocks unlisted traffic ===
+--- blocked: agent pod egress to an arbitrary external host on an unlisted port (8080) ---
+wget: download timed out
+command terminated with exit code 1
+(expected: timeout / no response - port 8080 is not in any egress rule)
+
+--- blocked: nothing can reach an agent pod on any port (no ingress rule for agents) ---
+wget: download timed out
+command terminated with exit code 1
+(expected: timeout / no response - agent pods accept zero ingress)

@@ -1,0 +1,188 @@
+NAME                        POD-SELECTOR                                     AGE
+jenkins-agent-policy        jenkins=slave                                    64m
+jenkins-controller-policy   app.kubernetes.io/component=jenkins-controller   84m
+jenkins-default-deny-all    <none>                                           84m
+webhook-relay-policy        app=webhook-relay                                84m
+apiVersion: v1
+items:
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"annotations":{},"name":"jenkins-agent-policy","namespace":"jenkins"},"spec":{"egress":[{"ports":[{"port":50000,"protocol":"TCP"},{"port":8080,"protocol":"TCP"}],"to":[{"podSelector":{"matchLabels":{"app.kubernetes.io/component":"jenkins-controller"}}}]},{"ports":[{"port":443,"protocol":"TCP"}],"to":[{"ipBlock":{"cidr":"0.0.0.0/0"}}]},{"ports":[{"port":80,"protocol":"TCP"}],"to":[{"ipBlock":{"cidr":"172.20.0.0/16"}}]},{"ports":[{"port":53,"protocol":"UDP"},{"port":53,"protocol":"TCP"}],"to":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}},"podSelector":{"matchLabels":{"k8s-app":"kube-dns"}}}]}],"podSelector":{"matchLabels":{"jenkins":"slave"}},"policyTypes":["Egress"]}}
+    creationTimestamp: "2026-08-19T16:08:32Z"
+    finalizers:
+    - networking.k8s.aws/resources
+    generation: 5
+    name: jenkins-agent-policy
+    namespace: jenkins
+    resourceVersion: "26921"
+    uid: 2b674f02-2359-4ec2-8da7-333b5dab9117
+  spec:
+    egress:
+    - ports:
+      - port: 50000
+        protocol: TCP
+      - port: 8080
+        protocol: TCP
+      to:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/component: jenkins-controller
+    - ports:
+      - port: 443
+        protocol: TCP
+      to:
+      - ipBlock:
+          cidr: 0.0.0.0/0
+    - ports:
+      - port: 80
+        protocol: TCP
+      to:
+      - ipBlock:
+          cidr: 172.20.0.0/16
+    - ports:
+      - port: 53
+        protocol: UDP
+      - port: 53
+        protocol: TCP
+      to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector:
+          matchLabels:
+            k8s-app: kube-dns
+    podSelector:
+      matchLabels:
+        jenkins: slave
+    policyTypes:
+    - Egress
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"annotations":{},"name":"jenkins-controller-policy","namespace":"jenkins"},"spec":{"egress":[{"ports":[{"port":443,"protocol":"TCP"}],"to":[{"ipBlock":{"cidr":"172.20.0.0/16"}}]},{"ports":[{"port":443,"protocol":"TCP"}],"to":[{"ipBlock":{"cidr":"0.0.0.0/0"}}]},{"ports":[{"port":53,"protocol":"UDP"},{"port":53,"protocol":"TCP"}],"to":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}},"podSelector":{"matchLabels":{"k8s-app":"kube-dns"}}}]}],"ingress":[{"from":[{"podSelector":{"matchLabels":{"jenkins":"slave"}}},{"podSelector":{"matchLabels":{"app":"webhook-relay"}}}],"ports":[{"port":50000,"protocol":"TCP"},{"port":8080,"protocol":"TCP"}]}],"podSelector":{"matchLabels":{"app.kubernetes.io/component":"jenkins-controller"}},"policyTypes":["Ingress","Egress"]}}
+    creationTimestamp: "2026-08-19T15:48:34Z"
+    finalizers:
+    - networking.k8s.aws/resources
+    generation: 5
+    name: jenkins-controller-policy
+    namespace: jenkins
+    resourceVersion: "10232"
+    uid: 852b9a2c-a1c8-45d5-84ff-bafa92a8c221
+  spec:
+    egress:
+    - ports:
+      - port: 443
+        protocol: TCP
+      to:
+      - ipBlock:
+          cidr: 172.20.0.0/16
+    - ports:
+      - port: 443
+        protocol: TCP
+      to:
+      - ipBlock:
+          cidr: 0.0.0.0/0
+    - ports:
+      - port: 53
+        protocol: UDP
+      - port: 53
+        protocol: TCP
+      to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector:
+          matchLabels:
+            k8s-app: kube-dns
+    ingress:
+    - from:
+      - podSelector:
+          matchLabels:
+            jenkins: slave
+      - podSelector:
+          matchLabels:
+            app: webhook-relay
+      ports:
+      - port: 50000
+        protocol: TCP
+      - port: 8080
+        protocol: TCP
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/component: jenkins-controller
+    policyTypes:
+    - Ingress
+    - Egress
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"annotations":{},"name":"jenkins-default-deny-all","namespace":"jenkins"},"spec":{"podSelector":{},"policyTypes":["Ingress","Egress"]}}
+    creationTimestamp: "2026-08-19T15:48:34Z"
+    finalizers:
+    - networking.k8s.aws/resources
+    generation: 1
+    name: jenkins-default-deny-all
+    namespace: jenkins
+    resourceVersion: "4893"
+    uid: f389d4f1-4bf0-44d0-971a-4d934251586b
+  spec:
+    podSelector: {}
+    policyTypes:
+    - Ingress
+    - Egress
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"annotations":{},"name":"webhook-relay-policy","namespace":"jenkins"},"spec":{"egress":[{"ports":[{"port":8080,"protocol":"TCP"}],"to":[{"podSelector":{"matchLabels":{"app.kubernetes.io/component":"jenkins-controller"}}}]},{"ports":[{"port":443,"protocol":"TCP"}],"to":[{"ipBlock":{"cidr":"0.0.0.0/0"}}]},{"ports":[{"port":53,"protocol":"UDP"},{"port":53,"protocol":"TCP"}],"to":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}},"podSelector":{"matchLabels":{"k8s-app":"kube-dns"}}}]}],"podSelector":{"matchLabels":{"app":"webhook-relay"}},"policyTypes":["Egress"]}}
+    creationTimestamp: "2026-08-19T15:48:35Z"
+    finalizers:
+    - networking.k8s.aws/resources
+    generation: 2
+    name: webhook-relay-policy
+    namespace: jenkins
+    resourceVersion: "7741"
+    uid: 8f9771a6-0823-4ab0-91ae-bc4ea45ae0bf
+  spec:
+    egress:
+    - ports:
+      - port: 8080
+        protocol: TCP
+      to:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/component: jenkins-controller
+    - ports:
+      - port: 443
+        protocol: TCP
+      to:
+      - ipBlock:
+          cidr: 0.0.0.0/0
+    - ports:
+      - port: 53
+        protocol: UDP
+      - port: 53
+        protocol: TCP
+      to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector:
+          matchLabels:
+            k8s-app: kube-dns
+    podSelector:
+      matchLabels:
+        app: webhook-relay
+    policyTypes:
+    - Egress
+kind: List
+metadata:
+  resourceVersion: ""
