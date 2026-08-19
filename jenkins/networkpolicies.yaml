@@ -21,12 +21,26 @@
 # agent pod can't reach another agent pod, or anything in devops-app), and
 # no ingress to any agent/relay pod from anywhere.
 #
-# Correction made after a live test run: the controller itself needs GitHub
-# egress too, not just its ephemeral agents - a Pipeline-from-SCM job makes
-# the controller do a lightweight `git fetch` to read the Jenkinsfile before
-# it ever provisions an agent Pod. The first real build here failed on
-# exactly that, caught and fixed live rather than left as an assumption -
-# see the jenkins-controller-policy egress rule below.
+# Two corrections made after live test runs, not caught by inspection:
+#
+# 1. The controller itself needs GitHub egress too, not just its ephemeral
+#    agents - a Pipeline-from-SCM job makes the controller do a lightweight
+#    `git fetch` to read the Jenkinsfile before it ever provisions an agent
+#    Pod. The first real build here failed on exactly that.
+#
+# 2. ci-agent and cd-agent Pods do NOT carry a `jenkins/label: ci-agent` /
+#    `jenkins/label: cd-agent` label the way the Jenkinsfiles' `inheritFrom
+#    'ci-agent'` naming suggested. The Kubernetes plugin stamps each
+#    dynamically-provisioned Pod with `jenkins/label: <job-name>_<build>-
+#    <random>` (e.g. `ci-application_2-6cjfx`) - a per-build, per-provision
+#    value, not the pod template's name. The only label EVERY agent Pod
+#    actually shares, confirmed live via `kubectl get pods --show-labels`,
+#    is the static `jenkins: slave`. There is no stable label that
+#    distinguishes a ci-agent Pod from a cd-agent Pod, so - since both
+#    templates already needed the identical broad-443/JNLP/DNS egress
+#    shape in this design anyway - they're one combined policy below
+#    instead of two, rather than a NetworkPolicy that looks like it
+#    separates them but actually never matched either.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -68,10 +82,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              jenkins/label: ci-agent
-        - podSelector:
-            matchLabels:
-              jenkins/label: cd-agent
+              jenkins: slave # every dynamically-provisioned agent Pod (ci-agent and cd-agent alike) - see header comment #2 for why this is the only label that actually matches them
         - podSelector:
             matchLabels:
               app: webhook-relay
@@ -92,7 +103,7 @@ spec:
             cidr: 0.0.0.0/0 # explicit rather than an omitted `to:` (the spec treats both as "match all destinations") - easier for a reader to see this is deliberately unrestricted, not a rule that forgot its `to:`.
       ports:
         - protocol: TCP
-          port: 443 # GitHub - the controller's own lightweight Jenkinsfile checkout (see header comment above). Can't be scoped by IP, same reasoning as the agent policies below.
+          port: 443 # GitHub - the controller's own lightweight Jenkinsfile checkout (see header comment above). Can't be scoped by IP, same reasoning as the agent policy below.
     - to:
         - namespaceSelector:
             matchLabels:
@@ -150,20 +161,24 @@ spec:
           port: 53
 
 ---
-# ci-agent: checks out from GitHub, builds with Kaniko and pushes to ECR,
-# scans + SBOMs with Trivy, signs with Cosign via KMS - all outbound HTTPS
-# to public AWS/GitHub/PyPI endpoints (see header re: port-only scoping),
-# plus the JNLP callback to the controller. Accepts no ingress from anywhere
-# (nothing ever initiates a connection to a build agent).
+# Agent Pods (both ci-agent and cd-agent templates - see header comment #2
+# for why these are one policy, not two): ci-agent checks out from GitHub,
+# builds with Kaniko, pushes to ECR, scans + SBOMs with Trivy, and signs
+# with Cosign via KMS; cd-agent checks out the Helm chart from GitHub and
+# calls the in-cluster Kubernetes API (kubectl/helm) to deploy into
+# devops-app. All outbound HTTPS to public AWS/GitHub/PyPI endpoints (see
+# header re: port-only scoping), plus the JNLP callback to the controller.
+# Accepts no ingress from anywhere (nothing ever initiates a connection to
+# a build agent).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: ci-agent-policy
+  name: jenkins-agent-policy
   namespace: jenkins
 spec:
   podSelector:
     matchLabels:
-      jenkins/label: ci-agent
+      jenkins: slave
   policyTypes:
     - Egress
   egress:
@@ -181,52 +196,17 @@ spec:
             cidr: 0.0.0.0/0 # explicit rather than omitted - see jenkins-controller-policy's egress comment for why
       ports:
         - protocol: TCP
-          port: 443 # GitHub, ECR, AWS KMS, PyPI, Cosign/Trivy-DB downloads
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - protocol: UDP
-          port: 53
+          port: 443 # GitHub, ECR, AWS KMS, PyPI, Cosign/Trivy-DB downloads, and (for cd-agent) the in-VPC Kubernetes API
         - protocol: TCP
-          port: 53
-
----
-# cd-agent: checks out the Helm chart from GitHub and calls the in-cluster
-# Kubernetes API (kubectl/helm) to deploy into devops-app - never touches
-# ECR, KMS, or PyPI (CD never rebuilds anything). Same JNLP callback and
-# ingress posture as ci-agent.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: cd-agent-policy
-  namespace: jenkins
-spec:
-  podSelector:
-    matchLabels:
-      jenkins/label: cd-agent
-  policyTypes:
-    - Egress
-  egress:
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: jenkins-controller
-      ports:
-        - protocol: TCP
-          port: 50000
-        - protocol: TCP
-          port: 8080
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0 # explicit rather than omitted - see jenkins-controller-policy's egress comment for why
-      ports:
-        - protocol: TCP
-          port: 443 # GitHub (checkout) and the in-VPC Kubernetes API
+          port: 80 # cd-agent's Smoke Test (plain HTTP against frontend-service) - real
+          # bug caught live: this port was missing entirely at first, and the resulting
+          # connection timeout looked exactly like an unrelated AWS networking problem
+          # (a Classic ELB same-VPC hairpin limitation) until testing port 443 vs 80 to
+          # the identical external host proved it was this policy blocking port 80, full
+          # stop, nothing to do with which host was being reached. Also grants ci-agent
+          # pods port 80 they don't use - unavoidable given both templates share this one
+          # policy (see header comment #2), and harmless since nothing in ci-agent's own
+          # steps ever makes a plain-HTTP call.
     - to:
         - namespaceSelector:
             matchLabels:
