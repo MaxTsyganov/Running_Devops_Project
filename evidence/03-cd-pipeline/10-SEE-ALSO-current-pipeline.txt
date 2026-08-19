@@ -1,0 +1,28 @@
+Note added after the bonus-features work (see evidence/06-bonus-features/):
+==========================================================================
+
+The full console log (01) and smoke-test capture (08) in this folder are
+from build #6, before the Smoke Test stage was changed to target the
+in-cluster Service DNS (frontend-service.devops-app.svc.cluster.local)
+instead of the public ELB hostname - a deliberate NetworkPolicy-scoping
+decision, not a connectivity fix (both work once the right port/scope is
+allowed; only the in-cluster target can be scoped tightly to exactly the
+frontend Pods at all - see the README's Network section for the full
+reasoning). This folder's evidence still correctly demonstrates the core
+CD requirements (deploy/rollout/verify/traceability/maxSurge:0), which are
+unaffected by that change.
+
+Two things also changed since this evidence was captured that are worth
+knowing about if you're reading these logs closely:
+- Automated rollback on Smoke Test failure was added (a bonus item) -
+  the "documented but manual" rollback this evidence's era reflects is now
+  real and automatic. See evidence/06-bonus-features/06 and 07 for both a
+  real rollback execution and the first-deploy edge case that led to a fix.
+- cd-deploy-sa's RBAC needed a `delete` permission on Secrets added
+  (jenkins/rbac/cd-deploy-rbac.yaml) once Helm's own release history
+  passed its default limit of 10 revisions - see
+  evidence/06-bonus-features/10-rbac-helm-secret-pruning-fix.txt.
+
+For a full console log reflecting the current CD pipeline end to end, see:
+  evidence/06-bonus-features/11-cd-build11-full-console-SUCCESS.txt
+  evidence/06-bonus-features/00-summary.txt (full index and context)

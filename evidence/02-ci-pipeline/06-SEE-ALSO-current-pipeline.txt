@@ -1,0 +1,21 @@
+Note added after the bonus-features work (see evidence/06-bonus-features/):
+==========================================================================
+
+The full console logs in this folder (01, 02) are from build #6/#7, before
+the CI pipeline was restructured to add parallel matrix builds, SBOM
+generation, and Cosign signing. They still correctly demonstrate the core
+requirement this section documents - a real, webhook-triggered CI run that
+lints, tests, builds, scans, and pushes - but the pipeline's actual shape
+has since changed (sequential Build/Scan here vs. one matrix cell per
+service now, each on its own Pod), and the smoke-test/traceability
+evidence in evidence/03-cd-pipeline/ predates the CD-side changes too.
+
+For a full console log reflecting the current pipeline (matrix builds +
+SBOM + signing, all with every real bug found along the way fixed), see:
+  evidence/06-bonus-features/02-ci-build10-full-console-SUCCESS.txt
+  evidence/06-bonus-features/11-cd-build11-full-console-SUCCESS.txt
+  evidence/06-bonus-features/00-summary.txt (full index and context)
+
+Everything else in this folder (ECR digests, traceability logic, "CD never
+rebuilds" structural proof) is unaffected by that restructure and still
+accurate as-is.

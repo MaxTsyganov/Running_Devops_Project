@@ -1,14 +1,17 @@
-=== cosign verify against the frontend image signed by ci-application build #8 ===
-(this signature was created before the --use-signing-config=false/--tlog-upload=false
- fix was added to the Jenkinsfile, so it uploaded to the public Rekor log - re-signed
- here with the corrected flags to produce a signature matching what the pipeline now
- actually produces, then verified with zero bypass flags)
+=== cosign verify against the frontend image ACTUALLY signed by ci-application build #10 ===
+(the real artifact the pipeline produced - not re-signed, not a different digest)
 
+--- attempt 1: default verify (expects a transparency-log entry) ---
+Error: no matching attestations: failed to verify log inclusion: not enough verified log entries from transparency log: 0 < 1
+error during command execution: no matching attestations: failed to verify log inclusion: not enough verified log entries from transparency log: 0 < 1
 
-Verification for 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend@sha256:058c55b8bafa3b8a2115407fa5590584191cbfb9f500174a2cc0dec13c756b8c --
+--- attempt 2: --insecure-ignore-tlog=true (correct given this signature has none by design - see README trade-offs) ---
+WARNING: Skipping tlog verification is an insecure practice that lacks transparency and auditability verification for the signature.
+
+[{"critical":{"identity":{"docker-reference":"957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend@sha256:3a674b9bf79665c626cf9b61741021a11afd68f46fe977d9f618568a2259c11d"},"image":{"docker-manifest-digest":"sha256:3a674b9bf79665c626cf9b61741021a11afd68f46fe977d9f618568a2259c11d"},"type":"https://sigstore.dev/cosign/sign/v1"},"optional":{}}]
+
+Verification for 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend@sha256:3a674b9bf79665c626cf9b61741021a11afd68f46fe977d9f618568a2259c11d --
 The following checks were performed on each of these signatures:
   - The cosign claims were validated
   - Existence of the claims in the transparency log was verified offline
   - The signatures were verified against the specified public key
-
-[{"critical":{"identity":{"docker-reference":"957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend@sha256:058c55b8bafa3b8a2115407fa5590584191cbfb9f500174a2cc0dec13c756b8c"},"image":{"docker-manifest-digest":"sha256:058c55b8bafa3b8a2115407fa5590584191cbfb9f500174a2cc0dec13c756b8c"},"type":"https://sigstore.dev/cosign/sign/v1"},"optional":{}}]

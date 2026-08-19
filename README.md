@@ -177,14 +177,22 @@ Pipeline's default, including matrix cells) and never reaches the `success` post
 CD - so a scan failure still guarantees nothing gets deployed, even though (see
 [§11](#11-trade-offs)) Kaniko's build and push happen as one atomic step, before the scan runs.
 
-**Signing**: `cosign sign --key awskms:///alias/devops-app-cosign --yes <image>@<digest>` - signs
-the immutable digest, not the mutable tag, using an asymmetric KMS key (`terraform/kms.tf`) with no
-private key material anywhere, ever. `ci-build-sa` gets exactly three KMS actions
-(`DevOps-CI-Cosign-Sign-Policy` in `terraform/iam.tf`): `GetPublicKey`, `DescribeKey`, `Sign` -
-nothing that could delete or manage the key itself. Verifying a signature is a one-liner
-(`cosign verify --key awskms:///alias/devops-app-cosign <image>@<digest>`) but isn't wired into a
-CD gate - the assignment's bonus asks for signing, not a verify-or-block deploy step, and adding one
-would be scope beyond what was asked (see [§11](#11-trade-offs)).
+**Signing**: `cosign sign --key awskms:///alias/devops-app-cosign --use-signing-config=false
+--tlog-upload=false --yes <image>@<digest>` - signs the immutable digest, not the mutable tag,
+using an asymmetric KMS key (`terraform/kms.tf`) with no private key material anywhere, ever.
+`ci-build-sa` gets exactly three KMS actions (`DevOps-CI-Cosign-Sign-Policy` in `terraform/iam.tf`):
+`GetPublicKey`, `DescribeKey`, `Sign` - nothing that could delete or manage the key itself. The
+`--tlog-upload=false` pair is deliberate, not a default: Cosign uploads to the public Rekor
+transparency log even for KMS-based signing unless told not to, which would silently reintroduce
+the exact dependency on public Sigstore infrastructure this project chose KMS signing specifically
+to avoid (see [§11](#11-trade-offs)) - caught live when `cosign verify` failed against a signature
+that had uploaded there anyway. The consequence: verifying needs
+`cosign verify --key awskms:///alias/devops-app-cosign --insecure-ignore-tlog=true <image>@<digest>`
+- the flag name sounds alarming, but "insecure" here just means "don't require a public transparency
+log entry that was never created by design"; the KMS key itself (IAM-controlled, not a bare
+keypair) is still the real trust anchor either way. Verification isn't wired into a CD gate - the
+assignment's bonus asks for signing, not a verify-or-block deploy step, and adding one would be
+scope beyond what was asked.
 
 ---
 
