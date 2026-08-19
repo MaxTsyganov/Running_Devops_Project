@@ -207,13 +207,26 @@ pipeline {
         failure {
             script {
                 if (env.HELM_DEPLOYED == 'true') {
-                    echo "=== DEPLOYMENT FAILED after a new revision was already live - rolling back automatically ==="
+                    echo "=== DEPLOYMENT FAILED after a new revision was already live - checking for a rollback target ==="
                     container('deploy') {
                         sh '''
                             set -e
-                            helm rollback devops-app -n ${TARGET_NAMESPACE} --wait --timeout 5m
-                            echo "=== Rolled back. Pods now: ==="
-                            kubectl get pods -n ${TARGET_NAMESPACE} -o custom-columns='NAME:.metadata.name,IMAGE:.spec.containers[0].image'
+                            # `helm rollback` errors ("release has no 0 version") on a
+                            # first-ever deploy - revision 1 has nothing earlier to roll
+                            # back to. Caught live on this project's actual first deploy,
+                            # not hypothesized: a bare `helm rollback` there crashed this
+                            # whole post{failure{}} block with a raw Helm error instead of
+                            # the informative message below. `helm history` always prints
+                            # one header line plus one line per revision, so 2 lines total
+                            # means exactly one revision exists.
+                            REVISION_LINES=$(helm history devops-app -n ${TARGET_NAMESPACE} 2>/dev/null | wc -l)
+                            if [ "$REVISION_LINES" -le 2 ]; then
+                                echo "This was the first-ever deploy (revision 1) - no earlier revision exists to roll back to. devops-app stays as deployed; fix forward with a new commit."
+                            else
+                                helm rollback devops-app -n ${TARGET_NAMESPACE} --wait --timeout 5m
+                                echo "=== Rolled back. Pods now: ==="
+                                kubectl get pods -n ${TARGET_NAMESPACE} -o custom-columns='NAME:.metadata.name,IMAGE:.spec.containers[0].image'
+                            fi
                         '''
                     }
                 } else {
