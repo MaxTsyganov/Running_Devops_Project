@@ -1,0 +1,41 @@
+=== Trivy scans of Jenkins' own pinned images (not the app images) ===
+
+Section 6 of the assignment requires agent/controller images to be pinned
+AND scanned - separate from CI's own scan of the app images (frontend/
+backend/worker), which is a different, already-covered requirement
+(evidence/02-ci-pipeline).
+
+These 5 images are pinned in jenkins/values.yaml and jenkins/ci/Jenkinsfile
+and rarely change (only when a version pin is deliberately bumped), unlike
+the app images which get a new tag on every commit. So instead of adding a
+live pipeline stage that would re-scan the same static image on every CI
+run for no reason, these were scanned once, locally, with the same tool
+(Trivy) and severity filter (HIGH,CRITICAL) the project already uses
+elsewhere - policy documented in README.md section 14.9.
+
+Command used for each (aquasec/trivy:0.74.0, same version pinned in
+jenkins/values.yaml's ci-agent trivy container):
+  docker run --rm -v trivy-cache:/root/.cache/ aquasec/trivy:0.74.0 \
+    image --severity HIGH,CRITICAL --scanners vuln --quiet <image>
+
+Results:
+
+  Image                                          CRITICAL findings
+  ----------------------------------------------------------------
+  python:3.11-slim (ci-agent, lint/test)              4
+  gcr.io/kaniko-project/executor:v1.24.0-debug        2
+    (ci-agent, image build)
+  dtzar/helm-kubectl:3.16 (cd-agent, deploy)          3
+  aquasec/trivy:0.74.0 (ci-agent, scan - self-scan)   0
+  jenkins/jenkins:2.541.3-lts-jdk17 (controller)     22
+
+Full per-CVE detail in 01 through 05.
+
+None of these were treated as a build-blocking gate, the way the app image
+scan is in CI (--severity CRITICAL --ignore-unfixed) - see README.md
+section 14.9 for why: these are third-party maintained images (Jenkins
+core, Kaniko, kubectl/helm/yq, Python), not something this project builds
+or can patch directly. The findings are real and worth tracking, but
+"pinned and scanned so the findings are known" is the realistic bar for a
+project consuming these as dependencies, not "zero CVEs in someone else's
+image."

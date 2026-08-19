@@ -1,6 +1,0 @@
-NAME                                   READY   STATUS    RESTARTS      AGE
-backend-deployment-5dff64d6fb-hswqs    1/1     Running   0             45m
-backend-deployment-5dff64d6fb-pmpdx    1/1     Running   0             77s
-frontend-deployment-7895bfd74d-8m69h   1/1     Running   0             45m
-frontend-deployment-7895bfd74d-bb25s   1/1     Running   0             45m
-worker-deployment-6bd5669d49-xvs7v     1/1     Running   1 (45m ago)   45m
