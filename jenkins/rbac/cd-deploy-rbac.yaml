@@ -21,8 +21,20 @@ rules:
     resources: ["deployments", "replicasets"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: [""]
-    resources: ["services", "pods", "configmaps", "secrets", "serviceaccounts"]
+    resources: ["services", "pods", "configmaps", "serviceaccounts"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    # delete, in addition to the others: Helm stores its own release history
+    # as Secrets (sh.helm.release.v1.<release>.v<N>) in this same namespace,
+    # and prunes old ones once past its default history limit (10 - real,
+    # not hypothetical: this cluster hit revision 10 during evidence
+    # capture, and the next deploy failed with "cannot delete resource
+    # secrets" until this was added). Scoped to this one namespace, same as
+    # everything else in this Role - not the app's own least-privilege
+    # boundary being loosened, just Helm's own bookkeeping needing the same
+    # lifecycle control over its own storage that create/update already grant.
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses", "networkpolicies"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
