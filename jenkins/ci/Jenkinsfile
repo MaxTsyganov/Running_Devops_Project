@@ -226,8 +226,20 @@ print(base64.b64decode(token).decode().split(':', 1)[1])
                                     DIGEST="$(cat digest.txt)"
                                     IMAGE_REF="${ECR_REGISTRY}/devops-${SERVICE}@${DIGEST}"
                                     echo "Signing $IMAGE_REF with ${COSIGN_KMS_KEY}..."
-                                    # Signs by digest, not by mutable tag.
+                                    # Signs by digest, not by mutable tag. --use-signing-config=
+                                    # false --tlog-upload=false: cosign uploads to the public
+                                    # Rekor transparency log by default even for KMS-based
+                                    # (non-keyless) signing, unless told not to - caught live via
+                                    # `cosign verify` failing with "transparency log certificate
+                                    # does not match" until both flags were added (v3.1.3 ignores
+                                    # a bare --tlog-upload=false under its newer signing-config
+                                    # mode; --use-signing-config=false is required to fall back to
+                                    # where that flag actually takes effect). Uploading there would
+                                    # silently reintroduce the exact public-Sigstore dependency
+                                    # this project chose KMS signing specifically to avoid (see
+                                    # README trade-offs).
                                     /tmp/cosign sign --key "${COSIGN_KMS_KEY}" \
+                                        --use-signing-config=false --tlog-upload=false \
                                         --registry-username AWS --registry-password "$ECR_TOKEN" \
                                         --yes "$IMAGE_REF"
                                 '''
