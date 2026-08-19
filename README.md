@@ -312,13 +312,18 @@ Jenkins directly (see [§1](#1-architecture-and-environment-choice)'s relay expl
 `NetworkPolicy` objects for the `jenkins` namespace (`jenkins/networkpolicies.yaml`, applied by
 `install-jenkins.sh`) start from default-deny and add back exactly what each workload needs:
 controller accepts ingress only from agent Pods (JNLP, port `50000`) and `webhook-relay` (port
-`8080`), and - since the controller itself never calls GitHub/ECR/KMS, only its ephemeral agents do
-- gets no internet egress at all, only the in-cluster Kubernetes API and DNS. `webhook-relay` and
-both agent templates accept no ingress from anywhere. The one honest limitation: plain L3/L4
-NetworkPolicy can't scope internet-bound HTTPS (GitHub, ECR, KMS, PyPI, smee.io - this cluster has
-no VPC endpoints for any of them, see [§12](#12-supporting-infrastructure)) by destination IP, only
-by port, so agent egress on `443` is necessarily broad. What the policy still meaningfully enforces:
-zero lateral movement between pods in the namespace, and zero unsolicited ingress to anything.
+`8080`), and its egress is the in-cluster Kubernetes API, DNS, and GitHub - not ECR/KMS/PyPI, those
+stay agent-only. GitHub on the controller was a real finding, not an assumption: a Pipeline-from-SCM
+job makes the *controller itself* do a lightweight `git fetch` to read the Jenkinsfile before it
+ever provisions an agent Pod, so the first real build here failed until that egress was added (and a
+second, separate bug in the same rule - scoping the Kubernetes API to the VPC's CIDR instead of the
+cluster's actual Service CIDR - blocked the controller's own Pod-watch connection the same way).
+`webhook-relay` and both agent templates accept no ingress from anywhere. The one honest limitation:
+plain L3/L4 NetworkPolicy can't scope internet-bound HTTPS (GitHub, ECR, KMS, PyPI, smee.io - this
+cluster has no VPC endpoints for any of them, see [§12](#12-supporting-infrastructure)) by
+destination IP, only by port, so that egress is necessarily broad wherever it's needed. What the
+policy still meaningfully enforces: zero lateral movement between pods in the namespace, and zero
+unsolicited ingress to anything.
 
 **Endpoints this setup actually talks to**: GitHub (`github.com`, checkout + webhook delivery via
 smee.io), ECR (`*.dkr.ecr.us-east-1.amazonaws.com`, image push/pull), the in-cluster Kubernetes API

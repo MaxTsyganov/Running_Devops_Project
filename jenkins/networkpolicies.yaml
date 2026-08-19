@@ -18,10 +18,15 @@
 # those destinations can only be scoped by port (443), not by destination
 # IP. What these policies DO meaningfully enforce: default-deny as the
 # baseline, zero lateral movement between pods inside the namespace (an
-# agent pod can't reach another agent pod, or anything in devops-app), no
-# ingress to any agent/relay pod from anywhere, and the controller itself -
-# which never makes an external call, only its ephemeral agents do - gets no
-# internet egress at all.
+# agent pod can't reach another agent pod, or anything in devops-app), and
+# no ingress to any agent/relay pod from anywhere.
+#
+# Correction made after a live test run: the controller itself needs GitHub
+# egress too, not just its ephemeral agents - a Pipeline-from-SCM job makes
+# the controller do a lightweight `git fetch` to read the Jenkinsfile before
+# it ever provisions an agent Pod. The first real build here failed on
+# exactly that, caught and fixed live rather than left as an assumption -
+# see the jenkins-controller-policy egress rule below.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -38,9 +43,15 @@ spec:
 
 ---
 # Controller: only ephemeral agent pods (JNLP) and webhook-relay (the
-# internal /github-webhook/ POST) ever need to reach it, and it only ever
-# needs to reach the Kubernetes API (to launch/watch/delete agent Pods) -
-# never GitHub/ECR/KMS/PyPI, those are all agent-side work.
+# internal /github-webhook/ POST) ever need to reach it. Egress needs the
+# Kubernetes API (to launch/watch/delete agent Pods) plus GitHub - confirmed
+# live the hard way: a Pipeline-from-SCM job (CpsScmFlowDefinition) makes
+# the CONTROLLER itself do a lightweight `git fetch` to read the Jenkinsfile
+# before it ever provisions an agent Pod, not just the agent-side checkout
+# stage later. The first real build here failed on exactly that - the
+# controller's own git fetch to github.com timing out - before this rule
+# existed. ECR/KMS/PyPI remain agent-only (no evidence the controller ever
+# calls them, and nothing in this job type would make it).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -72,10 +83,16 @@ spec:
   egress:
     - to:
         - ipBlock:
-            cidr: 10.0.0.0/16 # this project's VPC (terraform/network.tf) - covers the EKS control plane's in-VPC endpoints
+            cidr: 172.20.0.0/16 # this cluster's Kubernetes Service CIDR (`aws eks describe-cluster ... kubernetesNetworkConfig.serviceIpv4Cidr`) - NOT the VPC CIDR (10.0.0.0/16, terraform/network.tf). Confirmed live: an earlier version of this rule used the VPC CIDR, which silently blocked the controller's watch connection to kubernetes.default.svc (172.20.0.1) - AWS VPC CNI's NetworkPolicy enforcement matches the Service's ClusterIP itself, not the real backend IP the CNI later DNATs to.
       ports:
         - protocol: TCP
           port: 443
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0 # explicit rather than an omitted `to:` (the spec treats both as "match all destinations") - easier for a reader to see this is deliberately unrestricted, not a rule that forgot its `to:`.
+      ports:
+        - protocol: TCP
+          port: 443 # GitHub - the controller's own lightweight Jenkinsfile checkout (see header comment above). Can't be scoped by IP, same reasoning as the agent policies below.
     - to:
         - namespaceSelector:
             matchLabels:
@@ -113,7 +130,10 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
-    - ports:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0 # explicit rather than omitted - see jenkins-controller-policy's egress comment for why
+      ports:
         - protocol: TCP
           port: 443 # smee.io - public endpoint, can't be scoped by IP (see header)
     - to:
@@ -156,7 +176,10 @@ spec:
           port: 50000
         - protocol: TCP
           port: 8080
-    - ports:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0 # explicit rather than omitted - see jenkins-controller-policy's egress comment for why
+      ports:
         - protocol: TCP
           port: 443 # GitHub, ECR, AWS KMS, PyPI, Cosign/Trivy-DB downloads
     - to:
@@ -198,7 +221,10 @@ spec:
           port: 50000
         - protocol: TCP
           port: 8080
-    - ports:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0 # explicit rather than omitted - see jenkins-controller-policy's egress comment for why
+      ports:
         - protocol: TCP
           port: 443 # GitHub (checkout) and the in-VPC Kubernetes API
     - to:
