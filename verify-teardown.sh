@@ -84,6 +84,67 @@ IAM_COUNT=$(aws iam list-roles \
     --output text 2>/dev/null || echo 0)
 [ "$IAM_COUNT" = "0" ] && ok "No orphaned eksctl-created IAM roles." || bad "$IAM_COUNT orphaned eksctl-created IAM role(s) still exist."
 
+# Terraform-managed IAM policies (a different resource class than the
+# eksctl-created roles above - terraform/iam.tf's DevOps-* policies)
+POLICY_COUNT=$(aws iam list-policies --scope Local \
+    --query "length(Policies[?starts_with(PolicyName, 'DevOps-')])" \
+    --output text 2>/dev/null || echo 0)
+[ "$POLICY_COUNT" = "0" ] && ok "No leftover DevOps-* IAM policies." || bad "$POLICY_COUNT leftover DevOps-* IAM policy/policies still exist."
+
+# Secrets Manager secret (the RDS password) - deleted outright by
+# `terraform destroy` (no recovery window override in secrets.tf), so
+# nothing should show here at all, not even a pending-deletion entry.
+SECRET_COUNT=$(aws secretsmanager list-secrets --region "$REGION" \
+    --query "length(SecretList[?contains(Name, 'devops-app')])" \
+    --output text 2>/dev/null || echo 0)
+[ "$SECRET_COUNT" = "0" ] && ok "No leftover Secrets Manager secret." || bad "$SECRET_COUNT leftover Secrets Manager secret(s) still exist."
+
+# CloudWatch log group (terraform/logging.tf) - MSYS_NO_PATHCONV=1: the
+# /devops-app prefix looks like a Unix path to Windows Git Bash, which
+# silently rewrites it into a Windows path before aws-cli ever sees it
+# otherwise (the exact bug fixed in setup.sh's Fluent Bit step - see that
+# commit). No-op everywhere else.
+LOGGROUP_COUNT=$(MSYS_NO_PATHCONV=1 aws logs describe-log-groups --region "$REGION" \
+    --log-group-name-prefix "/devops-app" \
+    --query "length(logGroups)" --output text 2>/dev/null || echo 0)
+[ "$LOGGROUP_COUNT" = "0" ] && ok "No leftover CloudWatch log group." || bad "$LOGGROUP_COUNT leftover CloudWatch log group(s) still exist."
+
+# SNS topic
+SNS_COUNT=$(aws sns list-topics --region "$REGION" \
+    --query "length(Topics[?contains(TopicArn, 'devops')])" \
+    --output text 2>/dev/null || echo 0)
+[ "$SNS_COUNT" = "0" ] && ok "No leftover SNS topic." || bad "$SNS_COUNT leftover SNS topic(s) still exist."
+
+# S3 bucket
+S3_COUNT=$(aws s3api list-buckets \
+    --query "length(Buckets[?contains(Name, 'devops-app')])" \
+    --output text 2>/dev/null || echo 0)
+[ "$S3_COUNT" = "0" ] && ok "No leftover S3 bucket." || bad "$S3_COUNT leftover S3 bucket(s) still exist."
+
+# Cosign KMS key (terraform/kms.tf) - has a mandatory 7-day AWS deletion
+# window (deletion_window_in_days), so a healthy `terraform destroy` leaves
+# it in PendingDeletion, not gone outright - that state is correct and
+# expected, not a leak. Only flag a key that's still Enabled (destroy
+# never scheduled it at all) or PendingDeletion with a description that
+# doesn't match this project's key at all is fine to ignore; the real
+# failure mode is finding *this* project's key still Enabled.
+KMS_STATE=$(aws kms list-aliases --region "$REGION" \
+    --query "Aliases[?AliasName=='alias/devops-app-cosign'].TargetKeyId" \
+    --output text 2>/dev/null || echo "")
+if [ -z "$KMS_STATE" ]; then
+    # Alias itself is gone (deletes instantly, no window) - check no Enabled
+    # key with this project's description is still sitting around under a
+    # different alias somehow.
+    KMS_ENABLED=$(aws kms list-keys --region "$REGION" --query "Keys[].KeyId" --output text 2>/dev/null | tr '\t' '\n' | while read -r kid; do
+        aws kms describe-key --key-id "$kid" --region "$REGION" \
+            --query "KeyMetadata.[KeyState,Description]" --output text 2>/dev/null | grep -q "^ENABLED.*Cosign" && echo "$kid"
+    done)
+    [ -z "$KMS_ENABLED" ] && ok "Cosign KMS key gone or correctly pending deletion." \
+        || bad "Cosign KMS key(s) still Enabled (never scheduled for deletion): $KMS_ENABLED"
+else
+    bad "Cosign KMS alias 'alias/devops-app-cosign' still exists (points to $KMS_STATE) - destroy may not have run against it."
+fi
+
 echo ""
 if [ "$FOUND" -eq 0 ]; then
     echo -e "${BOLD}${GREEN}Everything's clean - nothing left that should be costing money.${RESET}"
