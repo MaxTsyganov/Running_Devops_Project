@@ -9,7 +9,7 @@ echo "  This deletes Kubernetes workloads, Jenkins, the EKS cluster, and every"
 echo "  Terraform-managed AWS resource (RDS, S3, SNS, ECR, IAM, networking)."
 echo -e "==================================================================${RESET}"
 
-step "[1/8] Deleting the app namespace..."
+step "[1/10] Deleting the app namespace..."
 # Assignment 3 deployed via ArgoCD (an Application with a resources-
 # finalizer, so deleting it cascades to everything it manages). Assignment 4
 # replaced that with Jenkins CD deploying straight via helm upgrade
@@ -26,12 +26,12 @@ kubectl delete namespace devops-app --ignore-not-found=true 2>/dev/null \
 # ArgoCD (if still installed), cert-manager, and Fluent Bit (the argocd/
 # cert-manager/amazon-cloudwatch namespaces) are left alone on purpose - none
 # of them own AWS resources directly (their IAM roles are deleted separately
-# in step [5/8], the CloudWatch log group by `terraform destroy` in step
-# [7/8]), so they disappear for free when `eksctl delete cluster` runs in
-# step [6/8]. Deleting them here would just make the script wait on
+# in step [5/10], the CloudWatch log group by `terraform destroy` in step
+# [8/10]), so they disappear for free when `eksctl delete cluster` runs in
+# step [6/10]. Deleting them here would just make the script wait on
 # components terminating for no benefit.
 
-step "[2/8] Waiting for the AWS Load Balancer to fully release..."
+step "[2/10] Waiting for the AWS Load Balancer to fully release..."
 # kubectl delete only removes the Service object immediately - the actual
 # AWS ELB/NLB and the network interfaces it planted in our subnets are
 # cleaned up asynchronously by a controller running INSIDE the cluster.
@@ -67,7 +67,7 @@ else
     info "Could not read the VPC ID from Terraform state - skipping this check."
 fi
 
-step "[3/8] Revoking the RDS rule that references the EKS cluster's security group..."
+step "[3/10] Revoking the RDS rule that references the EKS cluster's security group..."
 # setup.sh authorized RDS's security group to accept traffic from the EKS
 # cluster's security group. AWS won't delete a security group that's still
 # referenced elsewhere, so without this the cluster's own cleanup leaves it
@@ -87,7 +87,7 @@ else
     info "No RDS security group or no live cluster found - nothing to revoke."
 fi
 
-step "[4/8] Deleting the Jenkins PVC before the cluster disappears..."
+step "[4/10] Deleting the Jenkins PVC before the cluster disappears..."
 # Same reasoning as the load balancer wait above: `helm uninstall` (and even
 # `eksctl delete cluster` on its own) does NOT delete the PVC a StatefulSet
 # creates via volumeClaimTemplates - that's deliberate K8s behavior to
@@ -115,7 +115,7 @@ else
     info "No live cluster found - nothing to clean up here."
 fi
 
-step "[5/8] Deleting IRSA IAM service accounts (backend-sa, worker-sa, ci-build-sa, fluent-bit-sa, external-secrets-sa)..."
+step "[5/10] Deleting IRSA IAM service accounts (backend-sa, worker-sa, ci-build-sa, fluent-bit-sa, external-secrets-sa)..."
 # Same lesson as the security-group rule above: these were created by
 # `eksctl create iamserviceaccount` as their own CloudFormation stacks,
 # separate from the main cluster stack. Deleting them explicitly first
@@ -150,7 +150,7 @@ else
     info "No live cluster found - nothing to delete here."
 fi
 
-step "[6/8] Deleting EKS cluster (10-15 minutes)..."
+step "[6/10] Deleting EKS cluster (10-15 minutes)..."
 # eksctl's own progress output is a wall of CloudFormation stack-wait lines -
 # logged to a temp file instead of the terminal, and only shown if something
 # actually goes wrong, so a normal run just prints one clean result line.
@@ -167,7 +167,72 @@ else
     info "Cluster already gone, continuing."
 fi
 
-step "[7/8] Destroying Terraform infrastructure (RDS, S3, SNS, IAM, VPC)..."
+step "[7/10] Cleaning up orphaned EKS networking objects (VPC-CNI ENIs, cluster SG)..."
+# eksctl's own cluster deletion doesn't wait for or clean up two things it
+# doesn't own the lifecycle of - confirmed live to NOT self-resolve, not
+# just slow:
+#   1. VPC-CNI secondary ENIs (named "aws-K8S-i-<instance-id>"): the
+#      aws-node DaemonSet attaches these to worker nodes at runtime, on top
+#      of each node's primary ENI, for extra pod IP capacity - outside the
+#      EC2 instance's own launch/termination lifecycle, and deliberately
+#      created with DeleteOnTermination=false (meant to be reusable). When
+#      the node group is deleted, EC2 auto-detaches these from the
+#      terminated instance but never deletes them - and the DaemonSet Pod
+#      that would normally clean up its own ENIs is itself gone by the
+#      time its node terminates, so nothing is left running with the
+#      authority to finish the job.
+#   2. The EKS-auto-created cluster security group
+#      (eks-cluster-sg-devops-cluster-*): every VPC-CNI ENI is a member of
+#      it, so it can't be deleted while an orphaned ENI from #1 still
+#      exists - and once `eksctl delete cluster` has already returned
+#      success (the control plane and eksctl's own CloudFormation stacks
+#      genuinely are gone by then), nothing ever comes back later to
+#      retry deleting it.
+# Left alone, both silently block terraform destroy's VPC deletion with a
+# DependencyViolation. Deleted directly here instead of just waited-for
+# (unlike the load balancer above): both are safe, narrowly-scoped
+# leftovers with nothing legitimate still depending on them at this point -
+# the cluster and every workload on it are already gone.
+if [ -n "$VPC_ID" ]; then
+    ORPHAN_ENIS=$(aws ec2 describe-network-interfaces --region us-east-1 \
+        --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=available" \
+        --query "NetworkInterfaces[?starts_with(Description, 'aws-K8S-i-')].NetworkInterfaceId" \
+        --output text 2>/dev/null)
+    if [ -n "$ORPHAN_ENIS" ]; then
+        for eni in $ORPHAN_ENIS; do
+            aws ec2 delete-network-interface --region us-east-1 --network-interface-id "$eni" 2>/dev/null \
+                && success "Deleted orphaned VPC-CNI ENI $eni." \
+                || info "Could not delete $eni (may already be gone) - continuing."
+        done
+    else
+        info "No orphaned VPC-CNI ENIs found."
+    fi
+    # Retried, not a one-shot attempt: AWS's own eventual consistency for
+    # "is any ENI still a member of this SG" can lag a few seconds behind
+    # that ENI's own deletion confirming above.
+    ORPHAN_SGS=$(aws ec2 describe-security-groups --region us-east-1 \
+        --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=eks-cluster-sg-devops-cluster-*" \
+        --query "SecurityGroups[].GroupId" --output text 2>/dev/null)
+    if [ -n "$ORPHAN_SGS" ]; then
+        for sg in $ORPHAN_SGS; do
+            SG_DELETED=false
+            for _ in 1 2 3 4 5; do
+                aws ec2 delete-security-group --region us-east-1 --group-id "$sg" 2>/dev/null \
+                    && { SG_DELETED=true; break; }
+                sleep 5
+            done
+            [ "$SG_DELETED" = true ] \
+                && success "Deleted orphaned EKS cluster security group $sg." \
+                || info "Could not delete $sg after retrying (still has a dependency) - terraform destroy will retry."
+        done
+    else
+        info "No orphaned EKS cluster security group found."
+    fi
+else
+    info "Could not read the VPC ID - skipping this check."
+fi
+
+step "[8/10] Destroying Terraform infrastructure (RDS, S3, SNS, IAM, VPC)..."
 cd terraform
 # Never assume the local .terraform/ cache is already correctly pointed at
 # the real S3 backend - init is cheap and idempotent when it's already
@@ -202,11 +267,11 @@ cd ..
 # above already removed them along with every image pushed into them - no
 # separate `aws ecr delete-repository` step needed anymore.
 
-step "[8/9] Removing locally-generated files..."
+step "[9/10] Removing locally-generated files..."
 rm -f terraform/terraform.tfvars
 success "Removed terraform/terraform.tfvars (setup.sh recreates it, asking again, on the next run)."
 
-step "[9/9] Stopping any leftover local 'kubectl port-forward svc/jenkins' processes..."
+step "[10/10] Stopping any leftover local 'kubectl port-forward svc/jenkins' processes..."
 # Local hygiene only, not an AWS resource - pkill's own exit code is ignored,
 # since "nothing matched" and "not supported on this platform" both look the
 # same to this script and neither should fail the teardown.
