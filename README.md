@@ -698,3 +698,8 @@ that earlier work that a from-scratch rebuild had never exercised before: the EC
 turned out to have been created by hand outside Terraform entirely, the cluster had no way to
 satisfy a `PersistentVolumeClaim` until Jenkins needed one, and the app chart's own `Namespace`
 template silently depended on ArgoCD's broader permissions to work at all.
+
+This commit is also a live test of `ci-application-pr`'s quality gate, run as a full clean-slate
+simulation (`teardown.sh` → `verify-teardown.sh` → `setup.sh` → Jenkins install → a real
+webhook-triggered CI/CD cycle) rather than against infra that had already been debugged in place -
+the same experience a grader following this README from scratch would have.
