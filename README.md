@@ -677,3 +677,8 @@ that earlier work that a from-scratch rebuild had never exercised before: the EC
 turned out to have been created by hand outside Terraform entirely, the cluster had no way to
 satisfy a `PersistentVolumeClaim` until Jenkins needed one, and the app chart's own `Namespace`
 template silently depended on ArgoCD's broader permissions to work at all.
+
+This commit is a live end-to-end test of the `ci-application-pr` quality gate (bonus item #1):
+it exists to trigger a real `pull_request` webhook event and confirm the whole path works -
+GitHub webhook → relay → generic-webhook-trigger → PR agent Pod → checkout PR head → lint/test/
+build (no push)/scan - with nothing hand-invoked on the Jenkins side.
