@@ -388,16 +388,13 @@ plain L3/L4 NetworkPolicy can't scope internet-bound HTTPS (GitHub, ECR, KMS, Py
 cluster has no VPC endpoints for any of them, see [§12](#12-supporting-infrastructure)) by
 destination IP, only by port, so port `443` egress is necessarily broad. Port `80` isn't: it has
 exactly one real destination in this whole pipeline (`cd-agent`'s Smoke Test against
-`frontend-service`), so it's scoped to this cluster's Service CIDR rather than left open the same
-way - a `podSelector` scoped to just the frontend Pods was tried first and looked right in the
-applied `NetworkPolicy`, but was silently never enforced, because AWS VPC CNI's NetworkPolicy agent
-matches egress against the pre-DNAT Service ClusterIP, not the Pod IP a `podSelector` resolves to;
-confirmed live by curling a frontend Pod's real IP directly (got a real "connection refused" - its
-container listens on `8080`/`8443`, the Service does that mapping) versus the Service's ClusterIP
-(timed out, silently, until the CIDR-based rule replaced it). What the policy still meaningfully
-enforces: zero lateral movement between pods in the namespace, and zero unsolicited ingress to
-anything. Real evidence for all of this - including the live allow/deny proof and the debugging
-trail above - is in `evidence/06-bonus-features/`.
+`frontend-service`), so it's scoped to this cluster's Service CIDR rather than a `podSelector` on the
+frontend Pods - AWS VPC CNI's NetworkPolicy agent matches egress against the pre-DNAT Service
+ClusterIP, not the real Pod IP a `podSelector` resolves to, so a Pod-scoped rule here silently never
+enforces at all (confirmed live three ways - see `jenkins/networkpolicies.yaml`'s own header comment
+and `evidence/06-bonus-features/09-networkpolicy-live-enforcement-proof.txt` for the full trail).
+What the policy still meaningfully enforces: zero lateral movement between pods in the namespace, and
+zero unsolicited ingress to anything.
 
 **Endpoints this setup actually talks to**: GitHub (`github.com`, checkout + webhook delivery via
 smee.io), ECR (`*.dkr.ecr.us-east-1.amazonaws.com`, image push/pull), the in-cluster Kubernetes API
