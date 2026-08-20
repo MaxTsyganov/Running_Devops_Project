@@ -206,10 +206,20 @@ cd ..
 # above already removed them along with every image pushed into them - no
 # separate `aws ecr delete-repository` step needed anymore.
 
-step "[8/8] Removing locally-generated files..."
+step "[8/9] Removing locally-generated files..."
 rm -f terraform/terraform.tfvars
 success "Removed terraform/terraform.tfvars (setup.sh recreates it, asking again, on the next run)."
+
+step "[9/9] Stopping any leftover local 'kubectl port-forward svc/jenkins' processes..."
+# Local hygiene only, not an AWS resource - pkill's own exit code is ignored,
+# since "nothing matched" and "not supported on this platform" both look the
+# same to this script and neither should fail the teardown.
+pkill -f "port-forward svc/jenkins" 2>/dev/null && success "Stopped." || info "None running, nothing to stop."
 
 echo -e "\n${GREEN}${BOLD}=================================================================="
 echo "  TEARDOWN COMPLETE - AWS account is clean of EKS and Terraform resources."
 echo -e "==================================================================${RESET}"
+echo "  Confirm nothing billable was left behind: bash verify-teardown.sh"
+echo "  (A GitHub webhook may still be configured on the repo, if one was set"
+echo "  up for Jenkins - it's not an AWS resource, so this script leaves it"
+echo "  alone. Remove it by hand under Settings > Webhooks if you want it gone.)"

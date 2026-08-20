@@ -1,9 +1,10 @@
 #!/bin/bash
-# Confirms teardown.sh actually left nothing behind that could keep costing
-# money - checks every category of resource that either costs money while it
-# exists (compute, storage, load balancers, NAT gateways) or that
-# teardown.sh has been found to miss before (see its own commit history).
-# Read-only: never deletes anything, just reports.
+# Confirms teardown.sh actually left nothing behind - checks every category
+# of resource that either costs money while it exists (compute, storage,
+# load balancers, NAT gateways), that teardown.sh has been found to miss
+# before (see its own commit history), or that could silently block a clean
+# setup.sh re-run later even though it costs nothing (e.g. a stuck
+# CloudFormation stack). Read-only: never deletes anything, just reports.
 
 BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; RESET='\033[0m'
 ok()   { echo -e "${GREEN}✔ $1${RESET}"; }
@@ -83,6 +84,17 @@ IAM_COUNT=$(aws iam list-roles \
     --query "length(Roles[?contains(RoleName, 'eksctl-devops-cluster')])" \
     --output text 2>/dev/null || echo 0)
 [ "$IAM_COUNT" = "0" ] && ok "No orphaned eksctl-created IAM roles." || bad "$IAM_COUNT orphaned eksctl-created IAM role(s) still exist."
+
+# Leftover eksctl CloudFormation stacks - each `eksctl create cluster` /
+# `eksctl create iamserviceaccount` call creates its own stack. None of these
+# cost money by existing, but a stuck one (e.g. DELETE_FAILED) blocks a clean
+# `setup.sh` re-run later and won't show up in any resource-specific check
+# above if the resources it once owned are already individually gone.
+CFN_COUNT=$(aws cloudformation list-stacks --region "$REGION" \
+    --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE ROLLBACK_COMPLETE DELETE_FAILED \
+    --query "length(StackSummaries[?starts_with(StackName, 'eksctl-devops-cluster')])" \
+    --output text 2>/dev/null || echo 0)
+[ "$CFN_COUNT" = "0" ] && ok "No leftover eksctl CloudFormation stacks." || bad "$CFN_COUNT leftover eksctl CloudFormation stack(s) still exist (would block a clean re-run)."
 
 # Terraform-managed IAM policies (a different resource class than the
 # eksctl-created roles above - terraform/iam.tf's DevOps-* policies)

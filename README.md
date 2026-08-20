@@ -544,8 +544,9 @@ instead.
 **Deploying and tearing down.**
 
 ```bash
-make k8s-deploy      # runs setup.sh - infra bring-up only, does NOT deploy the app (Jenkins CD does)
+make k8s-deploy       # runs setup.sh - infra bring-up only, does NOT deploy the app (Jenkins CD does)
 make k8s-teardown     # runs teardown.sh - removes everything: cluster, RDS, Jenkins, all of it
+make verify-teardown  # runs verify-teardown.sh - read-only, confirms nothing billable was left behind
 ```
 
 `setup.sh` is fully automated end to end: pre-flight checks → one DB password prompt (kept in
@@ -563,8 +564,13 @@ re-run since every step checks whether its target already exists first.
 dies, the RDS security-group rule revoked before EKS cleans up its own, the Jenkins PVC's EBS
 volume deleted before the EBS CSI driver disappears with the cluster, IRSA IAM roles deleted before
 `terraform destroy`). `verify-teardown.sh` is a separate, read-only script that checks every
-category of resource that either bills continuously or that `teardown.sh` has previously been found
-to miss - run it right after every teardown.
+category of resource that either bills continuously, that `teardown.sh` has previously been found
+to miss, or that could silently block a clean re-run later even without costing anything (a stuck
+eksctl CloudFormation stack) - `teardown.sh` prints the exact command to run it as its last line, so
+this isn't a step you have to already know to look for. `make destroy` (bare `terraform destroy`,
+no EKS/Jenkins-aware ordering) deliberately refuses to run at all while the EKS cluster still
+exists, rather than failing halfway through or silently orphaning a load balancer - `make
+k8s-teardown` is the only supported way to tear down once the cluster is up.
 
 **Sanity checks once deployed:**
 
