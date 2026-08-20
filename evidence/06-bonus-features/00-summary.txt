@@ -1,14 +1,15 @@
 Bonus features evidence - Assignment 4
 ========================================
 
-All four selected bonus items, with real, live-captured evidence (no
+All eight applicable §11 bonus items, with real, live-captured evidence (no
 simulated output). This folder supplements 01-05, which cover the core
-(non-bonus) assignment requirements. Everything here reflects the final,
-fully-fixed pipeline (ci-application build #10 / cd-application build #11)
-- every file was re-captured against these builds specifically after an
-earlier pass (documented below and in the commit history) turned up real
-bugs that made the first round of evidence unrepresentative of what the
-pipeline actually does today.
+(non-bonus) assignment requirements. Built and evidenced in two passes -
+items 1-5 first, items 6-8 afterward - now combined into one folder since
+they're the same category of deliverable, just added in separate sessions.
+Everything reflects the final, fully-fixed pipeline; every file was
+re-captured against real builds after an earlier pass (documented below and
+in the commit history) turned up real bugs that made the first round of
+evidence unrepresentative of what the pipeline actually does today.
 
 1. Parallel / matrix builds
    01-parallel-matrix-build-proof.txt
@@ -90,6 +91,55 @@ pipeline actually does today.
        zero ingress). Default-deny is doing real work, not just present in
        the YAML.
 
+6. Jenkins Shared Library
+   12-shared-library-live-resolution.txt
+     - The one real unknown (whether pipeline-groovy-lib's libraryPath
+       lets the library live in a subdirectory of this repo instead of a
+       dedicated one) confirmed working, plus a clean controller boot log
+       with the new JCasC block and both new plugins.
+     - Both shared steps (trivyScan, notifySlack) proven live across three
+       different call shapes / container contexts.
+
+7. Separate PR pipeline with a quality gate
+   13a-pr-quality-gate-trigger-bug-and-fix.txt
+     - A real trigger bug: the webhook was delivered and accepted (200)
+       but silently never queued a build, because of a header-name
+       mismatch in the GenericTrigger config. Root-caused via GitHub's
+       and the relay's own delivery logs, fixed by simplifying the filter
+       (commit e38fe50), re-verified against the exact same redelivered
+       payload.
+   13b-pr-quality-gate-full-console-SUCCESS.txt
+     - Full console log of the fixed pipeline actually working: PR-head
+       checkout via explicit refspec, no-push Kaniko builds and tarball-
+       based Trivy scans for all three services, nothing pushed to ECR.
+
+8. Build notifications (Slack Incoming Webhook)
+   14-notifications-proof.txt
+     - Three real, distinct deliveries, all user-confirmed received in
+       Slack: a CI success, an organic (not staged) CI failure, and a CD
+       success - exercising both of notifySlack's container-detection
+       branches (python3/urllib and wget) live.
+
+9. JCasC-first recovery
+   15-jcasc-recovery-drill-proof.txt
+     - Full destroy-and-rebuild drill: Jenkins' StatefulSet and PVC
+       deleted outright, both credential Secrets confirmed to survive
+       untouched (they were never stored there), full recovery via the
+       same two idempotent scripts used for the original install, and a
+       real end-to-end build (webhook -> CI -> CD -> Slack) proving the
+       recovered system actually works, not just that it boots.
+     - Also documents a real, unrelated finding surfaced by the drill and
+       then root-caused after reproducing live a second time: agent Pods
+       weren't being cleaned up immediately despite podRetention: never,
+       because both agent templates also set idleMinutes: 5 - a direct
+       contradiction, fixed by removing it (jenkins/values.yaml).
+
+10-rbac-helm-secret-pruning-fix.txt (referenced above, not its own bonus
+item): cd-deploy-sa lacking delete permission on Secrets for Helm's own
+release-history storage, found only after several real end-to-end deploys/
+rollbacks had accumulated history past Helm's default limit of 10
+revisions (jenkins/rbac/cd-deploy-rbac.yaml, commit d3c3eab).
+
 Getting all of this right took a genuinely long chain of real, live-caught
 bugs (each documented in its own commit message, not just summarized
 here): a wrong Service-CIDR-vs-VPC-CIDR assumption for the controller's
@@ -107,11 +157,9 @@ wasn't actually shared across containers; a missing ECR credential helper
 for Cosign; Cosign's default public-Rekor-upload behavior silently
 reintroducing a dependency the whole KMS-signing design choice was meant
 to avoid; a first-round verification "success" that was actually matching
-a stale, not-yet-fixed signature instead of the one being tested; and,
-found only after all four bonus features were otherwise working and
-several real end-to-end deploys/rollbacks had accumulated Helm release
-history past its default limit of 10 - cd-deploy-sa lacking delete
-permission on Secrets, which Helm needs to prune its own release-history
-storage (jenkins/rbac/cd-deploy-rbac.yaml, commit d3c3eab). Each is why the
-corresponding code comment exists - not decoration, but the actual reason
-that line is there.
+a stale, not-yet-fixed signature instead of the one being tested; the
+Helm-history Secret-pruning permission gap above; the PR trigger's
+header-name mismatch (item 7); and the agent-Pod idleMinutes contradiction
+surfaced during the recovery drill (item 9). Each is why the corresponding
+code comment exists - not decoration, but the actual reason that line is
+there.

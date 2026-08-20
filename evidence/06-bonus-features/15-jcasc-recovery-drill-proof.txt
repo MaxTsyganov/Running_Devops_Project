@@ -72,7 +72,7 @@ lost, because nothing that matters was ever stored only there.
   triggered cd-application automatically, which deployed, rolled out,
   smoke-tested, and both stages notified Slack - all post-recovery, with
   no manual intervention beyond the two idempotent recovery scripts
-  themselves. See 03-notifications-proof.txt items 2-3 for the literal
+  themselves. See 14-notifications-proof.txt items 2-3 for the literal
   console excerpts from these exact builds.
 
 --- A real problem found along the way (worth documenting honestly) ---

@@ -46,7 +46,7 @@ controller:
                 # cluster, back-to-back builds left 5-minutes'-worth of idle,
                 # already-finished agent Pods holding onto CPU/memory that a
                 # new build's Pods then couldn't schedule into (confirmed
-                # live - see evidence/07-bonus-remaining/04-jcasc-recovery-
+                # live - see evidence/06-bonus-features/15-jcasc-recovery-
                 # drill-proof.txt). Removed rather than shortened: this
                 # cluster's real constraint is scheduling headroom, not
                 # agent cold-start time, so the reuse optimization isn't
@@ -115,7 +115,7 @@ controller:
         # to keep in sync. `libraryPath` points the retriever at the
         # subdirectory instead of expecting vars/ at the repo root -
         # confirmed live against pipeline-groovy-lib 798.v5cc688825312, see
-        # evidence/07-bonus-remaining/01-shared-library-live-resolution.txt.
+        # evidence/06-bonus-features/12-shared-library-live-resolution.txt.
         unclassified:
           globalLibraries:
             libraries:

@@ -58,7 +58,7 @@ three Jenkinsfiles, resolving two different global steps with zero
 
   notifySlack() - called from post{success{}}/post{failure{}} in both
   ci/Jenkinsfile and cd/Jenkinsfile, in two different container contexts
-  (see 03-notifications-proof.txt for full detail):
+  (see 14-notifications-proof.txt for full detail):
 
     ci-application (python container):  python3 -c "...urllib.request..."
     cd-application (deploy/Alpine container): wget -q -O- --post-file=...

@@ -71,7 +71,7 @@ GitHub delivery (no new PR event needed):
   "number":1
   "number":1
 
-Build #1 appeared and ran to completion - see 02b-pr-quality-gate-full-
+Build #1 appeared and ran to completion - see 13b-pr-quality-gate-full-
 console-SUCCESS.txt for the full log. Confirms: PR-head checkout via
 explicit refspec, no-push Kaniko builds for all three services, tarball-
 based Trivy scans, all gates passed, nothing pushed to ECR.

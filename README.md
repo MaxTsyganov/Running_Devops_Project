@@ -438,7 +438,7 @@ not updates. Both `git-webhook-secret` and `slack-webhook-url` survive untouched
 separate Kubernetes Secrets that never lived on Jenkins' own PVC in the first place - a real
 webhook-triggered build succeeds again with zero manual intervention beyond the two scripts.
 Evidence, including a real capacity problem the drill surfaced along the way, in
-`evidence/07-bonus-remaining/`.
+`evidence/06-bonus-features/15-jcasc-recovery-drill-proof.txt`.
 
 ---
 
@@ -456,7 +456,7 @@ Evidence, including a real capacity problem the drill surfaced along the way, in
 | Trivy scans the image *after* Kaniko has already pushed it, not before | Kaniko builds and pushes as one atomic `--destination` step - there's no local, daemon-accessible image to scan first without a separate build-to-tarball-then-push flow | A build that fails the Scan stage still leaves that (immutable-tagged, never referenced by any deploy) image sitting in ECR; the actual safety property - nothing gets deployed - still holds, since CD only ever triggers from CI's `success` post-block |
 | Jenkins CD (`helm upgrade --install`) instead of ArgoCD/GitOps | A real CI/CD pipeline needs to own deploy directly - GitOps auto-sync would revert every Jenkins deploy as drift (see [History](#13-history)) | Deploy history lives in Helm release revisions, not a GitOps `Application`'s sync history |
 | `t3.medium` nodes instead of `t3.small` | Jenkins (a resident controller Pod, a resident webhook-relay Pod, and bursts of ephemeral CI/CD agent Pods) on top of an already-tight `t3.small` cluster (11 pods/node) risked agent Pods stuck `Pending` mid-build; `t3.medium` doubles memory per node and raises the ceiling to 17/node for the same node count | Roughly doubles hourly node cost |
-| `generic-webhook-trigger` for `ci-application-pr`, not Multibranch Pipeline or GHPRB | Multibranch would mean a second, structurally different job type (and PR discovery/scanning machinery) alongside the two REST-API-created Pipeline jobs; GHPRB needs a bot GitHub account. A JSON-field-extraction trigger keeps the third job created exactly the same way as the first two | Live-verified, but only after a real bug: the first version's header-based event-type filter never actually matched GitHub's real header name, so the webhook returned 200 while silently never queuing a build - root-caused and simplified (see `evidence/07-bonus-remaining/`), not something a config.xml export alone would have caught |
+| `generic-webhook-trigger` for `ci-application-pr`, not Multibranch Pipeline or GHPRB | Multibranch would mean a second, structurally different job type (and PR discovery/scanning machinery) alongside the two REST-API-created Pipeline jobs; GHPRB needs a bot GitHub account. A JSON-field-extraction trigger keeps the third job created exactly the same way as the first two | Live-verified, but only after a real bug: the first version's header-based event-type filter never actually matched GitHub's real header name, so the webhook returned 200 while silently never queuing a build - root-caused and simplified (see `evidence/06-bonus-features/13a-pr-quality-gate-trigger-bug-and-fix.txt`), not something a config.xml export alone would have caught |
 | Notifications via Slack Incoming Webhook, not the existing SNS topic | Zero AWS/Terraform changes - `cd-deploy-sa` stays a plain, non-IRSA ServiceAccount exactly as designed; both agent containers can already POST JSON without installing anything new | A second external credential to manage (`slack-webhook-url`) instead of reusing infrastructure that already existed |
 | Shared Library lives in this same repo (`jenkins/shared-library/`), not a dedicated library repo | One less repository to keep in sync, one less place a version mismatch could hide | `libraryPath` (pointing the retriever at a subdirectory instead of a repo root) is a less common configuration than the plugin's default - confirmed live against `pipeline-groovy-lib` 798.v5cc688825312, no fallback needed |
 
@@ -673,11 +673,11 @@ jenkins/                   Jenkins install/config scripts, CI+CD+PR Jenkinsfiles
 evidence/                  Captured proof for every item on the assignment's evidence checklist:
                            Jenkins-on-Kubernetes state, CI pipeline (including a deliberately-failed
                            run that never triggers CD), CD pipeline (rollout/traceability/smoke
-                           test/maxSurge:0 live capture), rollback, the Jenkins-image scans,
-                           (06-bonus-features/) the first four bonus items - parallel matrix builds,
-                           SBOM, Cosign signing, automated rollback, and NetworkPolicies - and
-                           (07-bonus-remaining/) the PR quality gate, Shared Library, Slack
-                           notifications, and JCasC-first recovery
+                           test/maxSurge:0 live capture), rollback, the Jenkins-image scans, and
+                           (06-bonus-features/) all nine applicable bonus items - parallel matrix
+                           builds, SBOM, Cosign signing, automated rollback, NetworkPolicies, the
+                           Shared Library, the PR quality gate, Slack notifications, and
+                           JCasC-first recovery
 ```
 
 `.github/workflows/ci.yml` runs `terraform fmt`/`validate`, `helm lint` plus a full `helm template`
