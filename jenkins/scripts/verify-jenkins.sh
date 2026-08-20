@@ -4,11 +4,8 @@
 # Deliberately doesn't `set -e`: it's meant to run every check and report a
 # full pass/fail summary, not stop at the first failure.
 
-BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; RESET='\033[0m'
-step() { echo -e "\n${BOLD}${YELLOW}==> $1${RESET}"; }
-ok()   { echo -e "${GREEN}✔ $1${RESET}"; }
-bad()  { echo -e "${RED}✘ $1${RESET}"; FAILED=1; }
-FAILED=0
+source "$(dirname "${BASH_SOURCE[0]}")/../../output.sh"
+ISSUES_FOUND=0
 
 step "Namespaces"
 kubectl get namespaces
@@ -34,7 +31,7 @@ kubectl get configmap -n jenkins -o name | grep -q jenkins \
     || bad "No JCasC ConfigMap found"
 CURRENT_AGENTS=$(kubectl get pods -n jenkins --no-headers 2>/dev/null | grep -vc '^jenkins-')
 if [ "$CURRENT_AGENTS" -eq 0 ]; then
-    ok "No agent Pods currently running - expected between builds (ephemeral, spawned per-build and deleted after, per idleMinutes: 5 in values.yaml). Watch 'kubectl get pods -n jenkins -w' during an actual CI/CD run to see one appear and disappear."
+    ok "No agent Pods currently running - expected between builds (ephemeral, spawned per-build and deleted immediately after, per podRetention: never in values.yaml). Watch 'kubectl get pods -n jenkins -w' during an actual CI/CD run to see one appear and disappear."
 else
     echo "    Note: $CURRENT_AGENTS non-controller pod(s) currently in the jenkins namespace - likely a build in progress or the webhook relay."
 fi
@@ -55,7 +52,7 @@ fi
 # for why it's needed there (MSYS mangles the /bin/cat path argument).
 JENKINS_PASSWORD=$(MSYS_NO_PATHCONV=1 kubectl exec --namespace jenkins svc/jenkins -c jenkins -- \
     /bin/cat /run/secrets/additional/chart-admin-password 2>/dev/null | tr -d '\r')
-for job in ci-application cd-application; do
+for job in ci-application cd-application ci-application-pr; do
     STATUS=$(curl -s -o /dev/null -w '%{http_code}' -u "admin:${JENKINS_PASSWORD}" \
         "http://localhost:8080/job/${job}/api/json" 2>/dev/null)
     [ "$STATUS" = "200" ] && ok "Job '$job' exists" || bad "Job '$job' not found (HTTP $STATUS) - run jenkins/jobs/create-jobs.sh"
@@ -68,7 +65,7 @@ kubectl get pods -n devops-app -o jsonpath='{range .items[*]}{.metadata.name}{"\
 kubectl get events -n devops-app --sort-by=.metadata.creationTimestamp | tail -10
 
 echo ""
-if [ "$FAILED" -eq 0 ]; then
+if [ "$ISSUES_FOUND" -eq 0 ]; then
     echo -e "${BOLD}${GREEN}All checks passed.${RESET}"
 else
     echo -e "${BOLD}${RED}One or more checks failed - see ✘ lines above.${RESET}"

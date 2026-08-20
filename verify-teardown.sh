@@ -6,10 +6,8 @@
 # setup.sh re-run later even though it costs nothing (e.g. a stuck
 # CloudFormation stack). Read-only: never deletes anything, just reports.
 
-BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; RESET='\033[0m'
-ok()   { echo -e "${GREEN}✔ $1${RESET}"; }
-bad()  { echo -e "${RED}✘ $1${RESET}"; FOUND=1; }
-FOUND=0
+source "$(dirname "${BASH_SOURCE[0]}")/output.sh"
+ISSUES_FOUND=0
 REGION=us-east-1
 
 echo -e "${BOLD}Checking for anything left behind after teardown...${RESET}\n"
@@ -158,7 +156,7 @@ else
 fi
 
 echo ""
-if [ "$FOUND" -eq 0 ]; then
+if [ "$ISSUES_FOUND" -eq 0 ]; then
     echo -e "${BOLD}${GREEN}Everything's clean - nothing left that should be costing money.${RESET}"
 else
     echo -e "${BOLD}${RED}Something's still around - see ✘ lines above before assuming this is fully torn down.${RESET}"

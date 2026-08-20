@@ -154,10 +154,12 @@ configuration on boot - no manual System Config page was ever touched:
 - **Shared Library** (`devops-shared-lib`, bonus): a `globalLibraries` entry points
   `pipeline-groovy-lib`'s `modernSCM` retriever at this same repo (`main` branch,
   `libraryPath: jenkins/shared-library`) - one less repo to keep in sync, not a dedicated library
-  repo. `jenkins/shared-library/vars/trivyScan.groovy` and `notifySlack.groovy` are genuinely shared,
-  not decorative: `trivyScan` is the identical scan-then-gate logic both `ci/Jenkinsfile`'s matrix
-  and `pr-Jenkinsfile`'s quality gate call (§5); `notifySlack` is called from both `ci/Jenkinsfile`
-  and `cd/Jenkinsfile`'s `post{}` blocks (§8).
+  repo. Four steps in `jenkins/shared-library/vars/`, all genuinely shared, not decorative:
+  `trivyScan` is the identical scan-then-gate logic both `ci/Jenkinsfile`'s matrix and
+  `pr-Jenkinsfile`'s quality gate call (§5); `lintCode`/`runTests` are the same Pyflakes/pytest steps
+  both of those pipelines run for the same reason - a PR should be checked against exactly what a
+  real push would run, not a closely-related copy of it; `notifySlack` is called from both
+  `ci/Jenkinsfile` and `cd/Jenkinsfile`'s `post{}` blocks (§8).
 
 ---
 
@@ -658,6 +660,8 @@ public IP at all; the NAT Gateway still gives them outbound access for pulling i
 
 ```
 setup.sh, teardown.sh, verify-teardown.sh   Infra bring-up / full teardown / clean-teardown check
+output.sh                  Shared step()/info()/success()/fail()/ok()/bad() console-output helpers,
+                           sourced by the three scripts above and every jenkins/scripts/*.sh
 Makefile                   make k8s-deploy / make k8s-teardown / raw terraform targets
 .github/workflows/ci.yml   terraform validate + helm lint + Trivy on every push/PR
 .trivyignore               Accepted-risk CVE allowlist for image scanning (empty - nothing needed yet)

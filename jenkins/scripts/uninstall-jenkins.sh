@@ -10,16 +10,12 @@ set -e
 # Idempotent - safe to re-run; every step no-ops cleanly if its target is
 # already gone.
 
-BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RESET='\033[0m'
-step()    { echo -e "\n${BOLD}${YELLOW}==> $1${RESET}"; }
-info()    { echo "    $1"; }
-success() { echo -e "${GREEN}✔ $1${RESET}"; }
-
 CLUSTER_NAME="devops-cluster"
 AWS_REGION="us-east-1"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
+source "$REPO_ROOT/output.sh"
 
 step "[1/4] Uninstalling the Jenkins Helm release..."
 if kubectl get statefulset/jenkins -n jenkins >/dev/null 2>&1; then

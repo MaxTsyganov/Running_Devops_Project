@@ -11,13 +11,6 @@ set -e
 # serviceaccounts/helm upgrade --install all no-op cleanly on an existing,
 # unchanged install.
 
-# output helpers - matches setup.sh's convention
-BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; RESET='\033[0m'
-step()    { echo -e "\n${BOLD}${YELLOW}==> $1${RESET}"; }
-info()    { echo "    $1"; }
-success() { echo -e "${GREEN}✔ $1${RESET}"; }
-fail()    { echo -e "${RED}✘ $1${RESET}"; exit 1; }
-
 CLUSTER_NAME="devops-cluster"
 AWS_REGION="us-east-1"
 # Pinned against Artifact Hub at the time it was checked - not "latest",
@@ -30,6 +23,7 @@ JENKINS_CHART_VERSION="5.9.54"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
+source "$REPO_ROOT/output.sh"
 
 step "[0/8] Pre-flight checks..."
 for tool in aws kubectl eksctl helm; do

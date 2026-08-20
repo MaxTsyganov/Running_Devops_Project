@@ -1,11 +1,7 @@
 #!/bin/bash
 set -e
 
-BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; RESET='\033[0m'
-step()    { echo -e "\n${BOLD}${YELLOW}==> $1${RESET}"; }
-info()    { echo "    $1"; }
-success() { echo -e "${GREEN}✔ $1${RESET}"; }
-fail()    { echo -e "${RED}✘ $1${RESET}"; exit 1; }
+source "$(dirname "${BASH_SOURCE[0]}")/output.sh"
 
 echo -e "${BOLD}=================================================================="
 echo "  DevOps App - Full Teardown"

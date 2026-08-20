@@ -8,14 +8,9 @@ set -e
 # the existing smee.io channel and secret instead of rotating them, since
 # rotating either would desync from the GitHub repo's webhook settings.
 
-BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; RESET='\033[0m'
-step()    { echo -e "\n${BOLD}${YELLOW}==> $1${RESET}"; }
-info()    { echo "    $1"; }
-success() { echo -e "${GREEN}✔ $1${RESET}"; }
-fail()    { echo -e "${RED}✘ $1${RESET}"; exit 1; }
-
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
+source "$REPO_ROOT/output.sh"
 
 kubectl get statefulset/jenkins -n jenkins >/dev/null 2>&1 \
     || fail "Jenkins isn't installed yet - run jenkins/scripts/install-jenkins.sh first."
