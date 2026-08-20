@@ -1,0 +1,80 @@
+PR quality gate (bonus #1) - a real trigger bug, found and fixed live
+=======================================================================
+
+The GenericTrigger XML schema (jenkins/jobs/ci-application-pr-config.xml)
+round-tripped through create-jobs.sh cleanly on the first try - no XML
+rejection, job created fine, buildable:true. That was not the same as the
+trigger actually firing.
+
+--- Attempt 1: opened a real PR (github.com/.../pull/1) ---
+
+GitHub's own delivery log confirmed the event was sent and accepted:
+
+  $ gh api "repos/.../hooks/668277018/deliveries?per_page=5" \
+      --jq '.[] | {event, action, delivered_at, status_code}'
+  {"action":"opened","delivered_at":"2026-08-20T14:21:21.527Z","event":"pull_request","status_code":200}
+
+The in-cluster relay log confirmed it reached Jenkins and got a 200 back:
+
+  Connecting to https://smee.io/JdYfVN7i85iA2Qso...
+  Connected. Forwarding to http://jenkins.jenkins.svc.cluster.local:8080/github-webhook/
+  POST http://jenkins.jenkins.svc.cluster.local:8080/generic-webhook-trigger/invoke?token=pr-quality-gate - 200
+
+But the job's build queue and build history both stayed empty:
+
+  $ curl -s .../job/ci-application-pr/api/json | grep buildable
+  "buildable":true, "builds":[], "lastBuild":null
+  $ curl -s .../queue/api/json
+  {"items":[]}
+
+--- Root cause ---
+
+jenkins/jobs/ci-application-pr-config.xml originally extracted the event
+type from the request header and gated the trigger on it:
+
+  <genericHeaderVariables>
+    <key>X_GITHUB_EVENT</key>                          <!-- underscored -->
+  </genericHeaderVariables>
+  <regexpFilterText>$X_GITHUB_EVENT-$PR_ACTION</regexpFilterText>
+  <regexpFilterExpression>^pull_request-(opened|synchronize|reopened)$</regexpFilterExpression>
+
+generic-webhook-trigger's <key> does a literal match against the real
+incoming header name. GitHub actually sends `X-GitHub-Event` (hyphenated).
+X_GITHUB_EVENT never matched it, the extracted variable was always empty,
+regexpFilterText never matched regexpFilterExpression, and the plugin
+silently declined to queue a build - while still returning 200 to the
+sender, which is why both GitHub's delivery log and the relay log showed
+a clean 200 with no visible error anywhere.
+
+--- The fix ---
+
+jenkins/webhook-relay.yaml's relay.js already only ever forwards actual
+`pull_request` events to this endpoint (push/ping go to /github-webhook/
+instead - see the `dest` selection in its forward() function). Re-checking
+the event type inside the Jenkins trigger was therefore both redundant and
+the broken part. Removed genericHeaderVariables entirely and simplified
+the filter to PR_ACTION alone:
+
+  <regexpFilterText>$PR_ACTION</regexpFilterText>
+  <regexpFilterExpression>^(opened|synchronize|reopened)$</regexpFilterExpression>
+
+Pushed the updated job via create-jobs.sh, then redelivered the exact same
+GitHub delivery (no new PR event needed):
+
+  $ gh api -X POST "repos/.../hooks/668277018/deliveries/3838059697355735040/attempts"
+  {}
+
+--- Attempt 2: same payload, fixed trigger ---
+
+  $ curl -s .../job/ci-application-pr/api/json | grep -o '"number":[0-9]*'
+  "number":1
+  "number":1
+  "number":1
+
+Build #1 appeared and ran to completion - see 02b-pr-quality-gate-full-
+console-SUCCESS.txt for the full log. Confirms: PR-head checkout via
+explicit refspec, no-push Kaniko builds for all three services, tarball-
+based Trivy scans, all gates passed, nothing pushed to ECR.
+
+This fix is committed as e38fe50 (main), with the same root-cause narrative
+in the config.xml file's own header comment.

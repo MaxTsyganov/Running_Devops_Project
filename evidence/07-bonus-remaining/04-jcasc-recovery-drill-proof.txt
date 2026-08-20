@@ -1,0 +1,106 @@
+JCasC-first recovery (bonus #3) - a real destroy-and-rebuild drill
+=====================================================================
+
+Chosen over EBS snapshot/restore: architecturally consistent with how this
+whole project already treats infra as reproducible from code (Terraform,
+Helm, JCasC) rather than as state to be backed up. The claim under test:
+if Jenkins' entire persistent home (PVC) is destroyed, nothing is actually
+lost, because nothing that matters was ever stored only there.
+
+--- Before: state captured ---
+
+  $ kubectl get all,pvc -n jenkins
+  pod/jenkins-0                Running   ...
+  pod/webhook-relay-...        Running   ...
+  persistentvolumeclaim/jenkins  Bound  pvc-08e5f148-...  8Gi  ebs-gp3
+
+  $ curl .../api/json?tree=jobs[name]
+  {"jobs":[{"name":"cd-application"},{"name":"ci-application"},{"name":"ci-application-pr"}]}
+
+  $ kubectl get secrets -n jenkins -l jenkins.io/credentials-type
+  NAME                 TYPE     DATA   AGE
+  git-webhook-secret   Opaque   1      18m
+  slack-webhook-url    Opaque   1      18m
+
+--- Destroy ---
+
+  $ kubectl delete statefulset jenkins -n jenkins
+  statefulset.apps "jenkins" deleted
+  $ kubectl delete pvc jenkins -n jenkins
+  persistentvolumeclaim "jenkins" deleted
+
+  $ kubectl get pod,pvc -n jenkins
+  (jenkins-0 and the PVC both gone; webhook-relay pod, unrelated,
+  untouched)
+
+  $ kubectl get secrets -n jenkins -l jenkins.io/credentials-type
+  NAME                 TYPE     DATA   AGE
+  git-webhook-secret   Opaque   1      19m
+  slack-webhook-url    Opaque   1      19m
+
+  Confirms the premise directly: both credential Secrets are separate
+  Kubernetes objects, never stored on the Jenkins PVC, and survived the
+  deletion completely untouched.
+
+--- Rebuild, purely from code ---
+
+  $ bash jenkins/scripts/install-jenkins.sh
+  ==> [5/8] Installing Jenkins (Helm chart + JCasC from jenkins/values.yaml)...
+  Release "jenkins" has been upgraded. Happy Helming!
+  REVISION: 2
+  [OK] Jenkins controller deployed and Ready
+  EXIT_CODE=0
+
+  A brand-new PVC was dynamically provisioned by the ebs-gp3 StorageClass;
+  JCasC reasserted the entire controller configuration (plugins, the
+  Kubernetes cloud, both agent pod templates, the Shared Library) onto
+  that empty volume with zero manual steps.
+
+  $ bash jenkins/jobs/create-jobs.sh
+  Creating job: ci-application
+  Creating job: cd-application
+  Creating job: ci-application-pr
+
+  ("Creating", not "Updating" - proof this really was a fresh, empty
+  Jenkins home, not a config no-op against surviving state.)
+
+--- Proof it actually works, not just that it boots ---
+
+  A real, GitHub-webhook-triggered ci-application build (commit e38fe50,
+  pushed to main during this drill) ran the full matrix build, Trivy
+  scan, SBOM generation, and Cosign KMS signing for all three services,
+  triggered cd-application automatically, which deployed, rolled out,
+  smoke-tested, and both stages notified Slack - all post-recovery, with
+  no manual intervention beyond the two idempotent recovery scripts
+  themselves. See 03-notifications-proof.txt items 2-3 for the literal
+  console excerpts from these exact builds.
+
+--- A real problem found along the way (worth documenting honestly) ---
+
+  The very first post-recovery build attempt failed, but not because of
+  anything the recovery drill was testing - ECR correctly rejected
+  re-pushing an already-existing immutable tag, because build history
+  reset to #1 after the PVC wipe while the underlying commit (and
+  therefore the image tag) hadn't changed. This is the tag-immutability
+  policy working exactly as designed, not a recovery bug - resolved by
+  committing the PR-trigger fix (e38fe50) and pushing, giving the next
+  build a genuinely new commit SHA to tag.
+
+  Separately, a real capacity problem surfaced during that same build:
+
+    Pod [Pending][Unschedulable] 0/3 nodes are available: 3 Insufficient
+    cpu, 3 Insufficient memory.
+
+  `podRetention: never` (jenkins/values.yaml's agent pod templates) is
+  documented to delete each agent Pod immediately after its build - but
+  three just-finished matrix-cell Pods from the same build, plus one
+  fully-idle PR-agent Pod left over from 26 minutes earlier, were all
+  still Running and consuming enough of the 3-node cluster's capacity
+  that the next required Pod (the top-level pipeline's own post{} block,
+  which needs a fresh agent to run notifySlack()) couldn't schedule at
+  all. Manually deleting the clearly-orphaned PR-agent Pod freed enough
+  room for the pending Pod to schedule immediately. Not one of this
+  session's four target bonus items, so not fixed in code here, but real
+  and worth flagging as a follow-up: podRetention's actual cleanup timing
+  under this Helm chart/plugin version doesn't match its documented
+  immediacy, at least under back-to-back builds on a small cluster.

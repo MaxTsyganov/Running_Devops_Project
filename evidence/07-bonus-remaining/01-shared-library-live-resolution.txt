@@ -1,0 +1,72 @@
+Jenkins Shared Library (bonus #2) - live resolution proof
+============================================================
+
+The one real unknown going in: whether the pipeline-groovy-lib plugin's
+`libraryPath` option (letting the library live in a subdirectory of this
+same repo, jenkins/shared-library/, instead of needing its own dedicated
+repository) actually works, and whether the JCasC block declaring it
+would boot the controller cleanly at all - an earlier phase of this
+project once had a JCasC syntax slip take down the whole controller boot
+sequence, so this was treated as a real risk, not a formality.
+
+JCasC declaration (jenkins/values.yaml):
+
+  unclassified:
+    globalLibraries:
+      libraries:
+        - name: "devops-shared-lib"
+          defaultVersion: "main"
+          retriever:
+            modernSCM:
+              libraryPath: "jenkins/shared-library"
+              scm:
+                git:
+                  remote: "https://github.com/MaxTsyganov/Running_Devops_Project.git"
+
+Controller boot log (jenkins-0, install-jenkins.sh run) - clean, no plugin
+or JCasC errors, ends in a normal fully-up sequence:
+
+  2026-08-20 14:12:08.559+0000 [id=32] INFO jenkins.InitReactorRunner$1#onAttained: Started initialization
+  2026-08-20 14:12:22.449+0000 [id=33] INFO jenkins.InitReactorRunner$1#onAttained: System config loaded
+  2026-08-20 14:12:24.021+0000 [id=33] INFO jenkins.InitReactorRunner$1#onAttained: System config adapted
+  2026-08-20 14:12:24.132+0000 [id=32] INFO jenkins.InitReactorRunner$1#onAttained: Completed initialization
+  2026-08-20 14:12:24.203+0000 [id=23] INFO hudson.lifecycle.Lifecycle#onReady: Jenkins is fully up and running
+
+(JCasC applies during the "System config loaded"/"adapted" pair above -
+nothing between them, no SEVERE/ERROR/Exception anywhere in the full log.)
+
+Both plugins downloaded and validated cleanly by the init container:
+
+  Will install new plugin pipeline-groovy-lib 798.v5cc688825312
+  Will install new plugin generic-webhook-trigger 2.4.2
+  Downloaded and validated plugin pipeline-groovy-lib
+  Downloaded and validated plugin generic-webhook-trigger
+
+Actual usage proof - @Library('devops-shared-lib') _ at the top of all
+three Jenkinsfiles, resolving two different global steps with zero
+"No such DSL method" errors across every real build this session:
+
+  trivyScan() - called by jenkins/ci/Jenkinsfile's matrix Scan+SBOM stage
+  (against a pushed ECR image) AND by jenkins/ci/pr-Jenkinsfile's Build+Scan
+  stage (against a local, unpushed tarball) - same shared step, two
+  different call shapes, both worked:
+
+    ci-application build #1: "trivy image 957905603240.dkr.ecr.../devops-
+      frontend:d0662e92 --severity HIGH,CRITICAL ..." (real ECR ref)
+    ci-application-pr build #1: "trivy image --input .../frontend.tar
+      --severity HIGH,CRITICAL ..." (real local tarball path, --input mode)
+
+  notifySlack() - called from post{success{}}/post{failure{}} in both
+  ci/Jenkinsfile and cd/Jenkinsfile, in two different container contexts
+  (see 03-notifications-proof.txt for full detail):
+
+    ci-application (python container):  python3 -c "...urllib.request..."
+    cd-application (deploy/Alpine container): wget -q -O- --post-file=...
+
+Both branches of notifySlack's container-detection logic (`command -v
+wget`) were exercised live, on real builds, with real deliveries received
+in Slack - not just unit-tested in isolation.
+
+Conclusion: the libraryPath subdirectory retriever works as documented
+against pipeline-groovy-lib 798.v5cc688825312, the JCasC block is safe,
+and no fallback (moving vars/ to the repo root) was needed.

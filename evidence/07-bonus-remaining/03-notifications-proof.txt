@@ -1,0 +1,75 @@
+Build notifications - Slack Incoming Webhook (bonus #4)
+==========================================================
+
+Credential setup - identical mechanism to the existing git-webhook-secret,
+a Kubernetes Secret labeled jenkins.io/credentials-type: secretText, auto-
+discovered by the Kubernetes Credentials Provider plugin, no new plugin
+needed for the credential side:
+
+  $ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/... \
+      bash jenkins/scripts/configure-jenkins.sh
+  ==> [5/5] Slack notification credential...
+  secret/slack-webhook-url created
+  [OK] slack-webhook-url credential created from $SLACK_WEBHOOK_URL.
+
+Three real, distinct deliveries this session, confirmed both from the
+Jenkins console log AND live in Slack (user-confirmed in-channel receipt
+for all three):
+
+1. CI SUCCESS (ci-application build #1, python container - urllib path):
+
+  [Pipeline] withCredentials
+  Masking supported pattern matches of $SLACK_URL
+  [Pipeline] sh
+  + set -e
+  + command -v wget
+  + python3 -c
+  import os, urllib.request
+  data = open('slack-payload.json', 'rb').read()
+  req = urllib.request.Request(os.environ['SLACK_URL'], data=data, headers={'Content-Type': 'application/json'})
+  urllib.request.urlopen(req)
+  + rm -f slack-payload.json
+
+  (python container has neither curl nor wget - confirmed earlier this
+  project - so notifySlack's container-detection correctly fell through
+  to the python3/urllib branch here.)
+
+2. CI FAILURE - organic, not staged (post-recovery ci-application build
+   #1, same webhook re-triggered on an unchanged commit; ECR rejected the
+   re-push of an already-immutable tag - a real failure the pipeline
+   produced on its own, not manufactured to test the notification path):
+
+  error pushing image: ... TAG_INVALID: The image tag 'd0662e92' already
+  exists in the 'devops-frontend' repository and cannot be overwritten
+  because the tag is immutable.
+  ...
+  [Pipeline] withCredentials
+  Masking supported pattern matches of $SLACK_URL
+  + command -v wget
+  + python3 -c
+  ...
+  Finished: FAILURE
+
+  Proves the post{failure{}} notifySlack() path fires correctly even when
+  the failure originates deep inside a parallel matrix branch, not just on
+  a clean top-level pipeline error.
+
+3. CD SUCCESS (cd-application build #1 post-recovery, deploy/Alpine
+   container - wget path, the other of notifySlack's two code branches):
+
+  [Pipeline] withCredentials
+  Masking supported pattern matches of $SLACK_URL
+  [Pipeline] sh
+  + set -e
+  + command -v wget
+  + wget -q -O- --header=Content-Type: application/json --post-file=slack-payload.json ****
+  + rm -f slack-payload.json
+  [Pipeline] End of Pipeline
+  Finished: SUCCESS
+
+  (Webhook URL correctly masked by Jenkins' credential-masking - shown as
+  **** in the raw console log, never printed in the clear.)
+
+Both of notifySlack.groovy's container-detection branches (wget vs
+python3/urllib) were exercised live, in their real respective agent
+containers, not just reviewed as code.

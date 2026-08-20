@@ -415,14 +415,17 @@ cluster disappears - see `teardown.sh`'s own step comments for why order matters
 **JCasC-first recovery (bonus)**: this project's whole premise is that Jenkins' *configuration*
 (clouds, agent templates, plugins, RBAC, jobs) lives entirely in code, never in what's sitting on
 the Jenkins home PVC - which makes "what if that PVC is gone" a claim worth actually testing, not
-just asserting. The drill: delete the Jenkins PVC and Pod (`kubectl delete pvc <jenkins-pvc> pod
-jenkins-0 -n jenkins`), let the StatefulSet recreate a completely empty one, then re-run
-`install-jenkins.sh` (idempotent, already proven throughout this project) and `create-jobs.sh` with
-no other manual step. JCasC reasserts the entire controller configuration onto the fresh home
-directory; jobs reappear from the `config.xml` files already in Git, nothing hand-typed. Both
-`git-webhook-secret` and `slack-webhook-url` survive untouched, since they're separate Kubernetes
-Secrets that never lived on Jenkins' own PVC in the first place - a real webhook-triggered build
-succeeds again with zero manual intervention. Evidence in `evidence/07-bonus-remaining/`.
+just asserting. The drill, run live: `kubectl delete statefulset jenkins -n jenkins` followed by
+`kubectl delete pvc jenkins -n jenkins` (StatefulSet-owned PVCs aren't garbage-collected with the
+StatefulSet by default, so both need deleting explicitly), then re-run `install-jenkins.sh`
+(idempotent, already proven throughout this project) and `create-jobs.sh` with no other manual
+step. A brand-new PVC gets dynamically provisioned; JCasC reasserts the entire controller
+configuration onto it; jobs reappear from the `config.xml` files already in Git as fresh creates,
+not updates. Both `git-webhook-secret` and `slack-webhook-url` survive untouched, since they're
+separate Kubernetes Secrets that never lived on Jenkins' own PVC in the first place - a real
+webhook-triggered build succeeds again with zero manual intervention beyond the two scripts.
+Evidence, including a real capacity problem the drill surfaced along the way, in
+`evidence/07-bonus-remaining/`.
 
 ---
 

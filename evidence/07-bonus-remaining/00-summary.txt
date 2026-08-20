@@ -1,0 +1,59 @@
+Remaining bonus features evidence - Assignment 4
+====================================================
+
+The four bonus items left after the first pass (evidence/06-bonus-
+features/): a PR quality gate, a Jenkins Shared Library, build
+notifications, and JCasC-first recovery. All four verified live against a
+real controller, real GitHub webhook deliveries, and real Slack
+deliveries - not simulated, and (matching this project's established
+practice) with the real bugs found along the way documented rather than
+smoothed over.
+
+1. Jenkins Shared Library
+   01-shared-library-live-resolution.txt
+     - The one real unknown (whether pipeline-groovy-lib's libraryPath
+       lets the library live in a subdirectory of this repo instead of a
+       dedicated one) confirmed working, plus a clean controller boot log
+       with the new JCasC block and both new plugins.
+     - Both shared steps (trivyScan, notifySlack) proven live across three
+       different call shapes / container contexts.
+
+2. Separate PR pipeline with a quality gate
+   02a-pr-quality-gate-trigger-bug-and-fix.txt
+     - A real trigger bug: the webhook was delivered and accepted (200)
+       but silently never queued a build, because of a header-name
+       mismatch in the GenericTrigger config. Root-caused via GitHub's
+       and the relay's own delivery logs, fixed by simplifying the filter
+       (commit e38fe50), re-verified against the exact same redelivered
+       payload.
+   02b-pr-quality-gate-full-console-SUCCESS.txt
+     - Full console log of the fixed pipeline actually working: PR-head
+       checkout via explicit refspec, no-push Kaniko builds and tarball-
+       based Trivy scans for all three services, nothing pushed to ECR.
+
+3. Build notifications (Slack Incoming Webhook)
+   03-notifications-proof.txt
+     - Three real, distinct deliveries, all user-confirmed received in
+       Slack: a CI success, an organic (not staged) CI failure, and a CD
+       success - exercising both of notifySlack's container-detection
+       branches (python3/urllib and wget) live.
+
+4. JCasC-first recovery
+   04-jcasc-recovery-drill-proof.txt
+     - Full destroy-and-rebuild drill: Jenkins' StatefulSet and PVC
+       deleted outright, both credential Secrets confirmed to survive
+       untouched (they were never stored there), full recovery via the
+       same two idempotent scripts used for the original install, and a
+       real end-to-end build (webhook -> CI -> CD -> Slack) proving the
+       recovered system actually works, not just that it boots.
+     - Also documents a real, unrelated finding surfaced by the drill:
+       agent Pods weren't being cleaned up as quickly as podRetention:
+       never implies, which briefly starved the cluster of scheduling
+       capacity - flagged honestly as a follow-up, not silently worked
+       around.
+
+As with evidence/06-bonus-features, getting here took real live-caught
+bugs, not a clean first pass: the PR trigger's header-name mismatch, and
+the agent-Pod cleanup timing surfaced during the recovery drill. Both are
+documented in full above and in their respective commit messages, not
+just summarized here.
