@@ -1,16 +1,17 @@
 <?xml version='1.1' encoding='UTF-8'?>
-<!-- PR quality gate - see jenkins/ci/pr-Jenkinsfile. The generic-webhook-
-     trigger config below (GenericTrigger) is this file's one genuinely
-     unverified piece: its exact XML tag names are written from the
-     plugin's documented schema, not confirmed against a live controller
-     yet (unlike every other config.xml in this repo, which was created
-     against a real running Jenkins via create-jobs.sh and left as-is once
-     it worked). Verify once Jenkins is up - either it round-trips through
-     `create-jobs.sh` cleanly and a real pull_request webhook event
-     triggers a build, or it needs correcting against what a manually-
-     configured test trigger's own "view as XML" export actually shows,
-     the same way this project already root-caused other real config
-     mismatches (jenkins/values.yaml's cloud-name collision, for one). -->
+<!-- PR quality gate - see jenkins/ci/pr-Jenkinsfile. Verified live against a
+     real controller and a real pull_request webhook delivery. The event-type
+     check originally lived here too, extracting the X-GitHub-Event header
+     and filtering on it alongside PR_ACTION - but that never worked live
+     (Jenkins returned 200, queue stayed empty) because genericHeaderVariables'
+     <key> does a literal match against the header name and the plugin's
+     $-token substitution doesn't reliably resolve a hyphenated variable name
+     either way. Root-caused and then removed rather than patched further:
+     jenkins/webhook-relay.yaml's relay.js already only ever forwards actual
+     pull_request events to this endpoint (push/ping go to /github-webhook/
+     instead) - so re-checking the event type here was redundant on top of
+     being the broken part. Filtering on PR_ACTION alone is both simpler and
+     the thing that's actually needed. -->
 <flow-definition plugin="workflow-job">
   <description>PR quality gate: lint, test, build (no push), scan. Never deploys, never pushes to ECR - see jenkins/ci/pr-Jenkinsfile.</description>
   <keepDependencies>false</keepDependencies>
@@ -42,9 +43,11 @@
        incoming JSON straight into environment variables the pipeline reads
        via env.PR_NUMBER etc - no separate ParametersDefinitionProperty
        needed, this plugin binds extracted values directly. regexpFilter*
-       only lets opened/synchronize/reopened pull_request events through;
-       GitHub sends other pull_request actions too (closed, labeled, ...)
-       that shouldn't trigger a build. -->
+       only lets opened/synchronize/reopened through; GitHub sends other
+       pull_request actions too (closed, labeled, ...) that shouldn't
+       trigger a build. No event-type check needed here - this endpoint
+       only ever receives pull_request events in the first place (see
+       jenkins/webhook-relay.yaml). -->
   <triggers>
     <org.jenkinsci.plugins.gwt.GenericTrigger>
       <spec></spec>
@@ -78,18 +81,12 @@
           <defaultValue></defaultValue>
         </org.jenkinsci.plugins.gwt.GenericVariable>
       </genericVariables>
-      <genericHeaderVariables>
-        <org.jenkinsci.plugins.gwt.GenericHeaderVariable>
-          <key>X_GITHUB_EVENT</key>
-          <regexpFilter></regexpFilter>
-        </org.jenkinsci.plugins.gwt.GenericHeaderVariable>
-      </genericHeaderVariables>
       <token>pr-quality-gate</token>
       <printContributedVariables>true</printContributedVariables>
       <printPostContent>false</printPostContent>
       <silentResponse>false</silentResponse>
-      <regexpFilterText>$X_GITHUB_EVENT-$PR_ACTION</regexpFilterText>
-      <regexpFilterExpression>^pull_request-(opened|synchronize|reopened)$</regexpFilterExpression>
+      <regexpFilterText>$PR_ACTION</regexpFilterText>
+      <regexpFilterExpression>^(opened|synchronize|reopened)$</regexpFilterExpression>
       <causeString>Triggered by GitHub pull_request ($PR_ACTION) on PR #$PR_NUMBER</causeString>
     </org.jenkinsci.plugins.gwt.GenericTrigger>
   </triggers>
