@@ -330,14 +330,9 @@ the Credentials Provider plugin watches for the Secret to reappear.
 
 Console log masking: Jenkins' `credentials-binding` plugin masks any credential value it injects via
 `withCredentials` automatically (confirmed live - the Slack webhook URL prints as `****` in every
-build's console). That masking only covers values that actually go through the plugin, though - it
-doesn't know about a value fetched some other way. The CI Sign stage's ECR bearer token (fetched
-directly via `boto3`, not a Jenkins Credential at all) was a real instance of exactly that gap: not a
-theory, an actual token found printed in plaintext in this project's own captured build logs, because
-Jenkins' `sh` step echoes every command it runs by default and neither the token assignment nor the
-`cosign --registry-password` argument that used it were ever hidden from that. Fixed with a plain
-`set +x` around that one block (see [§9](#9-security)) rather than assuming echo-safety applies
-everywhere just because most of the pipeline's values genuinely are non-secret.
+build's console). That masking only covers values that go through the plugin, though - a value
+fetched some other way (like the CI Sign stage's ECR bearer token, pulled directly via `boto3`) isn't
+covered by it at all. See [§9](#9-security) for the real leak this gap caused and how it was fixed.
 
 ---
 

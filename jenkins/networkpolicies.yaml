@@ -58,14 +58,10 @@ spec:
 ---
 # Controller: only ephemeral agent pods (JNLP) and webhook-relay (the
 # internal /github-webhook/ POST) ever need to reach it. Egress needs the
-# Kubernetes API (to launch/watch/delete agent Pods) plus GitHub - confirmed
-# live the hard way: a Pipeline-from-SCM job (CpsScmFlowDefinition) makes
-# the CONTROLLER itself do a lightweight `git fetch` to read the Jenkinsfile
-# before it ever provisions an agent Pod, not just the agent-side checkout
-# stage later. The first real build here failed on exactly that - the
-# controller's own git fetch to github.com timing out - before this rule
-# existed. ECR/KMS/PyPI remain agent-only (no evidence the controller ever
-# calls them, and nothing in this job type would make it).
+# Kubernetes API (to launch/watch/delete agent Pods) plus GitHub - see
+# header comment #1 for why the controller itself needs GitHub egress, not
+# just its agents. ECR/KMS/PyPI remain agent-only (no evidence the
+# controller ever calls them, and nothing in this job type would make it).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

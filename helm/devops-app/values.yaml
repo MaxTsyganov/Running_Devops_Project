@@ -2,8 +2,8 @@
 # endpoint, S3 bucket, AWS account ID) or secrets are left empty here -
 # Jenkins CD supplies the real values at deploy time, read from a ConfigMap.
 # See ../values-dynamic.example.yaml for the shape of that data, and how to
-# supply it by hand instead. TLS isn't part of this at all - cert-manager
-# issues that cert directly in-cluster.
+# supply it by hand instead. (TLS isn't part of any of this - see the note
+# at the bottom of this file.)
 
 image:
   # e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com - set at install time
