@@ -3,6 +3,7 @@
 // "cd-agent" Kubernetes pod template (jenkins/values.yaml, kubectl+helm), as
 // cd-deploy-sa - RBAC scoped to exactly the devops-app namespace and the
 // resource types Helm needs to touch, nothing broader (jenkins/rbac/cd-deploy-rbac.yaml).
+@Library('devops-shared-lib') _
 pipeline {
     agent {
         kubernetes {
@@ -251,6 +252,17 @@ Nothing to roll back - devops-app is unchanged. Investigate:
   kubectl get events -n ${env.TARGET_NAMESPACE} --sort-by=.metadata.creationTimestamp
 """
                 }
+            }
+            script {
+                def detail = (env.HELM_DEPLOYED == 'true') ? 'see build log for rollback outcome' : 'no revision was ever applied'
+                container('deploy') {
+                    notifySlack('FAILURE', "CD failed deploying :${params.IMAGE_TAG} to ${env.TARGET_NAMESPACE} - ${detail}.")
+                }
+            }
+        }
+        success {
+            container('deploy') {
+                notifySlack('SUCCESS', "Deployed :${params.IMAGE_TAG} to ${env.TARGET_NAMESPACE} - rollout, verify, and smoke test all passed.")
             }
         }
         always {

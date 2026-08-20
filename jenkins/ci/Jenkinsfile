@@ -6,6 +6,7 @@
 // parallelism (separate CPU/memory per service), not three processes
 // contending inside one shared container. Agent pods never mount the node's
 // Docker socket - Kaniko builds OCI images without a daemon.
+@Library('devops-shared-lib') _
 pipeline {
     agent {
         kubernetes {
@@ -168,32 +169,21 @@ pipeline {
                     stage('Scan + SBOM') {
                         steps {
                             container('trivy') {
+                                // Scan (full report + blocking gate on fixable CRITICAL findings)
+                                // lives in the Shared Library now (jenkins/shared-library/vars/
+                                // trivyScan.groovy) - identical logic pr-Jenkinsfile's quality
+                                // gate also needs, just against a local tarball instead of a
+                                // pushed image. SBOM generation stays here: it's only meaningful
+                                // for an image that's actually going to be deployed, which a PR
+                                // build never is.
+                                trivyScan("${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}", false, "${SERVICE}")
                                 sh '''
                                     set -e
                                     IMAGE="${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}"
-                                    echo "=== Scanning $IMAGE ==="
-                                    # Full report (HIGH+CRITICAL, including unfixed) - non-blocking,
-                                    # kept purely for visibility, archived as a build artifact.
-                                    # Same two-scan pattern as .github/workflows/ci.yml.
-                                    trivy image --severity HIGH,CRITICAL --exit-code 0 \
-                                        --format json --output "trivy-${SERVICE}.json" \
-                                        --ignorefile .trivyignore "$IMAGE"
-                                    trivy image --severity HIGH,CRITICAL --exit-code 0 \
-                                        --format table --ignorefile .trivyignore "$IMAGE"
                                     echo "=== SBOM for $IMAGE ==="
                                     trivy image --format cyclonedx --output "sbom-${SERVICE}.json" "$IMAGE"
                                 '''
-                                archiveArtifacts artifacts: "trivy-${SERVICE}.json, sbom-${SERVICE}.json", fingerprint: true
-                                sh '''
-                                    set -e
-                                    # The actual gate: fails the build on fixable CRITICAL findings.
-                                    # --ignore-unfixed excludes CVEs with no available patch (nothing
-                                    # actionable from this project alone); accepted-risk exceptions go
-                                    # in .trivyignore with a documented reason, never a blanket override.
-                                    IMAGE="${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}"
-                                    trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed \
-                                        --ignorefile .trivyignore "$IMAGE"
-                                '''
+                                archiveArtifacts artifacts: "sbom-${SERVICE}.json", fingerprint: true
                             }
                         }
                     }
@@ -278,6 +268,14 @@ print(base64.b64decode(token).decode().split(':', 1)[1])
             build job: 'cd-application',
                   parameters: [string(name: 'IMAGE_TAG', value: env.IMAGE_TAG)],
                   wait: false
+            container('python') {
+                notifySlack('SUCCESS', "Built, scanned, and signed :${env.IMAGE_TAG} for all three services - triggering cd-application.")
+            }
+        }
+        failure {
+            container('python') {
+                notifySlack('FAILURE', "CI failed on commit ${env.GIT_COMMIT_SHORT ?: env.GIT_COMMIT} - nothing was built or deployed.")
+            }
         }
     }
 }

@@ -8,11 +8,23 @@ sequenceDiagram
     participant GH as GitHub repo
     participant Relay as webhook-relay Pod
     participant Ctrl as Jenkins controller
+    participant PR as PR agent Pod
     participant CI as CI agent Pod
     participant ECR as ECR registry
     participant CD as CD agent Pod
     participant K8s as Kubernetes (devops-app)
+    participant Slack as Slack (bonus)
     actor User as End user
+
+    rect rgb(255, 245, 225)
+        note over PR: Bonus: PR quality gate (pr-Jenkinsfile) - separate job, separate trigger
+        Dev->>GH: open/update a Pull Request
+        GH->>Relay: webhook POST (pull_request event)
+        Relay->>Ctrl: forward to /generic-webhook-trigger/ (different endpoint than push)
+        Ctrl->>PR: spawn ephemeral agent Pod, run ci-application-pr
+        PR->>PR: Checkout PR head, Lint, Tests, Build (no push), Scan (blocking)
+        PR->>Ctrl: pass/fail shown on the PR's build page - never pushes an image, never triggers CD
+    end
 
     Dev->>GH: git push (main)
     GH->>Relay: webhook POST (HMAC-signed)
@@ -44,6 +56,7 @@ sequenceDiagram
             CI->>Ctrl: build succeeded (any cell failing fails the whole build)
             Ctrl->>CD: trigger cd-application(IMAGE_TAG=<sha>)
         end
+        CI->>Slack: notifySlack() - bonus, success or failure either way
     end
 
     rect rgb(227, 242, 253)
@@ -68,6 +81,7 @@ sequenceDiagram
                 CD->>Ctrl: build succeeded
             end
         end
+        CD->>Slack: notifySlack() - bonus, success or failure either way
     end
 
     User->>K8s: normal traffic, once deployed

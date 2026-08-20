@@ -38,28 +38,36 @@ data:
   relay.js: |
     const smeeUrl = process.env.SMEE_URL;
     const target = process.env.TARGET_URL;
+    // Separate target for pull_request events: the "github" plugin's push
+    // trigger (TARGET_URL, /github-webhook/) only ever fires on push -
+    // ci-application-pr is triggered by the generic-webhook-trigger plugin
+    // instead, which listens on its own endpoint. push/ping keep going to
+    // TARGET_URL exactly as before; only pull_request gets routed here.
+    const targetPr = process.env.TARGET_URL_PR;
 
     async function forward(data) {
       // smee.io sends housekeeping messages (e.g. an empty {} on connect)
       // through the same channel alongside real GitHub deliveries - only
       // real webhook payloads have an event type and a body.
-      if (!data["x-github-event"] || !data.body) {
+      const event = data["x-github-event"];
+      if (!event || !data.body) {
         return;
       }
+      const dest = (event === "pull_request" && targetPr) ? targetPr : target;
       const body = JSON.stringify(data.body);
       try {
-        const res = await fetch(target, {
+        const res = await fetch(dest, {
           method: "POST",
           body,
           headers: {
             "content-type": "application/json",
-            "x-github-event": data["x-github-event"] || "",
+            "x-github-event": event || "",
             "x-github-delivery": data["x-github-delivery"] || "",
             "x-hub-signature-256": data["x-hub-signature-256"] || "",
             "x-hub-signature": data["x-hub-signature"] || "",
           },
         });
-        console.log(`POST ${target} - ${res.status}`);
+        console.log(`POST ${dest} - ${res.status}`);
       } catch (err) {
         console.error("Forward failed:", err);
       }
@@ -133,6 +141,12 @@ spec:
                   key: url
             - name: TARGET_URL
               value: "http://jenkins.jenkins.svc.cluster.local:8080/github-webhook/"
+            # ci-application-pr's generic-webhook-trigger endpoint - the
+            # "pr-quality-gate" token matches jenkins/jobs/
+            # ci-application-pr-config.xml's <token> so only that job
+            # responds to this specific delivery.
+            - name: TARGET_URL_PR
+              value: "http://jenkins.jenkins.svc.cluster.local:8080/generic-webhook-trigger/invoke?token=pr-quality-gate"
           volumeMounts:
             - name: script
               mountPath: /relay

@@ -20,7 +20,7 @@ cd "$REPO_ROOT"
 kubectl get statefulset/jenkins -n jenkins >/dev/null 2>&1 \
     || fail "Jenkins isn't installed yet - run jenkins/scripts/install-jenkins.sh first."
 
-step "[1/4] Admin credentials..."
+step "[1/5] Admin credentials..."
 # MSYS_NO_PATHCONV=1: on Windows Git Bash, MSYS rewrites any argument that
 # looks like a Unix absolute path (like /bin/cat here) into a literal
 # Windows path before it reaches kubectl - the exec then fails inside the
@@ -32,7 +32,7 @@ info "User:     admin"
 info "Password: $ADMIN_PASSWORD"
 info "(Also always readable later via: kubectl exec --namespace jenkins svc/jenkins -c jenkins -- cat /run/secrets/additional/chart-admin-password)"
 
-step "[2/4] GitHub webhook relay channel..."
+step "[2/5] GitHub webhook relay channel..."
 # Reuse the existing channel if configure-jenkins.sh already ran once -
 # minting a new one every run would silently break whatever's already saved
 # in the GitHub repo's webhook settings.
@@ -47,12 +47,12 @@ else
 fi
 success "Webhook channel ready."
 
-step "[3/4] Deploying the webhook relay..."
+step "[3/5] Deploying the webhook relay..."
 kubectl apply -f jenkins/webhook-relay.yaml
 kubectl rollout status deployment/webhook-relay -n jenkins --timeout=120s
-success "Relay is up - GitHub POSTs to $SMEE_URL will forward straight to Jenkins' internal /github-webhook/ endpoint."
+success "Relay is up - GitHub POSTs to $SMEE_URL will forward straight to Jenkins' internal /github-webhook/ or /generic-webhook-trigger/ endpoint, by event type."
 
-step "[4/4] Webhook shared-secret credential..."
+step "[4/5] Webhook shared-secret credential..."
 # Made available to Jenkins via the Kubernetes Credentials Provider plugin
 # (any Secret in this namespace labeled jenkins.io/credentials-type shows up
 # as a real Jenkins credential automatically - no JCasC edit, no restart).
@@ -89,13 +89,50 @@ EOF
     info "$WEBHOOK_SECRET"
 fi
 
+step "[5/5] Slack notification credential..."
+# Same pattern as git-webhook-secret above, deliberately: a Secret text
+# credential the Kubernetes Credentials Provider picks up automatically,
+# nothing hand-typed into Jenkins' own UI. Optional - a Slack Incoming
+# Webhook URL is an external dependency this script can't provision itself,
+# so it's read from an env var the caller sets before running this script
+# (`export SLACK_WEBHOOK_URL=https://hooks.slack.com/...`) rather than
+# prompted for, and skipped entirely (not a failure) if unset - CI/CD keep
+# working with or without it, jenkins/shared-library/vars/notifySlack.groovy
+# is only ever called from a build, never a requirement to have one running.
+if kubectl get secret slack-webhook-url -n jenkins >/dev/null 2>&1; then
+    info "slack-webhook-url already exists, leaving it as-is."
+elif [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+    cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: slack-webhook-url
+  namespace: jenkins
+  labels:
+    jenkins.io/credentials-type: secretText
+  annotations:
+    jenkins.io/credentials-description: Slack Incoming Webhook URL for CI/CD build notifications
+type: Opaque
+stringData:
+  text: "$SLACK_WEBHOOK_URL"
+EOF
+    success "slack-webhook-url credential created from \$SLACK_WEBHOOK_URL."
+else
+    info "SLACK_WEBHOOK_URL not set - skipping. Build notifications will silently fail to send"
+    info "until this exists; re-run with SLACK_WEBHOOK_URL exported to enable them (nothing else"
+    info "needs re-running to pick it up later - the shared library reads the credential fresh"
+    info "on every build)."
+fi
+
 echo ""
 echo -e "${BOLD}=================================================================="
 echo "  Add this webhook on the GitHub repo (Settings > Webhooks > Add webhook):"
 echo "    Payload URL:  $SMEE_URL"
 echo "    Content type: application/json"
 echo "    Secret:       (the value printed above, first time only)"
-echo "    Events:       Just the push event"
+echo "    Events:       push and pull_request (ci-application-pr needs the"
+echo "                  latter - see jenkins/webhook-relay.yaml for how each"
+echo "                  gets routed to the right Jenkins endpoint)"
 echo "=================================================================="
 echo -e "${RESET}"
 success "configure-jenkins.sh complete. Run jenkins/jobs/create-jobs.sh next."

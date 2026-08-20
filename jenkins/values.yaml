@@ -99,6 +99,25 @@ controller:
                         resourceRequestMemory: "512Mi"
                         resourceLimitCpu: "500m"
                         resourceLimitMemory: "1Gi"
+        # Shared Library (jenkins/shared-library/vars/) - the same repo as
+        # everything else here, not a separate library repo: one less thing
+        # to keep in sync. `libraryPath` points the retriever at the
+        # subdirectory instead of expecting vars/ at the repo root - this
+        # field's exact availability/behavior needs confirming live against
+        # the actual pipeline-groovy-lib version this chart resolves; if it
+        # turns out unsupported, the fallback is moving vars/ to the repo
+        # root instead, not a different plugin.
+        unclassified:
+          globalLibraries:
+            libraries:
+              - name: "devops-shared-lib"
+                defaultVersion: "main"
+                retriever:
+                  modernSCM:
+                    libraryPath: "jenkins/shared-library"
+                    scm:
+                      git:
+                        remote: "https://github.com/MaxTsyganov/Running_Devops_Project.git"
 
   # Job creation deliberately does not happen here. An earlier attempt
   # bootstrapped a seed job through JCasC's own jobs: section, which runs
@@ -129,6 +148,15 @@ controller:
     - "credentials-binding"
     - "timestamper"
     - "ws-cleanup"
+    # pipeline-groovy-lib: listed explicitly rather than assumed bundled
+    # inside workflow-aggregator - powers the Shared Library referenced
+    # below (jenkins/shared-library/).
+    - "pipeline-groovy-lib"
+    # generic-webhook-trigger: triggers ci-application-pr on GitHub
+    # pull_request events. The existing "github" plugin's push trigger is
+    # push-only; this one triggers off any JSON payload field, which is
+    # what pr-Jenkinsfile's job config actually needs.
+    - "generic-webhook-trigger"
 
   serviceType: ClusterIP # not exposed publicly - reach it via port-forward for now
 

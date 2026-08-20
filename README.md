@@ -146,10 +146,18 @@ configuration on boot - no manual System Config page was ever touched:
   parallel matrix cell in §5's Build/Scan/Sign stage requests a fresh Pod from - no separate
   template needed for that either.
 - **Plugin list**: `kubernetes`, `kubernetes-credentials-provider`, `workflow-aggregator`, `git`,
-  `github`, `job-dsl`, `configuration-as-code`, `credentials-binding`, `timestamper`, `ws-cleanup` -
-  named only, no individual version pins (an earlier attempt pinning each plugin's version hit a
-  `ClassNotFoundException` from mutually-incompatible pinned versions; the installer resolves a
-  compatible set for a given Jenkins core version far more reliably than hand-pinning each one).
+  `github`, `job-dsl`, `configuration-as-code`, `credentials-binding`, `timestamper`, `ws-cleanup`,
+  `pipeline-groovy-lib`, `generic-webhook-trigger` - named only, no individual version pins (an
+  earlier attempt pinning each plugin's version hit a `ClassNotFoundException` from
+  mutually-incompatible pinned versions; the installer resolves a compatible set for a given Jenkins
+  core version far more reliably than hand-pinning each one).
+- **Shared Library** (`devops-shared-lib`, bonus): a `globalLibraries` entry points
+  `pipeline-groovy-lib`'s `modernSCM` retriever at this same repo (`main` branch,
+  `libraryPath: jenkins/shared-library`) - one less repo to keep in sync, not a dedicated library
+  repo. `jenkins/shared-library/vars/trivyScan.groovy` and `notifySlack.groovy` are genuinely shared,
+  not decorative: `trivyScan` is the identical scan-then-gate logic both `ci/Jenkinsfile`'s matrix
+  and `pr-Jenkinsfile`'s quality gate call (§5); `notifySlack` is called from both `ci/Jenkinsfile`
+  and `cd/Jenkinsfile`'s `post{}` blocks (§8).
 
 ---
 
@@ -194,6 +202,36 @@ keypair) is still the real trust anchor either way. Verification isn't wired int
 assignment's bonus asks for signing, not a verify-or-block deploy step, and adding one would be
 scope beyond what was asked.
 
+### PR quality gate (`jenkins/ci/pr-Jenkinsfile`, bonus)
+
+A genuinely separate pipeline, job (`ci-application-pr`), and trigger - not a branch inside
+`ci/Jenkinsfile`. Runs Validation, Lint, Tests, then builds all three services with Kaniko's
+`--no-push --tarPath` (no `--destination` at all - the image never touches ECR) and scans each
+tarball with the same `trivyScan()` shared-library gate `ci/Jenkinsfile` uses. No SBOM, no Cosign
+signing, no trigger of `cd-application` anywhere in the file - none of those are meaningful for an
+image nothing will ever deploy. This satisfies both the §11 bonus ("separate Pipeline for Pull
+Requests with a quality gate") and the CI section's own note about preventing a registry push for
+an unapproved PR, with one design instead of two.
+
+**Trigger**: the `github` plugin's push trigger (`triggers { githubPush() }`, used by
+`ci/Jenkinsfile`) only ever fires on push. `ci-application-pr` uses the `generic-webhook-trigger`
+plugin instead, configured entirely in `jenkins/jobs/ci-application-pr-config.xml`'s `<triggers>`
+block - it extracts `PR_NUMBER`, `PR_HEAD_SHA`, `PR_HEAD_REF`, and `PR_ACTION` straight from the
+incoming JSON as environment variables (no separate `ParametersDefinitionProperty` needed), gated
+on `pull_request` events with `action` in `opened`/`synchronize`/`reopened` - GitHub sends other
+`pull_request` actions too (`closed`, `labeled`, ...) that shouldn't trigger a build.
+`jenkins/webhook-relay.yaml`'s relay script routes by event type: `push`/`ping` keep going to the
+`github` plugin's `/github-webhook/` endpoint exactly as before, `pull_request` goes to
+`/generic-webhook-trigger/invoke?token=pr-quality-gate` instead - one relay, two destinations, based
+on the same `x-github-event` header it already inspected. `configure-jenkins.sh` subscribes the
+GitHub webhook to both event types.
+
+**Checkout**: the job's own SCM config only fetches `pr-Jenkinsfile` itself from `main` (same as the
+other two jobs) - the pipeline's first stage does its own separate `checkout` with an explicit
+refspec into GitHub's `refs/pull/*/head` ref namespace, at the exact `PR_HEAD_SHA` the trigger
+supplied. The PR's actual head commit is the only thing this quality gate ever evaluates, regardless
+of what the target branch looks like by the time the build runs.
+
 ---
 
 ## 6. CD Pipeline (`jenkins/cd/Jenkinsfile`)
@@ -237,11 +275,12 @@ unhealthy, since CI's own scan gate keeps that from happening in the first place
 
 ## 7. Jobs as code, and how CI connects to CD
 
-Both jobs are created via `jenkins/jobs/create-jobs.sh` calling Jenkins' REST API with the
-`config.xml` files in that same directory - `POST .../createItem` if the job doesn't exist yet,
-`POST .../config.xml` (an update) if it does, so re-running after editing a Jenkinsfile or a
-`config.xml` is a normal, safe operation. Creating either job by hand through the Jenkins UI is
-explicitly out of scope for this assignment and isn't how these two ever get created here.
+All three jobs (`ci-application`, `cd-application`, and the bonus `ci-application-pr`) are created
+via `jenkins/jobs/create-jobs.sh` calling Jenkins' REST API with the `config.xml` files in that same
+directory - `POST .../createItem` if the job doesn't exist yet, `POST .../config.xml` (an update) if
+it does, so re-running after editing a Jenkinsfile or a `config.xml` is a normal, safe operation.
+Creating any of them by hand through the Jenkins UI is explicitly out of scope for this assignment
+and isn't how these ever get created here.
 
 CI connects to CD via `build job: 'cd-application', parameters: [string(name: 'IMAGE_TAG', value:
 env.IMAGE_TAG)], wait: false` in `ci-Jenkinsfile`'s `post { success { ... } }` block - CI hands CD
@@ -260,9 +299,24 @@ CD stay visibly separate pipelines.
 | kubectl/helm access (CD) | `cd-deploy-sa`'s own ServiceAccount token, auto-mounted in-cluster |
 | DB password | AWS Secrets Manager, read by External Secrets Operator - never touches Jenkins at all |
 | GitHub webhook signature | Jenkins Credential `git-webhook-secret` (Secret text), created from a Kubernetes Secret labeled `jenkins.io/credentials-type: secretText` - picked up automatically by the Kubernetes Credentials Provider plugin, no JCasC edit or restart needed |
+| Slack Incoming Webhook URL (bonus) | Same mechanism, different credential: `slack-webhook-url`, created by `configure-jenkins.sh` from `$SLACK_WEBHOOK_URL` if the caller set it - optional, CI/CD work with or without it |
 
-`jenkins/secrets/credentials.example.yaml` documents the one credential this project expects to
-exist and what it's for - never a real value. `configure-jenkins.sh` generates the actual webhook
+**Build notifications (bonus)**: `jenkins/shared-library/vars/notifySlack.groovy` posts a
+pass/fail message (job, build number, a one-line summary, a link back to the build) to Slack from
+both `ci/Jenkinsfile` and `cd/Jenkinsfile`'s `post{}` blocks, reading the webhook URL from the
+`slack-webhook-url` credential via `withCredentials` - never inlined, never printed. Two POST
+implementations picked automatically by which container the call happens to run in:
+`wget --post-file` (cd-agent's Alpine-based `deploy` container, which already uses wget for the
+Smoke Test) or `python3`'s `urllib.request` (ci-agent's `python` container, confirmed to have
+neither curl nor wget - same constraint the Cosign binary download already worked around). The JSON
+payload is written to a file first rather than embedded in any command string, and the webhook URL
+is read from the process environment rather than substituted into one - avoids three-way
+shell/Python/Groovy quoting collisions instead of trying to escape around them.
+`pr-Jenkinsfile` doesn't notify - a quality-gate result showing on the PR's own Jenkins build page
+is enough; it was never asked to page anyone.
+
+`jenkins/secrets/credentials.example.yaml` documents the credentials this project expects to
+exist and what they're for - never real values. `configure-jenkins.sh` generates the actual webhook
 secret at runtime (`openssl rand -hex 20`), prints it once, and never writes it to git; the
 credential is idempotent to re-run (an existing `git-webhook-secret` Secret is left alone rather
 than rotated, so it never desyncs from what's actually configured on GitHub's side).
@@ -358,6 +412,18 @@ assignment added (deleting the Jenkins PVC/EBS volume and `ci-build-sa`'s IRSA s
 cluster disappears - see `teardown.sh`'s own step comments for why order matters here, and
 [§12](#12-supporting-infrastructure) for the full teardown flow).
 
+**JCasC-first recovery (bonus)**: this project's whole premise is that Jenkins' *configuration*
+(clouds, agent templates, plugins, RBAC, jobs) lives entirely in code, never in what's sitting on
+the Jenkins home PVC - which makes "what if that PVC is gone" a claim worth actually testing, not
+just asserting. The drill: delete the Jenkins PVC and Pod (`kubectl delete pvc <jenkins-pvc> pod
+jenkins-0 -n jenkins`), let the StatefulSet recreate a completely empty one, then re-run
+`install-jenkins.sh` (idempotent, already proven throughout this project) and `create-jobs.sh` with
+no other manual step. JCasC reasserts the entire controller configuration onto the fresh home
+directory; jobs reappear from the `config.xml` files already in Git, nothing hand-typed. Both
+`git-webhook-secret` and `slack-webhook-url` survive untouched, since they're separate Kubernetes
+Secrets that never lived on Jenkins' own PVC in the first place - a real webhook-triggered build
+succeeds again with zero manual intervention. Evidence in `evidence/07-bonus-remaining/`.
+
 ---
 
 ## 11. Trade-offs
@@ -374,6 +440,9 @@ cluster disappears - see `teardown.sh`'s own step comments for why order matters
 | Trivy scans the image *after* Kaniko has already pushed it, not before | Kaniko builds and pushes as one atomic `--destination` step - there's no local, daemon-accessible image to scan first without a separate build-to-tarball-then-push flow | A build that fails the Scan stage still leaves that (immutable-tagged, never referenced by any deploy) image sitting in ECR; the actual safety property - nothing gets deployed - still holds, since CD only ever triggers from CI's `success` post-block |
 | Jenkins CD (`helm upgrade --install`) instead of ArgoCD/GitOps | A real CI/CD pipeline needs to own deploy directly - GitOps auto-sync would revert every Jenkins deploy as drift (see [History](#13-history)) | Deploy history lives in Helm release revisions, not a GitOps `Application`'s sync history |
 | `t3.medium` nodes instead of `t3.small` | Jenkins (a resident controller Pod, a resident webhook-relay Pod, and bursts of ephemeral CI/CD agent Pods) on top of an already-tight `t3.small` cluster (11 pods/node) risked agent Pods stuck `Pending` mid-build; `t3.medium` doubles memory per node and raises the ceiling to 17/node for the same node count | Roughly doubles hourly node cost |
+| `generic-webhook-trigger` for `ci-application-pr`, not Multibranch Pipeline or GHPRB | Multibranch would mean a second, structurally different job type (and PR discovery/scanning machinery) alongside the two REST-API-created Pipeline jobs; GHPRB needs a bot GitHub account. A JSON-field-extraction trigger keeps the third job created exactly the same way as the first two | The trigger's exact XML schema had to be written from the plugin's documented shape rather than exported from a real run, unlike every other `config.xml` in this repo - flagged for live verification the first time this job actually runs |
+| Notifications via Slack Incoming Webhook, not the existing SNS topic | Zero AWS/Terraform changes - `cd-deploy-sa` stays a plain, non-IRSA ServiceAccount exactly as designed; both agent containers can already POST JSON without installing anything new | A second external credential to manage (`slack-webhook-url`) instead of reusing infrastructure that already existed |
+| Shared Library lives in this same repo (`jenkins/shared-library/`), not a dedicated library repo | One less repository to keep in sync, one less place a version mismatch could hide | `libraryPath` (pointing the retriever at a subdirectory instead of a repo root) is a less common configuration than the plugin's default - needs live confirmation it's actually supported by the resolved plugin version, documented fallback is moving `vars/` to the repo root |
 
 ---
 
@@ -574,14 +643,17 @@ helm/values-dynamic.example.yaml   Template for deploying the chart by hand, byp
 frontend/                  nginx (unprivileged), static UI, reverse proxy to backend
 backend/                   Flask + Gunicorn API (RDS, S3, SNS)
 worker/                    Background poller (RDS, SNS)
-jenkins/                   Jenkins install/config scripts, CI+CD Jenkinsfiles, JCasC values, RBAC,
-                           job configs, architecture diagrams
+jenkins/                   Jenkins install/config scripts, CI+CD+PR Jenkinsfiles, the Shared
+                           Library (shared-library/), JCasC values, RBAC, job configs,
+                           architecture diagrams
 evidence/                  Captured proof for every item on the assignment's evidence checklist:
                            Jenkins-on-Kubernetes state, CI pipeline (including a deliberately-failed
                            run that never triggers CD), CD pipeline (rollout/traceability/smoke
-                           test/maxSurge:0 live capture), rollback, the Jenkins-image scans, and
-                           (06-bonus-features/) the four bonus items - parallel matrix builds, SBOM,
-                           Cosign signing, automated rollback, and NetworkPolicies
+                           test/maxSurge:0 live capture), rollback, the Jenkins-image scans,
+                           (06-bonus-features/) the first four bonus items - parallel matrix builds,
+                           SBOM, Cosign signing, automated rollback, and NetworkPolicies - and
+                           (07-bonus-remaining/) the PR quality gate, Shared Library, Slack
+                           notifications, and JCasC-first recovery
 ```
 
 `.github/workflows/ci.yml` runs `terraform fmt`/`validate`, `helm lint` plus a full `helm template`

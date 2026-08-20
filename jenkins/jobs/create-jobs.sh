@@ -57,7 +57,9 @@ create_or_update_job() {
 
 create_or_update_job "ci-application" "jenkins/jobs/ci-application-config.xml"
 create_or_update_job "cd-application" "jenkins/jobs/cd-application-config.xml"
+create_or_update_job "ci-application-pr" "jenkins/jobs/ci-application-pr-config.xml"
 
 echo "Done. Verify:"
 echo "  curl -s -u ${JENKINS_USER}:\$JENKINS_PASSWORD ${JENKINS_URL}/job/ci-application/api/json | head -c 300"
 echo "  curl -s -u ${JENKINS_USER}:\$JENKINS_PASSWORD ${JENKINS_URL}/job/cd-application/api/json | head -c 300"
+echo "  curl -s -u ${JENKINS_USER}:\$JENKINS_PASSWORD ${JENKINS_URL}/job/ci-application-pr/api/json | head -c 300"

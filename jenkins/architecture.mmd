@@ -10,8 +10,9 @@ flowchart TB
     User[End user]
     GH[GitHub repository]
     Smee[["smee.io channel\n(public relay, outbound-only from our side)"]]
+    Slack[["Slack (bonus)\nIncoming Webhook"]]
 
-    Dev -->|push| GH
+    Dev -->|push or PR| GH
     GH -->|webhook POST\nHTTPS, HMAC-signed| Smee
     User -->|HTTPS| ALB
 
@@ -41,8 +42,10 @@ flowchart TB
                         Controller --- JSvc
                         CIAgent["CI agent Pod(s) (ephemeral)\npython + kaniko + trivy containers\nSA: ci-build-sa\none Pod per matrix cell -\nup to 3 running in parallel"]
                         CDAgent["CD agent Pod (ephemeral)\nkubectl+helm container\nSA: cd-deploy-sa"]
+                        PRAgent["PR agent Pod (ephemeral, bonus)\nsame containers as ci-agent\nSA: ci-build-sa, never pushes to ECR"]
                         Controller -.spawns, deletes after build.-> CIAgent
                         Controller -.spawns, deletes after build.-> CDAgent
+                        Controller -.spawns, deletes after build.-> PRAgent
                         NetPol{{"NetworkPolicy: default-deny +\nper-workload allow (jenkins/networkpolicies.yaml)"}}
                     end
 
@@ -73,17 +76,21 @@ flowchart TB
         end
     end
 
-    Smee -->|forwarded| Relay
+    Smee -->|forwarded, routed by\nevent type| Relay
     Relay -->|POST /github-webhook/\ninternal, ClusterIP only| JSvc
+    Relay -->|POST /generic-webhook-trigger/\npull_request events only, bonus| JSvc
     JSvc --> Controller
     Controller -.triggers on push.-> CIAgent
+    Controller -.triggers on pull_request.-> PRAgent
 
     CIAgent -->|docker push\nvia ci-build-sa IRSA| ECR
     CIAgent -->|cosign sign --key awskms://\nvia ci-build-sa IRSA| KMS
+    CIAgent -.notifySlack, bonus.-> Slack
     CDAgent -->|kubectl / helm\nvia cd-deploy-sa RBAC\nRole+RoleBinding, devops-app only| FE
     CDAgent --> BE
     CDAgent --> WK
     CDAgent -.reads image tag/digest.-> ECR
+    CDAgent -.notifySlack, bonus.-> Slack
 
     ALB --> FE
     FE -->|reverse proxy| BESvc --> BE
@@ -103,7 +110,7 @@ flowchart TB
     classDef jenkins fill:#e3f2fd,stroke:#1565c0,color:#333
     classDef app fill:#e8f5e9,stroke:#2e7d32,color:#333
     classDef data fill:#fce4ec,stroke:#ad1457,color:#333
-    class Dev,User,GH,Smee,Admin external
+    class Dev,User,GH,Smee,Admin,Slack external
     class ALB,RDS,ECR,S3,SNS,SecMgr,KMS aws
-    class Relay,Controller,PVC,JSvc,CIAgent,CDAgent jenkins
+    class Relay,Controller,PVC,JSvc,CIAgent,CDAgent,PRAgent jenkins
     class FE,BE,WK,BESvc,ESO app

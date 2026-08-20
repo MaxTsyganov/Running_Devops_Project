@@ -1,0 +1,97 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<!-- PR quality gate - see jenkins/ci/pr-Jenkinsfile. The generic-webhook-
+     trigger config below (GenericTrigger) is this file's one genuinely
+     unverified piece: its exact XML tag names are written from the
+     plugin's documented schema, not confirmed against a live controller
+     yet (unlike every other config.xml in this repo, which was created
+     against a real running Jenkins via create-jobs.sh and left as-is once
+     it worked). Verify once Jenkins is up - either it round-trips through
+     `create-jobs.sh` cleanly and a real pull_request webhook event
+     triggers a build, or it needs correcting against what a manually-
+     configured test trigger's own "view as XML" export actually shows,
+     the same way this project already root-caused other real config
+     mismatches (jenkins/values.yaml's cloud-name collision, for one). -->
+<flow-definition plugin="workflow-job">
+  <description>PR quality gate: lint, test, build (no push), scan. Never deploys, never pushes to ECR - see jenkins/ci/pr-Jenkinsfile.</description>
+  <keepDependencies>false</keepDependencies>
+  <properties/>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition" plugin="workflow-cps">
+    <scm class="hudson.plugins.git.GitSCM" plugin="git">
+      <configVersion>2</configVersion>
+      <userRemoteConfigs>
+        <hudson.plugins.git.UserRemoteConfig>
+          <url>https://github.com/MaxTsyganov/Running_Devops_Project.git</url>
+        </hudson.plugins.git.UserRemoteConfig>
+      </userRemoteConfigs>
+      <branches>
+        <hudson.plugins.git.BranchSpec>
+          <name>*/main</name>
+        </hudson.plugins.git.BranchSpec>
+      </branches>
+      <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
+      <submoduleCfg class="empty-list"/>
+      <extensions/>
+    </scm>
+    <!-- Only used to fetch pr-Jenkinsfile itself (from main, same as the
+         other two jobs) - the pipeline's own "Checkout PR head" stage does
+         a second, separate checkout of the PR's actual head commit. -->
+    <scriptPath>jenkins/ci/pr-Jenkinsfile</scriptPath>
+    <lightweight>true</lightweight>
+  </definition>
+  <!-- Extracts PR_NUMBER/PR_HEAD_SHA/PR_HEAD_REF/PR_ACTION from the
+       incoming JSON straight into environment variables the pipeline reads
+       via env.PR_NUMBER etc - no separate ParametersDefinitionProperty
+       needed, this plugin binds extracted values directly. regexpFilter*
+       only lets opened/synchronize/reopened pull_request events through;
+       GitHub sends other pull_request actions too (closed, labeled, ...)
+       that shouldn't trigger a build. -->
+  <triggers>
+    <org.jenkinsci.plugins.gwt.GenericTrigger>
+      <spec></spec>
+      <genericVariables>
+        <org.jenkinsci.plugins.gwt.GenericVariable>
+          <expressionType>JSONPath</expressionType>
+          <key>PR_NUMBER</key>
+          <value>$.number</value>
+          <regexpFilter></regexpFilter>
+          <defaultValue></defaultValue>
+        </org.jenkinsci.plugins.gwt.GenericVariable>
+        <org.jenkinsci.plugins.gwt.GenericVariable>
+          <expressionType>JSONPath</expressionType>
+          <key>PR_HEAD_SHA</key>
+          <value>$.pull_request.head.sha</value>
+          <regexpFilter></regexpFilter>
+          <defaultValue></defaultValue>
+        </org.jenkinsci.plugins.gwt.GenericVariable>
+        <org.jenkinsci.plugins.gwt.GenericVariable>
+          <expressionType>JSONPath</expressionType>
+          <key>PR_HEAD_REF</key>
+          <value>$.pull_request.head.ref</value>
+          <regexpFilter></regexpFilter>
+          <defaultValue></defaultValue>
+        </org.jenkinsci.plugins.gwt.GenericVariable>
+        <org.jenkinsci.plugins.gwt.GenericVariable>
+          <expressionType>JSONPath</expressionType>
+          <key>PR_ACTION</key>
+          <value>$.action</value>
+          <regexpFilter></regexpFilter>
+          <defaultValue></defaultValue>
+        </org.jenkinsci.plugins.gwt.GenericVariable>
+      </genericVariables>
+      <genericHeaderVariables>
+        <org.jenkinsci.plugins.gwt.GenericHeaderVariable>
+          <key>X_GITHUB_EVENT</key>
+          <regexpFilter></regexpFilter>
+        </org.jenkinsci.plugins.gwt.GenericHeaderVariable>
+      </genericHeaderVariables>
+      <token>pr-quality-gate</token>
+      <printContributedVariables>true</printContributedVariables>
+      <printPostContent>false</printPostContent>
+      <silentResponse>false</silentResponse>
+      <regexpFilterText>$X_GITHUB_EVENT-$PR_ACTION</regexpFilterText>
+      <regexpFilterExpression>^pull_request-(opened|synchronize|reopened)$</regexpFilterExpression>
+      <causeString>Triggered by GitHub pull_request ($PR_ACTION) on PR #$PR_NUMBER</causeString>
+    </org.jenkinsci.plugins.gwt.GenericTrigger>
+  </triggers>
+  <disabled>false</disabled>
+</flow-definition>

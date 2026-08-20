@@ -1,0 +1,141 @@
+// PR quality-gate pipeline: lint, test, build (no push), scan. Never
+// pushes an image to ECR and never triggers cd-application - satisfies both
+// the assignment's "separate Pipeline for Pull Requests with a quality
+// gate" bonus and its "prevent push to registry for an unapproved PR" note
+// under the CI pipeline section, with one design instead of two. Triggered
+// by GitHub pull_request events via the generic-webhook-trigger plugin (the
+// "github" plugin's own push trigger, used by ci/Jenkinsfile, only ever
+// fires on push) - see ci-application-pr-config.xml for the trigger
+// definition and jenkins/webhook-relay.yaml for how pull_request events get
+// routed there instead of ci-application's endpoint.
+@Library('devops-shared-lib') _
+pipeline {
+    agent {
+        kubernetes {
+            cloud 'devops-agents'
+            inheritFrom 'ci-agent'
+        }
+    }
+
+    environment {
+        REPO_URL = 'https://github.com/MaxTsyganov/Running_Devops_Project.git'
+    }
+
+    options {
+        timestamps()
+        timeout(time: 20, unit: 'MINUTES')
+    }
+
+    stages {
+        stage('Checkout PR head') {
+            steps {
+                script {
+                    if (!env.PR_HEAD_SHA || !env.PR_NUMBER) {
+                        error("PR_HEAD_SHA/PR_NUMBER missing - this job only runs from the pull_request webhook trigger (generic-webhook-trigger), never a manual Build Now.")
+                    }
+                }
+                // Explicit refspec into GitHub's own PR ref namespace,
+                // rather than trusting whatever the default branch happens
+                // to be at checkout time - the PR's actual head commit is
+                // the only thing this quality gate should ever evaluate.
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "${env.PR_HEAD_SHA}"]],
+                    userRemoteConfigs: [[
+                        url: "${REPO_URL}",
+                        refspec: '+refs/pull/*/head:refs/remotes/origin/pr/*'
+                    ]]
+                ])
+                echo "PR:   #${env.PR_NUMBER} (${env.PR_HEAD_REF ?: 'unknown branch'})"
+                echo "Head: ${env.PR_HEAD_SHA}"
+            }
+        }
+
+        stage('Validation') {
+            steps {
+                sh '''
+                    set -e
+                    for svc in frontend backend worker; do
+                        test -f "$svc/Dockerfile" || { echo "Missing $svc/Dockerfile"; exit 1; }
+                        test -f "$svc/.dockerignore" || { echo "Missing $svc/.dockerignore"; exit 1; }
+                    done
+                '''
+            }
+        }
+
+        stage('Static Analysis / Lint') {
+            steps {
+                container('python') {
+                    sh '''
+                        set -e
+                        pip install --quiet --no-cache-dir pyflakes==3.2.0
+                        python -m pyflakes backend/app.py worker/worker.py
+                    '''
+                }
+            }
+        }
+
+        stage('Tests') {
+            steps {
+                container('python') {
+                    sh '''
+                        set -e
+                        cd backend
+                        pip install --quiet --no-cache-dir -r requirements-test.txt
+                        python -m pytest test_app.py -v --junitxml=test-results.xml
+                    '''
+                }
+            }
+            post {
+                always {
+                    junit 'backend/test-results.xml'
+                }
+            }
+        }
+
+        // Sequential, not a matrix: this is a quality gate, not the
+        // deploy-bound pipeline - parallel builds are already proven
+        // elsewhere (ci/Jenkinsfile). Keeping this simple avoids
+        // duplicating that whole per-service-Pod matrix machinery for a
+        // pipeline that never produces anything deployable in the first
+        // place.
+        stage('Build (no push) + Scan') {
+            steps {
+                container('kaniko') {
+                    sh '''
+                        set -e
+                        for svc in frontend backend worker; do
+                            echo "Building devops-$svc (PR #${PR_NUMBER}, quality gate only - never pushed to ECR) ..."
+                            /kaniko/executor \
+                                --context "dir://$(pwd)/$svc" \
+                                --dockerfile "$svc/Dockerfile" \
+                                --no-push \
+                                --tarPath "$(pwd)/$svc.tar" \
+                                --cache=false
+                        done
+                    '''
+                }
+                container('trivy') {
+                    script {
+                        // Same blocking scan the real pipeline uses
+                        // (jenkins/shared-library/vars/trivyScan.groovy) -
+                        // a fixable CRITICAL finding fails a PR the same
+                        // way it fails a push to main. No SBOM, no Cosign
+                        // signing: both are only meaningful for an image
+                        // that's actually going to be deployed, and this
+                        // one never will be.
+                        for (svc in ['frontend', 'backend', 'worker']) {
+                            trivyScan("${env.WORKSPACE}/${svc}.tar", true, svc)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}
