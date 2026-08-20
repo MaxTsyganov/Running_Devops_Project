@@ -118,10 +118,10 @@ stringData:
 EOF
     success "slack-webhook-url credential created from \$SLACK_WEBHOOK_URL."
 else
-    info "SLACK_WEBHOOK_URL not set - skipping. Build notifications will silently fail to send"
-    info "until this exists; re-run with SLACK_WEBHOOK_URL exported to enable them (nothing else"
-    info "needs re-running to pick it up later - the shared library reads the credential fresh"
-    info "on every build)."
+    info "SLACK_WEBHOOK_URL not set - skipping. CI/CD keep working normally either way:"
+    info "notifySlack.groovy catches a missing credential and logs one line, it never fails the"
+    info "build over it. Re-run with SLACK_WEBHOOK_URL exported to enable notifications later -"
+    info "nothing else needs re-running, the shared library reads the credential fresh each time."
 fi
 
 echo ""

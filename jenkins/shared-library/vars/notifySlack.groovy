@@ -20,25 +20,36 @@ String esc(String s) {
 }
 
 def call(String status, String context) {
-    def color = (status == 'SUCCESS') ? 'good' : 'danger'
-    def title = "${env.JOB_NAME} #${env.BUILD_NUMBER} - ${status}"
-    def payload = """{"attachments":[{"color":"${color}","title":"${esc(title)}","text":"${esc(context)}","title_link":"${env.BUILD_URL}"}]}"""
-    writeFile file: 'slack-payload.json', text: payload
-    withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_URL')]) {
-        sh '''
-            set -e
-            if command -v wget >/dev/null 2>&1; then
-                wget -q -O- --header="Content-Type: application/json" \
-                    --post-file=slack-payload.json "$SLACK_URL" >/dev/null
-            else
-                python3 -c "
+    // Notifications are documented as optional (configure-jenkins.sh skips
+    // creating the credential entirely if SLACK_WEBHOOK_URL was never set) -
+    // that promise only holds if a missing/invalid credential can never fail
+    // an otherwise-successful build. withCredentials throws
+    // CredentialsNotFoundException for a credentialsId that doesn't exist;
+    // caught here so a real CI/CD result is never overridden by a bonus
+    // feature's own setup being incomplete.
+    try {
+        def color = (status == 'SUCCESS') ? 'good' : 'danger'
+        def title = "${env.JOB_NAME} #${env.BUILD_NUMBER} - ${status}"
+        def payload = """{"attachments":[{"color":"${color}","title":"${esc(title)}","text":"${esc(context)}","title_link":"${env.BUILD_URL}"}]}"""
+        writeFile file: 'slack-payload.json', text: payload
+        withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_URL')]) {
+            sh '''
+                set -e
+                if command -v wget >/dev/null 2>&1; then
+                    wget -q -O- --header="Content-Type: application/json" \
+                        --post-file=slack-payload.json "$SLACK_URL" >/dev/null
+                else
+                    python3 -c "
 import os, urllib.request
 data = open('slack-payload.json', 'rb').read()
 req = urllib.request.Request(os.environ['SLACK_URL'], data=data, headers={'Content-Type': 'application/json'})
 urllib.request.urlopen(req)
 "
-            fi
-            rm -f slack-payload.json
-        '''
+                fi
+                rm -f slack-payload.json
+            '''
+        }
+    } catch (Exception e) {
+        echo "notifySlack: skipped - ${e.getMessage()} (slack-webhook-url credential probably not configured; see jenkins/scripts/configure-jenkins.sh step 5/5)"
     }
 }

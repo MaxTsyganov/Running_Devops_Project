@@ -113,11 +113,9 @@ controller:
         # Shared Library (jenkins/shared-library/vars/) - the same repo as
         # everything else here, not a separate library repo: one less thing
         # to keep in sync. `libraryPath` points the retriever at the
-        # subdirectory instead of expecting vars/ at the repo root - this
-        # field's exact availability/behavior needs confirming live against
-        # the actual pipeline-groovy-lib version this chart resolves; if it
-        # turns out unsupported, the fallback is moving vars/ to the repo
-        # root instead, not a different plugin.
+        # subdirectory instead of expecting vars/ at the repo root -
+        # confirmed live against pipeline-groovy-lib 798.v5cc688825312, see
+        # evidence/07-bonus-remaining/01-shared-library-live-resolution.txt.
         unclassified:
           globalLibraries:
             libraries:

@@ -326,10 +326,16 @@ than rotated, so it never desyncs from what's actually configured on GitHub's si
 new one, and update the webhook's secret on the GitHub side to match. No Jenkins restart needed -
 the Credentials Provider plugin watches for the Secret to reappear.
 
-Console log masking: Jenkins' `credentials-binding` plugin masks any credential value it injects
-automatically. Nothing in either Jenkinsfile ever echoes a credential directly, and image tags/ECR
-URLs/namespaces are all non-secret by design (see [§2](#2-prerequisites-and-versions) table),
-so there's nothing sensitive to accidentally print in the first place.
+Console log masking: Jenkins' `credentials-binding` plugin masks any credential value it injects via
+`withCredentials` automatically (confirmed live - the Slack webhook URL prints as `****` in every
+build's console). That masking only covers values that actually go through the plugin, though - it
+doesn't know about a value fetched some other way. The CI Sign stage's ECR bearer token (fetched
+directly via `boto3`, not a Jenkins Credential at all) was a real instance of exactly that gap: not a
+theory, an actual token found printed in plaintext in this project's own captured build logs, because
+Jenkins' `sh` step echoes every command it runs by default and neither the token assignment nor the
+`cosign --registry-password` argument that used it were ever hidden from that. Fixed with a plain
+`set +x` around that one block (see [§9](#9-security)) rather than assuming echo-safety applies
+everywhere just because most of the pipeline's values genuinely are non-secret.
 
 ---
 
@@ -401,6 +407,16 @@ smee.io), ECR (`*.dkr.ecr.us-east-1.amazonaws.com`, image push/pull), the in-clu
 server (`kubernetes.default.svc`), and AWS Secrets Manager (via External Secrets Operator, not
 Jenkins directly).
 
+**Console logs, not just Secrets**: Jenkins' `sh` step echoes every command it runs to the build
+console by default - harmless for most of this pipeline, but a real finding for the CI Sign stage
+(`jenkins/ci/Jenkinsfile`), which fetches a short-lived ECR bearer token via `boto3` and passes it to
+`cosign sign --registry-password`. Confirmed live in this project's own captured build logs: both the
+token assignment and the full `cosign` command line (token included) printed in plaintext. Fixed with
+a `set +x` before that token is ever touched - the same "never printed to a log" bar the Slack webhook
+URL (masked via `withCredentials`) and the DB password (never written to disk at all) are already
+held to. The token itself is 12-hour-lived and scoped only to this account's ECR, not full AWS access,
+but a real credential in a build log is a real credential in a build log regardless of blast radius.
+
 ---
 
 ## 10. Cleanup
@@ -443,9 +459,9 @@ Evidence, including a real capacity problem the drill surfaced along the way, in
 | Trivy scans the image *after* Kaniko has already pushed it, not before | Kaniko builds and pushes as one atomic `--destination` step - there's no local, daemon-accessible image to scan first without a separate build-to-tarball-then-push flow | A build that fails the Scan stage still leaves that (immutable-tagged, never referenced by any deploy) image sitting in ECR; the actual safety property - nothing gets deployed - still holds, since CD only ever triggers from CI's `success` post-block |
 | Jenkins CD (`helm upgrade --install`) instead of ArgoCD/GitOps | A real CI/CD pipeline needs to own deploy directly - GitOps auto-sync would revert every Jenkins deploy as drift (see [History](#13-history)) | Deploy history lives in Helm release revisions, not a GitOps `Application`'s sync history |
 | `t3.medium` nodes instead of `t3.small` | Jenkins (a resident controller Pod, a resident webhook-relay Pod, and bursts of ephemeral CI/CD agent Pods) on top of an already-tight `t3.small` cluster (11 pods/node) risked agent Pods stuck `Pending` mid-build; `t3.medium` doubles memory per node and raises the ceiling to 17/node for the same node count | Roughly doubles hourly node cost |
-| `generic-webhook-trigger` for `ci-application-pr`, not Multibranch Pipeline or GHPRB | Multibranch would mean a second, structurally different job type (and PR discovery/scanning machinery) alongside the two REST-API-created Pipeline jobs; GHPRB needs a bot GitHub account. A JSON-field-extraction trigger keeps the third job created exactly the same way as the first two | The trigger's exact XML schema had to be written from the plugin's documented shape rather than exported from a real run, unlike every other `config.xml` in this repo - flagged for live verification the first time this job actually runs |
+| `generic-webhook-trigger` for `ci-application-pr`, not Multibranch Pipeline or GHPRB | Multibranch would mean a second, structurally different job type (and PR discovery/scanning machinery) alongside the two REST-API-created Pipeline jobs; GHPRB needs a bot GitHub account. A JSON-field-extraction trigger keeps the third job created exactly the same way as the first two | Live-verified, but only after a real bug: the first version's header-based event-type filter never actually matched GitHub's real header name, so the webhook returned 200 while silently never queuing a build - root-caused and simplified (see `evidence/07-bonus-remaining/`), not something a config.xml export alone would have caught |
 | Notifications via Slack Incoming Webhook, not the existing SNS topic | Zero AWS/Terraform changes - `cd-deploy-sa` stays a plain, non-IRSA ServiceAccount exactly as designed; both agent containers can already POST JSON without installing anything new | A second external credential to manage (`slack-webhook-url`) instead of reusing infrastructure that already existed |
-| Shared Library lives in this same repo (`jenkins/shared-library/`), not a dedicated library repo | One less repository to keep in sync, one less place a version mismatch could hide | `libraryPath` (pointing the retriever at a subdirectory instead of a repo root) is a less common configuration than the plugin's default - needs live confirmation it's actually supported by the resolved plugin version, documented fallback is moving `vars/` to the repo root |
+| Shared Library lives in this same repo (`jenkins/shared-library/`), not a dedicated library repo | One less repository to keep in sync, one less place a version mismatch could hide | `libraryPath` (pointing the retriever at a subdirectory instead of a repo root) is a less common configuration than the plugin's default - confirmed live against `pipeline-groovy-lib` 798.v5cc688825312, no fallback needed |
 
 ---
 

@@ -198,6 +198,15 @@ pipeline {
                                     # has neither curl nor wget either (checked directly, not assumed).
                                     python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64', '/tmp/cosign')"
                                     chmod +x /tmp/cosign
+                                    # set +x from here on: Jenkins' sh step echoes every command it
+                                    # runs (the "+ ..." lines in the console log) - without this, both
+                                    # the ECR_TOKEN assignment below and the cosign invocation's
+                                    # --registry-password argument print the real bearer token
+                                    # (short-lived, 12h, ECR-scoped only, but still a real credential -
+                                    # confirmed leaking in this project's own captured build logs before
+                                    # this fix). Same "never printed to a log" bar the Slack webhook URL
+                                    # and DB password are already held to elsewhere in this project.
+                                    set +x
                                     # Cosign's AWS SDK usage covers KMS (signing) via ci-build-sa's IRSA
                                     # identity automatically, but - unlike Kaniko, which has an ECR
                                     # credential helper built directly into its executor - go-
