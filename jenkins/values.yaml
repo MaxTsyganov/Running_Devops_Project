@@ -38,12 +38,24 @@ controller:
                 jenkinsTunnel: "jenkins-agent.jenkins.svc.cluster.local:50000"
                 containerCapStr: "10"
                 podRetention: "never"
+                # Neither template below sets idleMinutes - one used to, on
+                # both. idleMinutes keeps a just-finished pod alive and idle
+                # for reuse instead of deleting it immediately, which
+                # directly contradicts podRetention: never above and was the
+                # real cause of a live capacity problem: on this 3-node
+                # cluster, back-to-back builds left 5-minutes'-worth of idle,
+                # already-finished agent Pods holding onto CPU/memory that a
+                # new build's Pods then couldn't schedule into (confirmed
+                # live - see evidence/07-bonus-remaining/04-jcasc-recovery-
+                # drill-proof.txt). Removed rather than shortened: this
+                # cluster's real constraint is scheduling headroom, not
+                # agent cold-start time, so the reuse optimization isn't
+                # worth the capacity risk here.
                 templates:
                   - name: "ci-agent"
                     label: "ci-agent"
                     namespace: "jenkins"
                     serviceAccount: "ci-build-sa"
-                    idleMinutes: 5
                     containers:
                       # Lint/test tooling - same base image the app's own
                       # Dockerfiles use, so results reflect the real runtime.
@@ -89,7 +101,6 @@ controller:
                     label: "cd-agent"
                     namespace: "jenkins"
                     serviceAccount: "cd-deploy-sa"
-                    idleMinutes: 5
                     containers:
                       - name: "deploy"
                         image: "dtzar/helm-kubectl:3.16"

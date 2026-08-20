@@ -46,11 +46,11 @@ smoothed over.
        same two idempotent scripts used for the original install, and a
        real end-to-end build (webhook -> CI -> CD -> Slack) proving the
        recovered system actually works, not just that it boots.
-     - Also documents a real, unrelated finding surfaced by the drill:
-       agent Pods weren't being cleaned up as quickly as podRetention:
-       never implies, which briefly starved the cluster of scheduling
-       capacity - flagged honestly as a follow-up, not silently worked
-       around.
+     - Also documents a real, unrelated finding surfaced by the drill and
+       then root-caused after reproducing live a second time: agent Pods
+       weren't being cleaned up immediately despite podRetention: never,
+       because both agent templates also set idleMinutes: 5 - a direct
+       contradiction, fixed by removing it (jenkins/values.yaml).
 
 As with evidence/06-bonus-features, getting here took real live-caught
 bugs, not a clean first pass: the PR trigger's header-name mismatch, and

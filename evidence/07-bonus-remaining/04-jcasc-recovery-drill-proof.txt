@@ -99,8 +99,66 @@ lost, because nothing that matters was ever stored only there.
   that the next required Pod (the top-level pipeline's own post{} block,
   which needs a fresh agent to run notifySlack()) couldn't schedule at
   all. Manually deleting the clearly-orphaned PR-agent Pod freed enough
-  room for the pending Pod to schedule immediately. Not one of this
-  session's four target bonus items, so not fixed in code here, but real
-  and worth flagging as a follow-up: podRetention's actual cleanup timing
-  under this Helm chart/plugin version doesn't match its documented
-  immediacy, at least under back-to-back builds on a small cluster.
+  room for the pending Pod to schedule immediately - a workaround at the
+  time, not yet a diagnosis.
+
+  --- Update: root-caused and fixed live, same session ---
+
+  The same starvation reproduced live again on the very next real
+  build (ci-application #4, triggered by an unrelated later push), this
+  time caught in the act: two ci-agent Pods from the *previous*, already-
+  SUCCESS build were still fully Running 12+ minutes after that build had
+  already notified Slack and finished - `kubectl get pod ... -o
+  jsonpath='{.metadata.deletionTimestamp}'` came back empty, meaning
+  Jenkins had never even asked Kubernetes to delete them, not that
+  deletion was slow.
+
+  Root cause: both the `ci-agent` and `cd-agent` pod templates
+  (jenkins/values.yaml) also set `idleMinutes: 5` - which keeps a
+  just-finished Pod alive and idle for up to 5 minutes so a later build
+  can reuse it without a cold start. That directly contradicts the
+  Kubernetes Cloud's own `podRetention: never` (and this project's own
+  README, which documents "agents are deleted immediately after their
+  build, not kept around") - idleMinutes overrides immediate cleanup with
+  a 5-minute idle-reuse window per Pod. On a 3-node t3.medium cluster
+  running the Jenkins controller, the webhook relay, and now three jobs'
+  worth of ephemeral agent Pods (ci-application's matrix, cd-application,
+  ci-application-pr's own matrix) all competing for the same headroom,
+  that 5-minute window was long enough for a new build's Pods to arrive
+  and find no room left.
+
+  Fixed by removing `idleMinutes` from both templates (not just
+  shortening it): this cluster's real constraint is scheduling headroom,
+  not agent cold-start latency, so the reuse optimization wasn't worth
+  keeping.
+
+  Applied via `install-jenkins.sh` (the same idempotent `helm upgrade`
+  used throughout this project) while no build was in flight. Confirmed
+  the change actually reached the running controller without a Pod
+  restart - `jenkins-0`'s age was unchanged, so the chart's config-reload
+  sidecar picked it up live - by POSTing to /configuration-as-code/export
+  and grepping the returned config for `ci-agent`/`cd-agent`: no
+  `idleMinutes` field on either template.
+
+  Then re-verified with a real build (ci-application #5), watching Pod
+  status every 10s:
+
+    t+10s   ci-application-5-9wrxx-...   ContainerCreating (Checkout stage)
+    t+50s   ci-application-5-xwt8g-...   Running (matrix cell starts)
+    t+80s   ci-application-5-xwt8g-...   Terminating (30s after it started -
+            that cell's build step failed fast: ECR rejected the immutable
+            tag re-push, same unchanged-commit situation as the earlier
+            recovery-drill build - expected, not the point of this test)
+    t+110s  ci-application-5-kv4lj-...   Terminating
+    t+120s  ci-application-5-8fbw4-...   Terminating,
+            ci-application-5-9wrxx-...   Terminating (Checkout Pod, once
+            the post{} block's own notifySlack() finished)
+    t+150s  (kubectl get pods -n jenkins: no ci-application-5-* Pods left)
+
+  Every Pod gone within ~2.5 minutes of the build starting, each one
+  individually within roughly a minute of its own stage finishing - not
+  the 12+ minutes observed before the fix. The one Pod still lingering at
+  that point (`cd-application-3-...`, Terminating by t+150s) had been
+  created *before* the fix was applied, so it was still finishing out its
+  old 5-minute idle window - consistent with the diagnosis, not a
+  contradiction of it.
