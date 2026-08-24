@@ -27,8 +27,10 @@ spec:
       port: 53 # DNS resolution
 
 ---
-# Only accepts traffic from frontend; no egress restriction since backend
-# needs to reach RDS, S3, and SNS out on the internet.
+# Accepts app traffic from frontend, plus a second, metrics-only rule
+# (Assignment 5) letting Prometheus in the observability namespace scrape
+# /metrics on the same port. No egress restriction since backend needs to
+# reach RDS, S3, and SNS out on the internet.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -48,10 +50,18 @@ spec:
     ports:
     - protocol: TCP
       port: 5000
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: observability
+    ports:
+    - protocol: TCP
+      port: 5000
 
 ---
-# Worker only makes outbound calls (DB, SNS) and accepts no inbound
-# connections from anywhere, including other pods in this cluster.
+# Worker makes outbound calls (DB, SNS) and accepts no inbound connections
+# except Prometheus scraping /metrics (Assignment 5, port 9100) from the
+# observability namespace.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -63,4 +73,11 @@ spec:
       app: worker
   policyTypes:
   - Ingress
-  ingress: [] # empty list = deny all inbound
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: observability
+    ports:
+    - protocol: TCP
+      port: 9100

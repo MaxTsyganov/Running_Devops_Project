@@ -4,6 +4,7 @@ handling S3 file uploads, and triggering SNS alerts.
 """
 
 import os
+import time
 import logging
 from datetime import datetime
 
@@ -12,8 +13,9 @@ import psycopg2
 import psycopg2.extras
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, g, abort, Response
 from flask_cors import CORS
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
 load_dotenv()
 
@@ -43,6 +45,66 @@ SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
 # when running outside the cluster with manually exported AWS keys.
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "") or None
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "") or None
+
+# Set by Jenkins CD at deploy time (the full commit SHA it just built and
+# pushed - see cd/Jenkinsfile) - not guessed or derived at runtime, so
+# app_info always reflects exactly what was actually deployed, not whatever
+# happened to be checked out in this image's build context.
+RELEASE_VERSION = os.environ.get("RELEASE_VERSION", "unknown")
+
+# --- Prometheus metrics (Assignment 5) ---------------------------------
+# path label uses request.url_rule.rule (the Flask route pattern, e.g.
+# "/api/items"), never request.path (the raw URL) - every current route is
+# static so this makes no visible difference today, but it's what keeps a
+# future path-parameter route (e.g. "/api/items/<int:id>") from blowing up
+# label cardinality with one series per ID instead of one for the route.
+HTTP_REQUESTS_TOTAL = Counter(
+    "http_requests_total", "Total HTTP requests",
+    ["method", "path", "status"],
+)
+HTTP_REQUEST_DURATION_SECONDS = Histogram(
+    "http_request_duration_seconds", "HTTP request duration in seconds",
+    ["method", "path"],
+)
+# Gauge, not a label on some other metric - app_info's own value is always 1;
+# the labels themselves carry the information (the standard Prometheus
+# "info" metric pattern). Set once at import time, never changes for the
+# life of this process.
+APP_INFO = Gauge(
+    "app_info", "Static build/release info for this running process",
+    ["version", "git_sha", "release"],
+)
+APP_INFO.labels(version=RELEASE_VERSION, git_sha=RELEASE_VERSION, release=RELEASE_VERSION).set(1)
+# The one required business metric - a real user action (creating an item),
+# not an infrastructure signal.
+ITEMS_CREATED_TOTAL = Counter(
+    "items_created_total", "Total items successfully created via POST /api/items",
+)
+# Excluded from request-metrics instrumentation below: scrape traffic to
+# /metrics itself, and the two liveness/readiness endpoints (already
+# excluded from the point of the assignment's own "traffic, errors, latency"
+# dashboard - probe hits every few seconds would otherwise dominate every
+# rate/latency panel with noise that has nothing to do with real usage).
+_METRICS_EXCLUDED_PATHS = {"/metrics", "/healthz", "/api/health"}
+
+
+@app.before_request
+def _start_request_timer():
+    g._request_start_time = time.time()
+
+
+@app.after_request
+def _record_request_metrics(response):
+    if request.path not in _METRICS_EXCLUDED_PATHS:
+        path = request.url_rule.rule if request.url_rule else "unmatched"
+        duration = time.time() - g.get("_request_start_time", time.time())
+        HTTP_REQUESTS_TOTAL.labels(
+            method=request.method, path=path, status=response.status_code
+        ).inc()
+        HTTP_REQUEST_DURATION_SECONDS.labels(
+            method=request.method, path=path
+        ).observe(duration)
+    return response
 
 
 def get_db_connection():
@@ -141,6 +203,28 @@ def healthz():
     return jsonify({"status": "alive"}), 200
 
 
+@app.get("/metrics")
+def metrics():
+    # Separate from liveness/readiness and accessible only via the scrape
+    # path a NetworkPolicy allows (Prometheus's own ServiceMonitor, in the
+    # observability namespace) - see helm/devops-app/templates/
+    # networkpolicies.yaml. Nothing here is proxied through the public
+    # frontend either (nginx only proxies /api/, not /metrics).
+    return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
+
+
+@app.post("/api/debug/fail")
+def debug_fail():
+    # Deliberate, controlled failure endpoint - exists purely to make the
+    # HighErrorRate alert's failure exercise real (see observability/runbooks/
+    # HighErrorRate.md). Unconditional 500, on demand, from a real Flask
+    # request - so it goes through the same before/after_request hooks as
+    # every other route and genuinely increments http_requests_total with
+    # status=500, unlike scaling the backend to 0 (which would kill the
+    # process that owns that counter instead of exercising it).
+    abort(500)
+
+
 @app.get("/api/items")
 def list_items():
     conn = None
@@ -190,6 +274,10 @@ def create_item():
     finally:
         if conn:
             conn.close()
+
+    # Only incremented on a real, committed creation - not on the 400s
+    # above, which never reach here.
+    ITEMS_CREATED_TOTAL.inc()
 
     publish_sns(
         subject=f"[App] New item created: {name}",

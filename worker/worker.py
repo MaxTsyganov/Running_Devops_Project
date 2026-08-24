@@ -13,6 +13,7 @@ import psycopg2
 import psycopg2.extras
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
+from prometheus_client import Counter, Histogram, Gauge, start_http_server
 
 load_dotenv()
 
@@ -43,6 +44,29 @@ POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "30"))
 
 # Heartbeat file used by Kubernetes readiness/liveness probes (worker has no HTTP port)
 HEARTBEAT_FILE = os.environ.get("HEARTBEAT_FILE", "/tmp/worker_heartbeat")
+
+# Same as backend/app.py - the exact commit CD deployed, not derived at runtime.
+RELEASE_VERSION = os.environ.get("RELEASE_VERSION", "unknown")
+METRICS_PORT = int(os.environ.get("METRICS_PORT", "9100"))
+
+# --- Prometheus metrics (Assignment 5) ---------------------------------
+ITEMS_PROCESSED_TOTAL = Counter(
+    "worker_items_processed_total", "Total items successfully processed",
+)
+POLL_DURATION_SECONDS = Histogram(
+    "worker_poll_duration_seconds", "Duration of one poll cycle in seconds",
+)
+POLL_ERRORS_TOTAL = Counter(
+    "worker_poll_errors_total", "Total poll cycles that raised an exception",
+)
+LAST_POLL_TIMESTAMP_SECONDS = Gauge(
+    "worker_last_poll_timestamp_seconds", "Unix time of the most recently completed poll cycle",
+)
+APP_INFO = Gauge(
+    "app_info", "Static build/release info for this running process",
+    ["version", "git_sha", "release"],
+)
+APP_INFO.labels(version=RELEASE_VERSION, git_sha=RELEASE_VERSION, release=RELEASE_VERSION).set(1)
 
 
 def touch_heartbeat():
@@ -117,6 +141,7 @@ def run_one_cycle():
         conn = get_db_connection()
     except Exception:
         logger.exception("Database connection failed. Retrying next cycle.")
+        POLL_ERRORS_TOTAL.inc()
         return
 
     try:
@@ -134,8 +159,10 @@ def run_one_cycle():
                 process_item(item)
                 mark_item_done(conn, item["id"])
                 processed_names.append(item["name"])
+                ITEMS_PROCESSED_TOTAL.inc()
             except Exception:
                 logger.exception(f"Failed to process item ID {item['id']}")
+                POLL_ERRORS_TOTAL.inc()
 
         if processed_names:
             count = len(processed_names)
@@ -155,6 +182,7 @@ def run_one_cycle():
         # (backend creates the table, worker doesn't). Log and retry next
         # cycle instead of crashing over what's usually transient.
         logger.exception("Poll cycle failed")
+        POLL_ERRORS_TOTAL.inc()
     finally:
         conn.close()
 
@@ -164,9 +192,17 @@ def main():
     logger.info(f"Target database: {DB_HOST}:{DB_PORT}/{DB_NAME}")
     logger.info(f"Polling interval: {POLL_INTERVAL_SECONDS} seconds.")
 
+    # Worker's first-ever open port - a tiny built-in HTTP server just for
+    # /metrics, nothing else (prometheus_client's own start_http_server,
+    # not a real app server). Started once, before the loop, not per-cycle.
+    start_http_server(METRICS_PORT)
+    logger.info(f"Metrics server listening on :{METRICS_PORT}/metrics")
+
     touch_heartbeat()
     while True:
-        run_one_cycle()
+        with POLL_DURATION_SECONDS.time():
+            run_one_cycle()
+        LAST_POLL_TIMESTAMP_SECONDS.set_to_current_time()
         touch_heartbeat()
         time.sleep(POLL_INTERVAL_SECONDS)
 

@@ -12,3 +12,4 @@ data:
   SNS_TOPIC_ARN: {{ .Values.config.snsTopicArn | quote }}
   AWS_REGION: {{ .Values.config.awsRegion | quote }}
   POLL_INTERVAL_SECONDS: {{ .Values.config.pollIntervalSeconds | quote }}
+  RELEASE_VERSION: {{ .Values.config.releaseVersion | quote }}

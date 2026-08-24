@@ -1,0 +1,39 @@
+# job labels below are the Service name each ServiceMonitor targets
+# (helm/devops-app/templates/servicemonitors.yaml) - no jobLabel override
+# was set there, so prometheus-operator's default relabeling sets job to
+# the Service's own metadata.name.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: application-alerts
+  namespace: observability
+  labels:
+    role: alert-rules
+spec:
+  groups:
+    - name: application.rules
+      rules:
+        - alert: HighErrorRate
+          expr: >
+            sum(rate(http_requests_total{job="backend-service",status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{job="backend-service"}[5m])) > 0.05
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Backend 5xx error rate above 5%"
+            description: "More than 5% of backend requests have returned a 5xx status over the last 5 minutes."
+            runbook_url: "https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/high-error-rate.md"
+        - alert: HighLatencyP95
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(http_request_duration_seconds_bucket{job="backend-service"}[5m])) by (le)
+            ) > 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Backend p95 latency above 1s"
+            description: "95th percentile backend request duration has exceeded 1 second for 5 minutes."
+            runbook_url: "https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/high-latency-p95.md"

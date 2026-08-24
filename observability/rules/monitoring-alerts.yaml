@@ -1,0 +1,24 @@
+# The monitoring stack's own self-check: catches a scrape target going
+# dark (Pod crashed, NetworkPolicy misconfigured, ServiceMonitor pointing
+# at the wrong port) - a failure mode none of the other alerts can see,
+# since they all depend on the target's own metrics still being scraped.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: monitoring-alerts
+  namespace: observability
+  labels:
+    role: alert-rules
+spec:
+  groups:
+    - name: monitoring.rules
+      rules:
+        - alert: PrometheusTargetDown
+          expr: up == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Scrape target {{ $labels.job }}/{{ $labels.instance }} is down"
+            description: "Prometheus has been unable to scrape {{ $labels.job }} ({{ $labels.instance }}) for 5 minutes."
+            runbook_url: "https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/prometheus-target-down.md"

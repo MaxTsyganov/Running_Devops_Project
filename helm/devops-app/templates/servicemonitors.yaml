@@ -1,0 +1,58 @@
+# Assignment 5 - discovered cluster-wide by Prometheus (see
+# observability/values.yaml: serviceMonitorSelectorNilUsesHelmValues: false,
+# serviceMonitorNamespaceSelector: {}), so nothing here needs a
+# release-specific label to be picked up.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: frontend-servicemonitor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: frontend
+spec:
+  # Matches only frontend-metrics-service (app: frontend + component:
+  # metrics), not the public frontend-service - that one carries just
+  # app: frontend and has no port named "metrics" to find anyway, but the
+  # extra label keeps the selector precise rather than relying on that.
+  selector:
+    matchLabels:
+      app: frontend
+      component: metrics
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend-servicemonitor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: backend
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: worker-servicemonitor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: worker
+spec:
+  selector:
+    matchLabels:
+      app: worker
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s

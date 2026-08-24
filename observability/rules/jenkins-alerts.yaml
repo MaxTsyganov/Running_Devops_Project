@@ -1,0 +1,23 @@
+# jenkins_queue_size_value confirmed live against the running controller's
+# own /prometheus output (jenkins/values.yaml's new prometheus plugin) -
+# the current total build-queue size, not a windowed rate.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: jenkins-alerts
+  namespace: observability
+  labels:
+    role: alert-rules
+spec:
+  groups:
+    - name: jenkins.rules
+      rules:
+        - alert: JenkinsQueueStuck
+          expr: jenkins_queue_size_value{job="jenkins"} > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Jenkins build queue has been non-empty for 5 minutes"
+            description: "At least one build has sat in Jenkins' queue for 5 minutes without an agent Pod picking it up - likely an unschedulable agent template (bad label, capacity exhausted)."
+            runbook_url: "https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/jenkins-queue-stuck.md"

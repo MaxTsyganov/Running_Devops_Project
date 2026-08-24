@@ -347,6 +347,9 @@ controller:
     - "mina-sshd-api-core:2.19.0-192.v2b_a_7b_2c1dc71"
     - "okhttp-api:5.3.2-200.vedb_720a_cf1f8"
     - "pipeline-build-step:599.v4b_67ea_11b_152"
+    # pipeline-graph-analysis, pipeline-rest-api: transitive deps pulled in
+    # by prometheus below, not requested directly.
+    - "pipeline-graph-analysis:254.v0f63a_a_447dca_"
     # pipeline-groovy-lib: listed explicitly rather than assumed bundled
     # inside workflow-aggregator - powers the Shared Library referenced
     # below (jenkins/shared-library/).
@@ -356,11 +359,16 @@ controller:
     - "pipeline-model-api:2.2293.v6e7193cec599"
     - "pipeline-model-definition:2.2293.v6e7193cec599"
     - "pipeline-model-extensions:2.2293.v6e7193cec599"
+    - "pipeline-rest-api:2.41"
     - "pipeline-stage-step:345.va_96187909426"
     - "pipeline-stage-tags-metadata:2.2293.v6e7193cec599"
     - "plain-credentials:199.v9f8e1f741799"
     - "plugin-util-api:6.1192.v30fe6e2837ff"
     - "prism-api:1.30.0-717.vb_f8360844b_53"
+    # prometheus: top-level - exposes /prometheus on the existing jenkins
+    # Service for the observability stack's ServiceMonitor to scrape
+    # (Assignment 5).
+    - "prometheus:860.v532442b_44e9a_"
     - "resource-disposer:0.25"
     - "scm-api:728.vc30dcf7a_0df5"
     - "script-security:1412.v7737b_3405f86"

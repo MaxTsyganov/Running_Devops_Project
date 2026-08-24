@@ -1,0 +1,32 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kubernetes-alerts
+  namespace: observability
+  labels:
+    role: alert-rules
+spec:
+  groups:
+    - name: kubernetes.rules
+      rules:
+        - alert: ReplicasMismatch
+          expr: >
+            kube_deployment_status_replicas_available{namespace="devops-app"}
+            !=
+            kube_deployment_spec_replicas{namespace="devops-app"}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.deployment }} has fewer available replicas than desired"
+            description: "Deployment {{ $labels.deployment }} in devops-app has had a replica mismatch for 5 minutes - some Pods are likely stuck NotReady."
+            runbook_url: "https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/replicas-mismatch.md"
+        - alert: NodeNotReady
+          expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Node {{ $labels.node }} is not Ready"
+            description: "Node {{ $labels.node }} has reported condition Ready=false (or unknown) for 5 minutes."
+            runbook_url: "https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/node-not-ready.md"

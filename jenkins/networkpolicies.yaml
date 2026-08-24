@@ -87,6 +87,16 @@ spec:
           port: 50000 # JNLP agent tunnel (jenkinsTunnel in values.yaml)
         - protocol: TCP
           port: 8080 # agent HTTP handshake + webhook-relay's POST target
+    # Assignment 5: Prometheus (observability namespace) scraping /prometheus
+    # on this same port - confirmed live that path needs no auth, so no
+    # basicAuth/bearerToken config on the ServiceMonitor side either.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - protocol: TCP
+          port: 8080
   egress:
     - to:
         - ipBlock:

@@ -9,6 +9,13 @@ image:
   # e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com - set at install time
   registry: ""
   tag: v1.0.0
+  # nginx-prometheus-exporter sidecar (Assignment 5) - a public, third-party
+  # image, unlike the three above, so pinned by digest resolved directly
+  # against Docker Hub's manifest API at the time it was pinned - same
+  # "checked, not guessed" standard as jenkins/values.yaml's agent images.
+  # Tag kept alongside for human readability; the digest is what's actually
+  # pulled. Re-pin by re-querying the registry, not by guessing.
+  nginxExporter: "nginx/nginx-prometheus-exporter:1.5.3@sha256:85666e7fde7e253f1c6d978f9a961245df4c9cdb7677e1866d9bb28e8f9ee41d"
 
 frontend:
   replicas: 2
@@ -47,6 +54,10 @@ config:
   dbHost: ""
   s3BucketName: ""
   snsTopicArn: ""
+  # Same value as image.tag (the full commit SHA) - cd/Jenkinsfile passes
+  # both together so the app_info metric (Assignment 5) reports the exact
+  # deployed commit, not just whatever image tag happens to be running.
+  releaseVersion: "unknown"
 
 # Not a secret value - just the NAME of the AWS Secrets Manager secret that
 # holds the real password. External Secrets Operator (see

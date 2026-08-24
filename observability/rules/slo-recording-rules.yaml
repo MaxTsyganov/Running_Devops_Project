@@ -1,0 +1,30 @@
+# Backs the SLI/SLO table in the README's new observability section -
+# recorded once here rather than re-evaluating the same expensive
+# histogram_quantile/rate expressions in every dashboard panel that needs them.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: slo-recording-rules
+  namespace: observability
+  labels:
+    role: recording-rules
+spec:
+  groups:
+    - name: slo.rules
+      interval: 30s
+      rules:
+        - record: job:http_availability:ratio_rate5m
+          expr: >
+            sum(rate(http_requests_total{job="backend-service",status!~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{job="backend-service"}[5m]))
+        - record: job:http_request_duration_seconds:p95_rate5m
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(http_request_duration_seconds_bucket{job="backend-service"}[5m])) by (le)
+            )
+        - record: job:http_request_duration_seconds:p50_rate5m
+          expr: >
+            histogram_quantile(0.50,
+              sum(rate(http_request_duration_seconds_bucket{job="backend-service"}[5m])) by (le)
+            )
