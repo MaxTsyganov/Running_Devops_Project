@@ -759,7 +759,10 @@ evidence/                  Captured proof for every item on the assignment's evi
                            (06-bonus-features/) all nine applicable bonus items - parallel matrix
                            builds, SBOM, Cosign signing, automated rollback, NetworkPolicies, the
                            Shared Library, the PR quality gate, Slack notifications, and
-                           JCasC-first recovery
+                           JCasC-first recovery. (07-review-remediation/) real evidence for an
+                           external review's remediation: full-SHA tags, the scan-before-push
+                           reorder (plus a real digest-mismatch bug it surfaced), Cluster
+                           Autoscaler, the full plugin lock, and a real PR/webhook trigger
 ```
 
 `.github/workflows/ci.yml` runs `terraform fmt`/`validate`, `helm lint` plus a full `helm template`

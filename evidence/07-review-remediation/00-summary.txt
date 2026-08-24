@@ -1,0 +1,66 @@
+External review remediation - real, live-captured evidence
+==============================================================
+This project received an external review (93/100) of the state captured at
+commit 235c255. This folder is the evidence trail for everything fixed in
+response to it, in the same style as evidence/01-06: real captured command
+output, not paraphrased or simulated. Supplements 06-bonus-features - see
+that folder's own 00-summary.txt for a note on why its captures now predate
+some of what's proven here (the pipeline changed shape twice more since).
+
+Every item below was verified against this project's live AWS/EKS
+infrastructure, not just code-reviewed. Several genuine bugs were found and
+fixed only because of that live testing - documented as they were found,
+not smoothed over.
+
+1. Full commit SHA image tags (was: 8-char truncated)
+   01-full-commit-sha-tags.txt
+     - Live kubectl proof: deployed image tags are the full 40-char SHA,
+       independently resolvable back to a real commit with plain git.
+
+2. Kaniko builds to a tarball, Trivy scans it, THEN crane pushes
+   (was: Kaniko builds and pushes as one atomic step, scan runs after)
+   02-ci-build-scan-before-push-SUCCESS.txt
+     - Full raw console log, ci-application build #6, real webhook-
+       triggered push. Nothing reaches ECR until the scan already passed.
+   03-digest-mismatch-bug-and-fix.txt
+     - A real bug this restructure surfaced: Kaniko's predicted digest
+       (computed before the tarball is ever pushed) genuinely didn't match
+       what crane actually wrote to ECR - Cosign signing the predicted
+       digest 404'd. Side-by-side excerpts of the failure (build #5) and
+       the fix (build #6), both real builds.
+
+3. Cluster Autoscaler (was: fixed 3-node baseline, no guardrail)
+   04-cluster-autoscaler-scale-up-proof.txt
+     - Real capacity contention reproduced on purpose (two CI builds fired
+       seconds apart), a real FailedScheduling event, Cluster Autoscaler's
+       own decision log (3->4, respecting the configured max:6 ceiling),
+       the ASG's own DesiredCapacity changing via a live AWS API call, and
+       the pending Pod actually clearing once the new node joined.
+
+4. All 85 Jenkins plugins pinned to proven-compatible versions
+   (was: 12 bare plugin names, no version pins)
+   05-plugin-lock-fresh-install-proof.txt
+     - Verified the hard way: Jenkins' Helm release uninstalled, its PVC
+       deleted outright, reinstalled from nothing against the full pinned
+       set - confirmed booting clean, then confirmed the live plugin list
+       still matches jenkins/plugins.lock.txt byte-for-byte.
+
+5. PR quality gate - real webhook trigger, not a manual test
+   06-pr-quality-gate-real-webhook-trigger.txt
+     - Full raw console log of ci-application-pr build #1, triggered by a
+       genuinely real GitHub Pull Request (#3), with the PR metadata
+       (PR_HEAD_SHA, PR_NUMBER, etc.) extracted straight from the incoming
+       webhook payload, not fabricated.
+
+6. Webhook HMAC verification - real GitHub deliveries, not synthetic POSTs
+   07-webhook-hmac-real-delivery-proof.txt
+     - webhook-relay logs showing a real GitHub delivery (the git push that
+       published this very evidence folder) HMAC-verified and forwarded,
+       end to end, no manual test payload involved.
+
+Everything else the review flagged (agent Pod hardening, webhook
+verification moved from a manual step into code, console-log credential
+leaks, stale evidence/docs, the Helm rollback-detection gap) was verified
+live earlier the same day this folder was built - see the README's own
+"Confirmed live" notes throughout §§4-9 for that trail; it isn't
+duplicated here as a separate numbered folder.

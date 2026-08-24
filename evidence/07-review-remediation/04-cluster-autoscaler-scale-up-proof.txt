@@ -1,0 +1,79 @@
+Cluster Autoscaler - real scale-up under real capacity contention
+====================================================================
+Closes the review's Low-priority item ("capacity checks or autoscaling
+guardrails so CI matrix agents stop repeatedly hitting transient
+Unschedulable events"). The trigger scenario is exactly what the review
+described, reproduced deliberately here: two ci-application builds fired
+within seconds of each other via Jenkins' REST API, so both hit their
+Build/Scan/Push+Sign matrix stage (up to 6 ephemeral ci-agent Pods) at
+close to the same time, on top of the cluster's fixed 3-node baseline.
+
+----------------------------------------------------------------------------
+1. Real event trail - kubectl get events -n jenkins
+----------------------------------------------------------------------------
+$ kubectl get events -n jenkins --sort-by=.lastTimestamp
+...
+74s   Warning   FailedScheduling    pod/ci-application-11-vfds3-nnphw-dnrj8   0/3 nodes are available: 1 Insufficient memory, 3 Insufficient cpu. no new claims to deallocate, preemption: 0/3 nodes are available: 3 No preemption victims found for incoming pod.
+64s   Normal    TriggeredScaleUp    pod/ci-application-11-vfds3-nnphw-dnrj8   pod triggered scale-up: [{eks-ng-62e85a8c-6ed01968-d54b-b649-51ee-8ecd47126690 3->4 (max: 6)}]
+23s   Warning   FailedScheduling    pod/ci-application-11-vfds3-nnphw-dnrj8   0/4 nodes are available: 1 Insufficient memory, 1 node(s) had untolerated taint(s), 3 Insufficient cpu. no new claims to deallocate, preemption: 0/4 nodes are available: 1 Preemption is not helpful for scheduling, 3 No preemption victims found for incoming pod.
+
+Real, genuine capacity pressure (not a synthetic test): the Pod was
+unschedulable against the existing 3 nodes for a real reason
+(Insufficient memory/cpu), and the second FailedScheduling line (against 4
+nodes) is expected - it fired in the ~1-2 minute window while the new EC2
+instance was still booting/joining, before it was actually Ready to accept
+Pods.
+
+----------------------------------------------------------------------------
+2. Cluster Autoscaler's own decision - live pod logs
+----------------------------------------------------------------------------
+$ kubectl logs -n kube-system -l app.kubernetes.io/name=aws-cluster-autoscaler -f
+
+I0824 10:24:06.363775 orchestrator.go:191] Estimated 1 nodes needed in eks-ng-62e85a8c-6ed01968-d54b-b649-51ee-8ecd47126690
+I0824 10:24:06.363804 orchestrator.go:263] Final scale-up plan: [{eks-ng-62e85a8c-6ed01968-d54b-b649-51ee-8ecd47126690 3->4 (max: 6)}]
+I0824 10:24:06.363816 executor.go:164] Scale-up: setting group eks-ng-62e85a8c-6ed01968-d54b-b649-51ee-8ecd47126690 size to 4
+I0824 10:24:06.363842 auto_scaling_groups.go:269] Setting asg eks-ng-62e85a8c-6ed01968-d54b-b649-51ee-8ecd47126690 size to 4
+Event(...): type: 'Normal' reason: 'ScaledUpGroup' Scale-up: setting group eks-ng-62e85a8c-6ed01968-d54b-b649-51ee-8ecd47126690 size to 4 instead of 3 (max: 6)
+Event(...): type: 'Normal' reason: 'TriggeredScaleUp' pod triggered scale-up: [{eks-ng-62e85a8c-6ed01968-d54b-b649-51ee-8ecd47126690 3->4 (max: 6)}]
+
+Correctly respects the configured ceiling too - "(max: 6)" is echoed on
+every decision line; it would never scale past what install-jenkins.sh
+set the ASG to.
+
+----------------------------------------------------------------------------
+3. Real AWS state - the ASG's own DesiredCapacity, not just log output
+----------------------------------------------------------------------------
+Before triggering the two builds:
+$ aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names eks-ng-62e85a8c-6ed01968-d54b-b649-51ee-8ecd47126690 --query "AutoScalingGroups[0].{Min:MinSize,Max:MaxSize,Desired:DesiredCapacity}"
+{
+    "Min": 3,
+    "Max": 6,
+    "Desired": 3
+}
+
+Immediately after the scale-up decision:
+{
+    "Min": 3,
+    "Max": 6,
+    "Desired": 4
+}
+
+----------------------------------------------------------------------------
+4. Resolution - the Pod actually schedules once the node is Ready
+----------------------------------------------------------------------------
+$ kubectl get nodes --no-headers | wc -l          # 3 -> 4 within ~1-2 min
+$ kubectl get pods -n jenkins --no-headers | grep -c Pending   # 1 -> 0
+
+No manual intervention anywhere in this sequence - the same
+FailedScheduling event that would previously have just sat there until an
+earlier build stage happened to free up capacity (see the README's §11
+Trade-offs table for that earlier, unfixed behavior) now triggers a real
+AWS API call within seconds and resolves itself.
+
+----------------------------------------------------------------------------
+5. Scale-down also confirmed working (not just scale-up)
+----------------------------------------------------------------------------
+Checked hours after an earlier, separate scale-up event the same day: the
+ASG had already returned to Desired=3 on its own, once utilization dropped
+and Cluster Autoscaler's cooldown passed - matches "min: 3" never being
+violated in either direction.

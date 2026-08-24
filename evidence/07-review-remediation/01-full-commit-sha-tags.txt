@@ -1,0 +1,25 @@
+Full 40-char commit SHA image tags - real live capture
+========================================================
+Replaces the earlier 8-char truncated SHA (git rev-parse --short=8) used
+throughout evidence/01-06 - the review flagged the truncation as an
+unnecessary collision-risk trade-off (jenkins/ci/Jenkinsfile has no length
+constraint forcing it: ECR tags allow up to 128 chars, and this value is
+never used as a Kubernetes label, which would cap it at 63).
+
+$ kubectl get pods -n devops-app -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
+backend-deployment-7c9db59cf6-dkzr5	957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:5879f3207eae7d94f5ea40c2448ab8b9725e7a81
+backend-deployment-7c9db59cf6-zgslx	957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:5879f3207eae7d94f5ea40c2448ab8b9725e7a81
+frontend-deployment-7888685755-bgqlc	957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:5879f3207eae7d94f5ea40c2448ab8b9725e7a81
+frontend-deployment-7888685755-csrkj	957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:5879f3207eae7d94f5ea40c2448ab8b9725e7a81
+worker-deployment-75895c7957-89ng4	957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:5879f3207eae7d94f5ea40c2448ab8b9725e7a81
+
+Tag length check:
+  5879f3207eae7d94f5ea40c2448ab8b9725e7a81
+  = 40 characters (a full git commit SHA is always exactly 40 hex chars)
+
+$ git log -1 --format="%H %s" 5879f3207eae7d94f5ea40c2448ab8b9725e7a81
+5879f3207eae7d94f5ea40c2448ab8b9725e7a81 fix: close gaps a full line-by-line audit against the README found
+
+Confirms this isn't a truncated/partial match - the tag deployed is the
+exact, full commit SHA, resolvable back to a real commit with git alone,
+no `git rev-parse --short` disambiguation needed.

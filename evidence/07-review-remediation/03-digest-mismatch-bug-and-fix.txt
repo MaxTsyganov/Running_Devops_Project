@@ -1,0 +1,70 @@
+Real bug found live: Kaniko's predicted digest != what crane actually pushed
+==============================================================================
+Found while first testing the Build-tarball-then-Push reorder (see
+00-summary.txt). Kaniko's --digest-file computes a digest from the image it
+builds, before that image is ever pushed anywhere. When the image goes
+straight out via --destination, that digest matches what ends up in the
+registry. But once Build stopped pushing directly (--no-push --tarPath) and
+a separate tool (crane) pushes the resulting tarball afterward, that
+assumption broke: crane's push re-serializes the manifest, and the digest -
+a hash of the exact manifest bytes - genuinely changed, despite the image
+content being identical. Cosign, told to sign Kaniko's predicted digest,
+tried to read a manifest at that digest and got a 404 - it was never the
+digest ECR actually stored.
+
+----------------------------------------------------------------------------
+BEFORE THE FIX - ci-application build #5 (devops-frontend), real failure
+----------------------------------------------------------------------------
+Excerpt from 350KB raw console log, timestamps [09:34:02-09:34:04]:
+
+[2026-08-24T09:34:02.855Z] + /tmp/crane push frontend.tar 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:9e9558451745b47ee99e499e2cb23e30f98eb5cc
+[2026-08-24T09:34:03.379Z] 2026/08/24 09:34:03 pushed blob: sha256:ac22ef516ed73ab9c7a0e48f8dfe3114195cc6ca323365da2160c09b0f3563b7
+[2026-08-24T09:34:03.379Z] 2026/08/24 09:34:03 pushed blob: sha256:1c9235f5dba64418785abd8fdfe40468ab0c5e82105dec3ad0a2895cd1a4a1b3
+[2026-08-24T09:34:03.643Z] 2026/08/24 09:34:03 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:9e9558451745b47ee99e499e2cb23e30f98eb5cc: digest: sha256:e61e09714b95dc4ff8398836855f516c7117c11726e0e5ae70959cbeda405ed6 size: 2203
+[2026-08-24T09:34:03.644Z] 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend@sha256:e61e09714b95dc4ff8398836855f516c7117c11726e0e5ae70959cbeda405ed6
+                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                                                          crane's OWN reported digest - what's actually in ECR now
+[2026-08-24T09:34:03.644Z] Signing 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend@sha256:2a2337550b879d4c9695649bdad8303a3ccbaf9d06031314c0dedf8786ceaaf5 with awskms:///alias/devops-app-cosign...
+                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                                                                                     Kaniko's PREDICTED digest (--digest-file) - different value, never pushed
+[2026-08-24T09:34:03.920Z] Signing artifact...
+[2026-08-24T09:34:04.180Z] Error: signing [957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend@sha256:2a2337550b879d4c9695649bdad8303a3ccbaf9d06031314c0dedf8786ceaaf5]: signing digest: HEAD https://957905603240.dkr.ecr.us-east-1.amazonaws.com/v2/devops-frontend/manifests/sha256:2a2337550b879d4c9695649bdad8303a3ccbaf9d06031314c0dedf8786ceaaf5: unexpected status code 404 Not Found (HEAD responses have no body, use GET for details)
+[2026-08-24T09:34:04.180Z] error during command execution: signing [...]: 404 Not Found
+
+  crane pushed:  sha256:e61e09714b95dc4ff8398836855f516c7117c11726e0e5ae70959cbeda405ed6
+  Kaniko predicted: sha256:2a2337550b879d4c9695649bdad8303a3ccbaf9d06031314c0dedf8786ceaaf5
+  -> genuinely different values, confirmed by the 404 - the predicted one
+     was never a real manifest ECR ever stored.
+
+Build #5 result: FAILURE (all three services hit the same mismatch).
+
+----------------------------------------------------------------------------
+THE FIX - jenkins/ci/Jenkinsfile
+----------------------------------------------------------------------------
+Dropped --digest-file from the Build stage's Kaniko invocation entirely.
+Push + Sign now captures crane push's own stdout (the "registry/repo@digest"
+line, not the timestamped log lines on stderr) as the one value guaranteed
+to match what's actually in the registry:
+
+  IMAGE_REF="$(/tmp/crane push "${SERVICE}.tar" "${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}")"
+  DIGEST="${IMAGE_REF#*@}"
+  echo "$DIGEST" > digest.txt
+
+----------------------------------------------------------------------------
+AFTER THE FIX - ci-application build #6 (devops-frontend), real success
+----------------------------------------------------------------------------
+Excerpt from 350KB raw console log (full copy: 02-ci-build-scan-before-push-SUCCESS.txt),
+timestamps [09:37:56-09:37:57]:
+
+[2026-08-24T09:37:56.235Z] + /tmp/crane push frontend.tar 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:429f5a8944e523bba85b2fb3ad5bb36a6ace952a
+[2026-08-24T09:37:57.042Z] 2026/08/24 09:37:56 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:429f5a8944e523bba85b2fb3ad5bb36a6ace952a: digest: sha256:5a7852512b06f2129e8b2d9bb6274078a2bf60851406d8deecc1194232401f0e size: 2203
+[2026-08-24T09:37:57.043Z] + IMAGE_REF=957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend@sha256:5a7852512b06f2129e8b2d9bb6274078a2bf60851406d8deecc1194232401f0e
+[2026-08-24T09:37:57.043Z] + DIGEST=sha256:5a7852512b06f2129e8b2d9bb6274078a2bf60851406d8deecc1194232401f0e
+[2026-08-24T09:37:57.043Z] Signing 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend@sha256:5a7852512b06f2129e8b2d9bb6274078a2bf60851406d8deecc1194232401f0e with awskms:///alias/devops-app-cosign...
+                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                                                          same digest crane just reported pushing - no longer two different values
+[2026-08-24T09:37:57.329Z] Signing artifact...
+[2026-08-24T09:37:57.329Z] Pushing signature to: 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend
+
+No 404. Signing succeeded for all three services (backend, worker excerpts
+in the full log). Build #6 result: SUCCESS.

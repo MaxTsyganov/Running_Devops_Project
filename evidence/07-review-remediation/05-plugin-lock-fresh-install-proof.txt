@@ -1,0 +1,55 @@
+Full plugin version pinning - verified against a genuinely fresh install
+============================================================================
+Closes the review's High-priority item 3: "plugin list has names but no
+exact pinned versions." jenkins/values.yaml's installPlugins list went from
+12 bare plugin names to all 85 shortName:version pairs (the 12 wanted plus
+every transitive dependency), captured by jenkins/scripts/lock-plugin-versions.sh
+against a live controller.
+
+The real risk with a plugin lock file: capturing what's already resolved on
+an EXISTING controller's PVC isn't proof a truly fresh install would
+resolve the same compatible set - the plugin-installer init container might
+just skip reinstalling anything already present. So this was verified the
+hard way: the Jenkins Helm release was uninstalled, its PVC deleted
+outright, and install-jenkins.sh re-run against nothing.
+
+----------------------------------------------------------------------------
+1. Confirmed genuinely fresh - PVC creation timestamp
+----------------------------------------------------------------------------
+$ helm uninstall jenkins -n jenkins --wait --timeout=120s
+$ kubectl delete pvc --all -n jenkins --timeout=120s
+$ kubectl get pvc -n jenkins        # confirmed: "No resources found"
+$ bash jenkins/scripts/install-jenkins.sh
+
+$ kubectl get pvc -n jenkins -o jsonpath='{.items[0].metadata.creationTimestamp}'
+2026-08-24T08:53:16Z   <- brand new PVC, not the pre-existing one
+
+----------------------------------------------------------------------------
+2. Controller booted clean on the full 85-plugin pinned set
+----------------------------------------------------------------------------
+$ kubectl get pods -n jenkins
+NAME        READY   STATUS    RESTARTS   AGE
+jenkins-0   2/2     Running   0          86s
+
+No CrashLoopBackOff, no ClassNotFoundException (the exact failure mode an
+earlier, individually-pinned attempt hit - see jenkins/values.yaml's own
+comment on why bare names were used before this) - the plugin-installer
+init container resolved and installed all 85 pinned versions against an
+empty PVC and the controller came up Ready on the first try.
+
+----------------------------------------------------------------------------
+3. Live controller's actual plugin set still matches the committed lock file
+----------------------------------------------------------------------------
+Re-checked at write time (a live controller since re-restarted for later,
+unrelated Helm upgrades - the PVC and its resolved plugins persisted
+through those restarts, which is itself confirmation the set is stable):
+
+$ curl -s -u "admin:$PW" "http://localhost:8080/pluginManager/api/json?depth=1&tree=plugins[shortName,version]" \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(p["shortName"]+":"+p["version"]) for p in sorted(d["plugins"], key=lambda p: p["shortName"])]' \
+    > /tmp/live-plugins.txt
+$ diff /tmp/live-plugins.txt jenkins/plugins.lock.txt
+(no output - files identical)
+
+85 plugin:version pairs, byte-for-byte identical to what's committed in
+jenkins/plugins.lock.txt and pasted into jenkins/values.yaml's
+installPlugins list.
