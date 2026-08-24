@@ -429,6 +429,64 @@ pipeline {
                             exit 1
                         }
                         echo "Monitoring Gate passed: backend error rate ${ERROR_VALUE} within threshold."
+
+                        # Second SLO check, real gap caught on review: the
+                        # assignment requires the gate to check BOTH error
+                        # rate and latency before passing ("target UP and
+                        # that error rate/latency don't exceed the
+                        # threshold") - only error rate was implemented
+                        # here. Same bounded-retry pattern as above:
+                        # histogram_quantile()/rate() need at least two
+                        # scraped samples in their window, same reasoning
+                        # as the error-rate check's own retry loop. No
+                        # vector(0) fallback needed here though - unlike
+                        # the error-rate numerator (which can legitimately
+                        # match zero series when there are no 5xx
+                        # responses), http_request_duration_seconds_bucket
+                        # always has series to aggregate as long as any
+                        # request was served at all.
+                        echo "=== Checking backend p95 latency over the traffic window ==="
+                        LATENCY_RESPONSE=""
+                        for i in $(seq 1 6); do
+                            LATENCY_RESPONSE=$(prom_query 'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="backend-service"}[2m])) by (le))')
+                            # Checked for NaN here too, not just a missing
+                            # "value" key - caught live: unlike the
+                            # error-rate query, this one still returns a
+                            # "value" pair even with too few samples, just
+                            # with the literal string "NaN" as its payload
+                            # (histogram_quantile's own internal 0/0 when
+                            # there's nothing to interpolate from yet). awk's
+                            # non-numeric-string-to-0 coercion would read
+                            # "NaN" as 0s latency - well within threshold -
+                            # silently passing the gate on the exact same
+                            # "no real data" condition the retry loop exists
+                            # to wait out.
+                            if echo "$LATENCY_RESPONSE" | grep -q '"value":' && ! echo "$LATENCY_RESPONSE" | grep -q '"NaN"'; then
+                                break
+                            fi
+                            echo "Waiting for the latency query to have real data... ($i/6)"
+                            sleep 10
+                        done
+                        if ! echo "$LATENCY_RESPONSE" | grep -q '"value":' || echo "$LATENCY_RESPONSE" | grep -q '"NaN"'; then
+                            echo "Monitoring Gate FAILED: latency query returned no data"
+                            echo "Runbook: https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/prometheus-target-down.md"
+                            echo "Rolling back - see post{failure{}} below."
+                            exit 1
+                        fi
+                        LATENCY_VALUE=$(echo "$LATENCY_RESPONSE" | grep -o ',"[^"]*"' | tail -1 | tr -d ',"')
+                        echo "Backend p95 latency over the traffic window: ${LATENCY_VALUE}s"
+                        # Same 1s threshold as the HighLatencyP95 alert
+                        # (observability/rules/application-alerts.yaml) -
+                        # same reasoning as the error-rate check above: a
+                        # release CD lets through shouldn't already be
+                        # sitting past the point that alert would page on.
+                        awk -v v="$LATENCY_VALUE" 'BEGIN { exit !(v+0 <= 1) }' || {
+                            echo "Monitoring Gate FAILED: backend p95 latency ${LATENCY_VALUE}s exceeds the 1s threshold"
+                            echo "Runbook: https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/high-latency-p95.md"
+                            echo "Rolling back - see post{failure{}} below."
+                            exit 1
+                        }
+                        echo "Monitoring Gate passed: backend p95 latency ${LATENCY_VALUE}s within threshold."
                     '''
                 }
             }
