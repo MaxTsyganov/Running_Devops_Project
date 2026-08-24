@@ -52,7 +52,7 @@ flowchart TB
 
                     subgraph AppNS["namespace: devops-app"]
                         direction TB
-                        FE["frontend-deployment\n(2 replicas)"]
+                        FE["frontend-deployment\n(2 replicas)\nnginx + nginx-prometheus-exporter\nsidecar (Assignment 5) - scrapes\nnginx's own stub_status on :8081,\nre-exposes on :9113"]
                         BE["backend-deployment\n(2 replicas)\nSA: backend-sa"]
                         WK["worker-deployment\n(1 replica)\nSA: worker-sa"]
                         BESvc[["backend-service\n(ClusterIP)"]]
