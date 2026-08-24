@@ -1,13 +1,8 @@
-// PR quality-gate pipeline: lint, test, build (no push), scan. Never
-// pushes an image to ECR and never triggers cd-application - satisfies both
-// the assignment's "separate Pipeline for Pull Requests with a quality
-// gate" bonus and its "prevent push to registry for an unapproved PR" note
-// under the CI pipeline section, with one design instead of two. Triggered
-// by GitHub pull_request events via the generic-webhook-trigger plugin (the
-// "github" plugin's own push trigger, used by ci/Jenkinsfile, only ever
-// fires on push) - see ci-application-pr-config.xml for the trigger
-// definition and jenkins/webhook-relay.yaml for how pull_request events get
-// routed there instead of ci-application's endpoint.
+// PR quality-gate pipeline: lint, test, build (no push), scan. Never pushes to
+// ECR or triggers cd-application. Triggered by GitHub pull_request events via
+// the generic-webhook-trigger plugin, since the "github" plugin's push trigger
+// (used by ci/Jenkinsfile) only fires on push - see ci-application-pr-config.xml
+// for the trigger and jenkins/webhook-relay.yaml for the event routing.
 @Library('devops-shared-lib') _
 pipeline {
     agent {
@@ -34,10 +29,9 @@ pipeline {
                         error("PR_HEAD_SHA/PR_NUMBER missing - this job only runs from the pull_request webhook trigger (generic-webhook-trigger), never a manual Build Now.")
                     }
                 }
-                // Explicit refspec into GitHub's own PR ref namespace,
-                // rather than trusting whatever the default branch happens
-                // to be at checkout time - the PR's actual head commit is
-                // the only thing this quality gate should ever evaluate.
+                // Explicit refspec into GitHub's PR ref namespace, rather than trusting
+                // the default branch at checkout time - only the PR's actual head commit
+                // should be evaluated.
                 checkout([
                     $class: 'GitSCM',
                     branches: [[name: "${env.PR_HEAD_SHA}"]],
@@ -84,12 +78,10 @@ pipeline {
             }
         }
 
-        // Sequential, not a matrix: this is a quality gate, not the
-        // deploy-bound pipeline - parallel builds are already proven
-        // elsewhere (ci/Jenkinsfile). Keeping this simple avoids
-        // duplicating that whole per-service-Pod matrix machinery for a
-        // pipeline that never produces anything deployable in the first
-        // place.
+        // Sequential, not a matrix: this is a quality gate, not the deploy-bound
+        // pipeline - parallel builds are already proven in ci/Jenkinsfile, so this
+        // avoids duplicating that matrix machinery for a pipeline that never
+        // produces anything deployable.
         stage('Build (no push) + Scan') {
             steps {
                 container('kaniko') {
@@ -108,13 +100,10 @@ pipeline {
                 }
                 container('trivy') {
                     script {
-                        // Same blocking scan the real pipeline uses
-                        // (jenkins/shared-library/vars/trivyScan.groovy) -
-                        // a fixable CRITICAL finding fails a PR the same
-                        // way it fails a push to main. No SBOM, no Cosign
-                        // signing: both are only meaningful for an image
-                        // that's actually going to be deployed, and this
-                        // one never will be.
+                        // Same blocking scan the real pipeline uses (jenkins/shared-library/
+                        // vars/trivyScan.groovy) - a fixable CRITICAL finding fails a PR the
+                        // same way it fails a push to main. No SBOM/Cosign: both only matter
+                        // for an image that's actually deployed, which this one never is.
                         for (svc in ['frontend', 'backend', 'worker']) {
                             trivyScan("${env.WORKSPACE}/${svc}.tar", true, svc)
                         }

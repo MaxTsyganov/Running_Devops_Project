@@ -7,12 +7,9 @@ resource "aws_vpc" "main_vpc" {
 }
 
 # Two public subnets in different AZs - EKS requires the cluster to span at
-# least 2 AZs, even for a single-nodegroup setup like this one.
-# map_public_ip_on_launch is what makes a subnet "public" - the NAT
-# Gateway's EIP needs to attach here. It doesn't mean anything actually gets
-# a public IP: only the NAT Gateway itself is launched into these subnets.
-# EKS nodes are kept out via --node-private-networking in setup.sh, not
-# anything at the subnet level.
+# least 2 AZs. map_public_ip_on_launch makes the subnet "public" for the NAT
+# Gateway's EIP; only the NAT Gateway launches here. EKS nodes are kept out
+# via --node-private-networking in setup.sh, not anything at the subnet level.
 # trivy:ignore:AWS-0164
 resource "aws_subnet" "public_subnet" {
   vpc_id                  = aws_vpc.main_vpc.id
@@ -75,9 +72,8 @@ resource "aws_route_table_association" "public_association_2" {
   route_table_id = aws_route_table.public_rt.id
 }
 
-# NAT Gateway: lets EKS nodes and pods in the private subnets reach the
-# internet (to pull images, reach the EKS API, etc.) without being directly
-# internet-facing themselves.
+# NAT Gateway: lets EKS nodes/pods in the private subnets reach the internet
+# (pull images, reach the EKS API) without being internet-facing themselves.
 resource "aws_eip" "nat_eip" {
   domain = "vpc"
   tags   = { Name = "DevOps-NAT-EIP" }

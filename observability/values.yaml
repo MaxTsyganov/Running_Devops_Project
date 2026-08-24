@@ -1,10 +1,7 @@
 # Helm values for prometheus-community/kube-prometheus-stack (Assignment 5).
-# Every default this file overrides below was checked directly against the
-# chart's own shipped values.yaml at pin time ("helm show values
-# prometheus-community/kube-prometheus-stack --version 88.5.4"), not
-# guessed - same "checked, not guessed" standard as jenkins/values.yaml.
-# Chart version itself is pinned in observability/scripts/install-observability.sh,
-# same place jenkins/scripts/install-jenkins.sh pins JENKINS_CHART_VERSION.
+# Overrides below were checked against the chart's shipped defaults at pin
+# time, not guessed. Chart version is pinned in
+# observability/scripts/install-observability.sh.
 
 fullnameOverride: "observability"
 
@@ -12,16 +9,10 @@ prometheus:
   prometheusSpec:
     scrapeInterval: "30s"
     retention: "7d"
-    # Chart defaults for all three selectors below are "Nil...UsesHelmValues:
-    # true", meaning "only match ServiceMonitor/PodMonitor/PrometheusRule
-    # objects carrying this release's own label" - which would silently
-    # never discover anything in helm/devops-app or jenkins/, both separate
-    # Helm releases in different namespaces from this one. Same class of
-    # gotcha already hit once for real with Jenkins' own Kubernetes cloud
-    # config (jenkins/values.yaml's own header comment on that). The
-    # matching *NamespaceSelector keys already default to {} (all
-    # namespaces) in this chart version - set explicitly here anyway so a
-    # future chart-default change can't quietly narrow it.
+    # Chart defaults only match ServiceMonitor/PodMonitor/PrometheusRule
+    # objects carrying this release's own label, which would silently miss
+    # helm/devops-app and jenkins/ (separate releases/namespaces). Set
+    # explicitly so a future chart-default change can't quietly narrow it.
     serviceMonitorSelectorNilUsesHelmValues: false
     serviceMonitorNamespaceSelector: {}
     podMonitorSelectorNilUsesHelmValues: false
@@ -45,17 +36,15 @@ alertmanager:
     resources:
       requests: { cpu: 50m, memory: 64Mi }
       limits: { cpu: 100m, memory: 128Mi }
-    # Mounted at /etc/alertmanager/secrets/slack-webhook-url/ - the Secret
-    # itself is created by scripts/install-observability.sh at install time
-    # (same $SLACK_WEBHOOK_URL / optional-if-unset pattern already used for
-    # Jenkins build notifications), never committed here.
+    # Mounted at /etc/alertmanager/secrets/slack-webhook-url/; the Secret is
+    # created by scripts/install-observability.sh at install time, never
+    # committed here.
     secrets:
       - slack-webhook-url
   config:
-    # inhibit_rules and the Watchdog->null sub-route are the chart's own
-    # stock config, carried over unchanged - Watchdog is kube-prometheus's
-    # always-firing "alerting pipeline is alive" self-check, deliberately
-    # silenced rather than routed to Slack.
+    # inhibit_rules and the Watchdog->null route are the chart's stock
+    # config, unchanged. Watchdog is the always-firing "pipeline is alive"
+    # self-check, deliberately silenced rather than sent to Slack.
     inhibit_rules:
       - source_matchers: ['severity = critical']
         target_matchers: ['severity =~ warning|info']
@@ -72,12 +61,9 @@ alertmanager:
       group_wait: 30s
       group_interval: 5m
       repeat_interval: 12h
-      # The chart's own default here is 'null' - a receiver that silently
-      # swallows everything, a deliberate upstream choice so a fresh install
-      # never pages anyone before it's configured. Re-routed to the one real
-      # receiver below; without this, every alert in observability/rules/
-      # would fire correctly in Prometheus and vanish here with no error
-      # anywhere.
+      # Chart default is 'null' (silently swallows everything, so a fresh
+      # install never pages before it's configured). Re-routed to the
+      # 'slack' receiver below.
       receiver: 'slack'
       routes:
         - receiver: 'null'
@@ -103,15 +89,13 @@ grafana:
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 200m, memory: 256Mi }
-  # No persistence set here at all (chart's own Grafana subchart default is
-  # disabled) - every dashboard/datasource is reproducible from Git via the
-  # sidecar below, so there's nothing in Grafana's own storage that a
-  # reinstall doesn't already recreate identically.
+  # No persistence set (chart default is disabled) - dashboards/datasources
+  # are reproducible from Git via the sidecar below, so a reinstall
+  # recreates everything identically.
   sidecar:
     dashboards:
-      # Chart default is already ALL - set explicitly (not relied on
-      # silently) since this repo's dashboard ConfigMaps
-      # (observability/dashboards/) live outside this Helm release entirely
-      # and cross-namespace discovery is exactly what this project has been
-      # burned by assuming before.
+      # Chart default is already ALL - set explicitly since dashboard
+      # ConfigMaps (observability/dashboards/) live outside this Helm
+      # release, and cross-namespace discovery has bitten this project
+      # before.
       searchNamespace: ALL

@@ -1,10 +1,8 @@
 # Least-Privilege IAM Policies
 #
-# Split by workload instead of one shared policy: backend is the only
-# service that touches S3 (file uploads); worker only calls SNS Publish.
-# setup.sh attaches these exact policies, by name, to the backend-sa/
-# worker-sa IAM roles it creates via `eksctl create iamserviceaccount`
-# (IRSA). Don't rename them without updating the POLICY_ARN lines in setup.sh.
+# Split by workload: backend touches S3 (uploads), worker only calls SNS
+# Publish. setup.sh attaches these by name to backend-sa/worker-sa via IRSA -
+# don't rename them without updating the POLICY_ARN lines there.
 
 # Only used to scope the Cluster Autoscaler policy's eks:DescribeNodegroup
 # statement below to this account's own resources, not "*".
@@ -66,9 +64,9 @@ resource "aws_iam_policy" "worker_least_privilege_policy" {
   })
 }
 
-# Separate policy for External Secrets Operator (setup.sh attaches this to
-# external-secrets-sa via IRSA). Scoped to GetSecretValue on exactly the one
-# secret it needs - nothing else in this account's Secrets Manager.
+# Separate policy for External Secrets Operator (attached to
+# external-secrets-sa via IRSA in setup.sh). Scoped to GetSecretValue on
+# exactly the one secret it needs.
 resource "aws_iam_policy" "external_secrets_policy" {
   name        = "DevOps-ExternalSecrets-Policy"
   description = "Minimal permissions for External Secrets Operator to read the DB password from Secrets Manager - nothing else."
@@ -86,11 +84,10 @@ resource "aws_iam_policy" "external_secrets_policy" {
   })
 }
 
-# Separate policy for Jenkins CI (attached to ci-build-sa via IRSA). Scoped
-# to pushing AND pulling images in exactly this project's three ECR
-# repositories - nothing else. ecr:GetAuthorizationToken has to be Resource
-# "*" (ECR doesn't support resource-level restriction on that one action),
-# but everything else is locked to the specific repo ARNs below.
+# Separate policy for Jenkins CI (ci-build-sa via IRSA), scoped to push/pull
+# on this project's three ECR repos only. GetAuthorizationToken must be
+# Resource "*" (ECR doesn't support scoping that action); everything else is
+# locked to the specific repo ARNs below.
 resource "aws_iam_policy" "ci_ecr_push_policy" {
   name        = "DevOps-CI-ECR-Push-Policy"
   description = "Minimal permissions for Jenkins CI to push/pull images in this project's ECR repositories - nothing else."
@@ -113,9 +110,8 @@ resource "aws_iam_policy" "ci_ecr_push_policy" {
           "ecr:UploadLayerPart",
           "ecr:CompleteLayerUpload",
           "ecr:PutImage",
-          # Pull actions - Kaniko doesn't need these (it only pushes), but
-          # Trivy does: it scans the image straight from ECR after Kaniko
-          # pushes it, so it has to read back what was just pushed.
+          # Pull actions - Kaniko only pushes, but Trivy needs these to scan
+          # the image straight from ECR after Kaniko pushes it.
           "ecr:BatchGetImage",
           "ecr:GetDownloadUrlForLayer",
         ]
@@ -125,14 +121,10 @@ resource "aws_iam_policy" "ci_ecr_push_policy" {
   })
 }
 
-# Separate policy for Cosign image signing (attached to ci-build-sa via IRSA,
-# alongside the ECR policy above - kept as its own policy since it's a
-# distinct concern, same pattern as every other single-purpose policy in
-# this file). Scoped to exactly the one signing key (kms.tf) and exactly the
-# three actions `cosign sign --key awskms://...` actually calls: get the
-# public key, describe it (cosign checks key spec/usage before signing), and
-# sign. No kms:Decrypt, no kms:CreateKey/kms:ScheduleKeyDeletion - CI only
-# ever signs, it never manages the key itself.
+# Cosign image-signing policy (ci-build-sa via IRSA, alongside the ECR
+# policy above). Scoped to the one signing key (kms.tf) and only the three
+# actions `cosign sign --key awskms://...` calls - no kms:Decrypt or
+# key-management actions, since CI only ever signs, never manages the key.
 resource "aws_iam_policy" "ci_cosign_sign_policy" {
   name        = "DevOps-CI-Cosign-Sign-Policy"
   description = "Minimal permissions for Jenkins CI to sign images with this project's Cosign KMS key - nothing else."
@@ -154,10 +146,9 @@ resource "aws_iam_policy" "ci_cosign_sign_policy" {
   })
 }
 
-# Separate policy for Fluent Bit (setup.sh attaches this to fluent-bit-sa via
-# IRSA, same pattern as above). No logs:CreateLogGroup here on purpose - the
-# log group is created by Terraform (logging.tf), not Fluent Bit, so it
-# never needs permission to create one.
+# Separate policy for Fluent Bit (fluent-bit-sa via IRSA). No
+# logs:CreateLogGroup - the log group is Terraform-managed (logging.tf), so
+# Fluent Bit never needs permission to create one.
 resource "aws_iam_policy" "fluent_bit_logging_policy" {
   name        = "DevOps-FluentBit-Logging-Policy"
   description = "Minimal permissions for Fluent Bit to write container logs to this project's CloudWatch log group."
@@ -181,19 +172,12 @@ resource "aws_iam_policy" "fluent_bit_logging_policy" {
   })
 }
 
-# Cluster Autoscaler - added when a real, reproducible capacity-contention
-# problem showed up live: two full Jenkins CI matrix builds landing at once
-# (a burst of up to 6 ephemeral ci-agent Pods) transiently starved the
-# cluster's fixed 3-node baseline. The read-only Describe actions can't be
-# scoped by resource (AWS's autoscaling API doesn't support resource-level
-# permissions on Describe calls), but the actions that actually change
-# anything (SetDesiredCapacity, TerminateInstanceInAutoScalingGroup,
-# UpdateAutoScalingGroup) are conditioned on the ASG carrying this specific
-# cluster's own auto-discovery tag - devops-cluster's node group ASG is
-# tagged with it (see jenkins/scripts/install-jenkins.sh), nothing else in
-# this AWS account is, so this can't touch any other ASG even though the
-# Resource element itself has to be "*" (the same AWS limitation - these
-# actions don't support ARN-scoped resources either, only tag conditions).
+# Cluster Autoscaler - added after concurrent Jenkins CI matrix builds (up
+# to 6 ephemeral agent Pods) transiently starved the cluster's fixed 3-node
+# baseline. Describe actions can't be resource-scoped (AWS limitation,
+# Resource "*"); mutating actions are instead gated by a Condition on
+# devops-cluster's own ASG auto-discovery tag (set in
+# jenkins/scripts/install-jenkins.sh), so they can't touch any other ASG.
 resource "aws_iam_policy" "cluster_autoscaler_policy" {
   name        = "DevOps-ClusterAutoscaler-Policy"
   description = "Minimal permissions for Cluster Autoscaler to scale devops-cluster's own managed node group - AWS's documented minimal policy shape for this, not a broader one."
@@ -216,13 +200,10 @@ resource "aws_iam_policy" "cluster_autoscaler_policy" {
         Resource = ["*"]
       },
       {
-        # EKS-managed node groups specifically (not self-managed ASGs) need
-        # this too - confirmed live, Cluster Autoscaler logs an
-        # AccessDeniedException reading labels/taints/tags from the managed
-        # nodegroup API without it. Its own statement, not folded into the
-        # Describe actions above: unlike those, this one actually supports
-        # resource-level ARN scoping, so it gets it - devops-cluster's own
-        # nodegroups only, not every nodegroup in the account.
+        # EKS-managed node groups need this too, confirmed live (Cluster
+        # Autoscaler logs AccessDeniedException without it). Separate
+        # statement since, unlike Describe above, this action supports ARN
+        # scoping - devops-cluster's own nodegroups only.
         Sid      = "ClusterAutoscalerDescribeOurNodegroupsOnly"
         Effect   = "Allow"
         Action   = ["eks:DescribeNodegroup"]

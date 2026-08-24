@@ -1,8 +1,6 @@
-# Asymmetric KMS key used by CI to sign images with Cosign (awskms:// key
-# provider) - no private key material anywhere, ever. Matches the IRSA
-# pattern used everywhere else in this project: ci-build-sa's existing role
-# just gets kms:Sign permission (see iam.tf), instead of introducing a new
-# class of secret (a Cosign keypair) this project otherwise avoids entirely.
+# Asymmetric KMS key for Cosign image signing (awskms:// key provider) - no
+# private key material anywhere. ci-build-sa's role gets kms:Sign via IRSA
+# (iam.tf) instead of introducing a Cosign keypair as a new class of secret.
 resource "aws_kms_key" "cosign_signing" {
   description              = "Asymmetric signing key for Cosign image signing (CI)"
   key_usage                = "SIGN_VERIFY"

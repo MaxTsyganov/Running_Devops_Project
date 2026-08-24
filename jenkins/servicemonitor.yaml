@@ -1,10 +1,7 @@
-# Assignment 5 - discovered cluster-wide by Prometheus (see
-# observability/values.yaml: serviceMonitorSelectorNilUsesHelmValues: false,
-# serviceMonitorNamespaceSelector: {}), same as helm/devops-app's
-# ServiceMonitors. Targets the existing jenkins Service (no new Service
-# needed - jenkins/values.yaml's new prometheus plugin serves /prometheus
-# on this same port once installed). Confirmed live, unauthenticated: no
-# basicAuth/bearerToken needed here either.
+# Assignment 5 - discovered cluster-wide by Prometheus (observability/values.yaml:
+# serviceMonitorNamespaceSelector: {}), same as helm/devops-app's ServiceMonitors.
+# Targets the existing jenkins Service - the prometheus plugin serves /prometheus
+# on this same port, unauthenticated, so no basicAuth/bearerToken needed.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

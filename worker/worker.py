@@ -34,9 +34,7 @@ DB_PASSWORD = os.environ.get("DB_PASSWORD", "changeme")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
 
-# Normally unset in Kubernetes: the pod's IAM role (IRSA) supplies credentials
-# automatically through boto3's default credential chain. These only matter
-# when running outside the cluster with manually exported AWS keys.
+# Unset in Kubernetes - IRSA supplies credentials via boto3's default chain.
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "") or None
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "") or None
 
@@ -50,11 +48,8 @@ RELEASE_VERSION = os.environ.get("RELEASE_VERSION", "unknown")
 METRICS_PORT = int(os.environ.get("METRICS_PORT", "9100"))
 
 # --- Prometheus metrics (Assignment 5) ---------------------------------
-# git_sha on every metric, not just app_info - same reasoning as
-# backend/app.py's own metrics: the dashboards' $version variable filters
-# directly on this label (e.g. worker_items_processed_total{git_sha=~"$version"}),
-# which only works if the label actually exists on the series. A fixed
-# constant for this process's lifetime, so it costs nothing in cardinality.
+# git_sha on every metric (not just app_info) so the dashboards' $version
+# filter works directly against these series.
 ITEMS_PROCESSED_TOTAL = Counter(
     "worker_items_processed_total", "Total items successfully processed",
     ["git_sha"],
@@ -186,10 +181,8 @@ def run_one_cycle():
             )
 
     except Exception:
-        # Covers fetch_pending_items and publish_sns - e.g. the items table
-        # not existing yet if this pod's first cycle races backend's startup
-        # (backend creates the table, worker doesn't). Log and retry next
-        # cycle instead of crashing over what's usually transient.
+        # Covers fetch_pending_items/publish_sns - e.g. the items table not
+        # existing yet if this pod races backend's startup. Retry next cycle.
         logger.exception("Poll cycle failed")
         POLL_ERRORS_TOTAL.labels(git_sha=RELEASE_VERSION).inc()
     finally:
@@ -201,9 +194,8 @@ def main():
     logger.info(f"Target database: {DB_HOST}:{DB_PORT}/{DB_NAME}")
     logger.info(f"Polling interval: {POLL_INTERVAL_SECONDS} seconds.")
 
-    # Worker's first-ever open port - a tiny built-in HTTP server just for
-    # /metrics, nothing else (prometheus_client's own start_http_server,
-    # not a real app server). Started once, before the loop, not per-cycle.
+    # Worker's first-ever open port - prometheus_client's built-in server for
+    # /metrics, started once before the loop.
     start_http_server(METRICS_PORT)
     logger.info(f"Metrics server listening on :{METRICS_PORT}/metrics")
 

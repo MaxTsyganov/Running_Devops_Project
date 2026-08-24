@@ -1,17 +1,10 @@
 <?xml version='1.1' encoding='UTF-8'?>
-<!-- PR quality gate - see jenkins/ci/pr-Jenkinsfile. Verified live against a
-     real controller and a real pull_request webhook delivery. The event-type
-     check originally lived here too, extracting the X-GitHub-Event header
-     and filtering on it alongside PR_ACTION - but that never worked live
-     (Jenkins returned 200, queue stayed empty) because genericHeaderVariables'
-     <key> does a literal match against the header name and the plugin's
-     $-token substitution doesn't reliably resolve a hyphenated variable name
-     either way. Root-caused and then removed rather than patched further:
-     jenkins/webhook-relay.yaml's relay.js already only ever forwards actual
-     pull_request events to this endpoint (push/ping go to /github-webhook/
-     instead) - so re-checking the event type here was redundant on top of
-     being the broken part. Filtering on PR_ACTION alone is both simpler and
-     the thing that's actually needed. -->
+<!-- PR quality gate - see jenkins/ci/pr-Jenkinsfile. An earlier version also
+     checked the X-GitHub-Event header here, but genericHeaderVariables' <key>
+     doesn't reliably resolve a hyphenated header name - removed since
+     jenkins/webhook-relay.yaml's relay.js already only forwards pull_request
+     events to this endpoint, making that check redundant anyway. Filtering on
+     PR_ACTION alone is what's actually needed. -->
 <flow-definition plugin="workflow-job">
   <description>PR quality gate: lint, test, build (no push), scan. Never deploys, never pushes to ECR - see jenkins/ci/pr-Jenkinsfile.</description>
   <keepDependencies>false</keepDependencies>
@@ -33,21 +26,15 @@
       <submoduleCfg class="empty-list"/>
       <extensions/>
     </scm>
-    <!-- Only used to fetch pr-Jenkinsfile itself (from main, same as the
-         other two jobs) - the pipeline's own "Checkout PR head" stage does
-         a second, separate checkout of the PR's actual head commit. -->
+    <!-- Only used to fetch pr-Jenkinsfile itself (from main) - the pipeline's own
+         "Checkout PR head" stage does a second checkout of the PR's actual head. -->
     <scriptPath>jenkins/ci/pr-Jenkinsfile</scriptPath>
     <lightweight>true</lightweight>
   </definition>
-  <!-- Extracts PR_NUMBER/PR_HEAD_SHA/PR_HEAD_REF/PR_ACTION from the
-       incoming JSON straight into environment variables the pipeline reads
-       via env.PR_NUMBER etc - no separate ParametersDefinitionProperty
-       needed, this plugin binds extracted values directly. regexpFilter*
-       only lets opened/synchronize/reopened through; GitHub sends other
-       pull_request actions too (closed, labeled, ...) that shouldn't
-       trigger a build. No event-type check needed here - this endpoint
-       only ever receives pull_request events in the first place (see
-       jenkins/webhook-relay.yaml). -->
+  <!-- Extracts PR_NUMBER/PR_HEAD_SHA/PR_HEAD_REF/PR_ACTION from the incoming JSON
+       directly into env vars the pipeline reads via env.PR_NUMBER etc. regexpFilter*
+       only lets opened/synchronize/reopened through - GitHub sends other
+       pull_request actions (closed, labeled, ...) that shouldn't trigger a build. -->
   <triggers>
     <org.jenkinsci.plugins.gwt.GenericTrigger>
       <spec></spec>
@@ -82,10 +69,8 @@
         </org.jenkinsci.plugins.gwt.GenericVariable>
       </genericVariables>
       <!-- Substituted by jenkins/jobs/create-jobs.sh from git-webhook-secret's
-           pr-token key at apply time - never a literal here, so it's not a
-           value anyone with read access to this repo can also use to invoke
-           the endpoint (see jenkins/webhook-relay.yaml for the same token
-           used on the relay side of this trigger). -->
+           pr-token key at apply time - never a literal here, so repo read access
+           alone can't invoke this endpoint (see jenkins/webhook-relay.yaml). -->
       <token>__PR_WEBHOOK_TOKEN__</token>
       <printContributedVariables>true</printContributedVariables>
       <printPostContent>false</printPostContent>

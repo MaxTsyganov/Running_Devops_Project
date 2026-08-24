@@ -1,7 +1,6 @@
 # Values for the official Jenkins Helm chart (jenkinsci/jenkins).
 # Every version below was checked against the current release before being
-# pinned here (Docker Hub / plugins.jenkins.io / GitHub releases APIs) -
-# not guessed. This project has been burned by guessed tags before.
+# pinned here (Docker Hub / plugins.jenkins.io / GitHub releases APIs), not guessed.
 
 controller:
   image:
@@ -17,19 +16,14 @@ controller:
       main: |
         jenkins:
           systemMessage: "DevOps on AWS - Assignment 4 (Jenkins CI/CD). Configured entirely as code (JCasC) - no manual UI setup."
-          # numExecutors is NOT set here - defaultConfig=true already generates
-          # it from controller.numExecutors above. Setting it in both places
-          # trips JCasC's ErrorOnConflictMergeStrategy (two sources defining
-          # the same key is treated as a hard error, not a silent override).
+          # numExecutors is NOT set here - defaultConfig=true already generates it
+          # from controller.numExecutors above; setting it in both places trips
+          # JCasC's ErrorOnConflictMergeStrategy (a hard error, not a silent override).
           clouds:
-            # Named "devops-agents", not "kubernetes": the Helm chart's own
-            # defaultConfig auto-injects a second cloud already named
-            # "kubernetes" (empty, no templates, serverUrl without ".svc").
-            # Two clouds sharing a name made the scheduler resolve the
-            # chart's empty one first and fall back to a bare jnlp-only pod,
-            # silently ignoring the ci-agent/cd-agent templates below.
-            # Confirmed via the CasC "export" endpoint - the only way this
-            # was actually visible.
+            # Named "devops-agents", not "kubernetes": the chart's own defaultConfig
+            # auto-injects a second, empty cloud already named "kubernetes". Two
+            # clouds sharing a name made the scheduler resolve the chart's empty one
+            # first, silently ignoring the ci-agent/cd-agent templates below.
             - kubernetes:
                 name: "devops-agents"
                 serverUrl: "https://kubernetes.default.svc"
@@ -38,33 +32,20 @@ controller:
                 jenkinsTunnel: "jenkins-agent.jenkins.svc.cluster.local:50000"
                 containerCapStr: "10"
                 podRetention: "never"
-                # Neither template below sets idleMinutes - one used to, on
-                # both. idleMinutes keeps a just-finished pod alive and idle
-                # for reuse instead of deleting it immediately, which
-                # directly contradicts podRetention: never above and was the
-                # real cause of a live capacity problem: on this 3-node
-                # cluster, back-to-back builds left 5-minutes'-worth of idle,
-                # already-finished agent Pods holding onto CPU/memory that a
-                # new build's Pods then couldn't schedule into (confirmed
-                # live - see evidence/06-bonus-features/15-jcasc-recovery-
-                # drill-proof.txt). Removed rather than shortened: this
-                # cluster's real constraint is scheduling headroom, not
-                # agent cold-start time, so the reuse optimization isn't
-                # worth the capacity risk here.
+                # Neither template sets idleMinutes - it used to, on both. idleMinutes
+                # keeps a just-finished pod alive for reuse, contradicting podRetention:
+                # never above, and caused a real capacity problem: idle finished Pods
+                # held CPU/memory that new builds couldn't schedule into on this 3-node
+                # cluster (see evidence/06-bonus-features/15-jcasc-recovery-drill-proof.txt).
                 templates:
                   - name: "ci-agent"
                     label: "ci-agent"
                     namespace: "jenkins"
                     serviceAccount: "ci-build-sa"
-                    # Pod-level baseline only sets what's safe for every
-                    # container in this template, including kaniko below -
-                    # runAsNonRoot can't go here (it's enforced across the
-                    # whole Pod, and kaniko fails it - see kaniko's own
-                    # securityContext for why). Per-container securityContext
-                    # additions layer on top via yamlMergeStrategy: merge,
-                    # matched by container name against the "containers:"
-                    # list above - one raw-YAML fragment per template, not
-                    # one per container, since the merge is Pod-scoped.
+                    # Pod-level baseline only sets what's safe for every container,
+                    # including kaniko below - runAsNonRoot can't go here since it's
+                    # Pod-wide and kaniko fails it (see kaniko's own securityContext).
+                    # Per-container additions layer on via yamlMergeStrategy: merge.
                     yamlMergeStrategy: merge
                     yaml: |
                       spec:
@@ -83,13 +64,10 @@ controller:
                               readOnlyRootFilesystem: true
                               capabilities:
                                 drop: ["ALL"]
-                            # Confirmed live: without this, `pip install` (lintCode.groovy,
-                            # runTests.groovy, and the Sign stage's own boto3 install) fails
-                            # with "Read-only file system: '/.local'" - pip falls back to a
-                            # user install when it can't write the global site-packages, and
-                            # under an arbitrary non-root UID with no /etc/passwd entry, an
-                            # unset HOME resolves to "/", landing that fallback on the
-                            # read-only root instead of the writable tmp volume below.
+                            # Without this, `pip install` fails with "Read-only file system:
+                            # '/.local'" - under a non-root UID with no /etc/passwd entry, an
+                            # unset HOME resolves to "/", landing pip's fallback user install
+                            # on the read-only root instead of the writable tmp volume below.
                             env:
                               - name: HOME
                                 value: "/tmp"
@@ -98,19 +76,12 @@ controller:
                                 mountPath: /tmp
                           - name: kaniko
                             # Deliberately NOT runAsNonRoot / readOnlyRootFilesystem /
-                            # capability-dropped like the other three containers here.
-                            # Kaniko unpacks base-image layers and has to chown/chmod
-                            # extracted files to match whatever ownership the Dockerfile
-                            # and base image specify (COPY --chown, non-root base images,
-                            # etc.) - that's a privileged filesystem operation only root
-                            # (or a process holding CAP_CHOWN/CAP_FOWNER) can do. This is
-                            # Kaniko's own documented constraint, not an oversight -
-                            # https://github.com/GoogleContainerTools/kaniko#security.
-                            # allowPrivilegeEscalation/seccomp are still safe to set:
-                            # neither one is part of the ownership-preservation mechanism
-                            # above. NOT verified live - if a build shows kaniko itself
-                            # (not the image being built) needs a capability beyond root's
-                            # default set, that'd only show up under an actual build.
+                            # capability-dropped like the other containers: Kaniko has to
+                            # chown/chmod extracted layer files to match Dockerfile/base-image
+                            # ownership (COPY --chown, non-root base images), a privileged
+                            # operation only root can do. Documented Kaniko constraint, not an
+                            # oversight - https://github.com/GoogleContainerTools/kaniko#security.
+                            # allowPrivilegeEscalation/seccomp are still safe to set here.
                             securityContext:
                               allowPrivilegeEscalation: false
                               seccompProfile:
@@ -123,12 +94,9 @@ controller:
                               readOnlyRootFilesystem: true
                               capabilities:
                                 drop: ["ALL"]
-                            # Trivy's vulnerability-DB cache defaults to a
-                            # path under the invoking user's home directory -
-                            # not guessable under an arbitrary non-root UID
-                            # with no /etc/passwd entry, so pointed at the
-                            # same writable tmp volume explicitly instead of
-                            # assumed. NOT verified live.
+                            # Trivy's vulnerability-DB cache defaults to a path under the
+                            # invoking user's home directory - not guessable under a UID with
+                            # no /etc/passwd entry, so pointed at the writable tmp volume explicitly.
                             env:
                               - name: TRIVY_CACHE_DIR
                                 value: "/tmp/trivy-cache"
@@ -136,26 +104,14 @@ controller:
                               - name: tmp
                                 mountPath: /tmp
                     containers:
-                      # Lint/test tooling - same base image the app's own
-                      # Dockerfiles use, so results reflect the real runtime.
-                      # Sized against a t3.small node's real headroom (~900Mi
-                      # free with the app + Jenkins controller already
-                      # resident): the original 512Mi/1Gi + 1Gi/2Gi made this
-                      # pod unschedulable on any node, confirmed via
-                      # `kubectl describe nodes`. Kept small even after
-                      # moving to t3.medium - these are small builds
-                      # (python-slim/nginx-alpine based), so lower requests
-                      # are realistic, and it leaves more of the extra
-                      # headroom free for CI/CD agent bursts.
-                      # Tag kept alongside the digest for human readability
-                      # (what a person reads at a glance); the digest after
-                      # @ is what the kubelet actually resolves and pulls -
-                      # the tag portion is ignored for that purpose. Each
-                      # digest below was resolved directly against the
-                      # registry (Docker Hub / GCR manifest API) at the time
-                      # it was pinned, same "checked, not guessed" standard
-                      # as the controller image tag and plugin versions.
-                      # Re-pin by re-querying the registry, not by guessing.
+                      # Lint/test tooling - same base image the app's own Dockerfiles use, so
+                      # results reflect the real runtime. Sized against a t3.small node's real
+                      # headroom (~900Mi free): the original 512Mi/1Gi + 1Gi/2Gi made this pod
+                      # unschedulable, confirmed via `kubectl describe nodes`. Kept small even
+                      # after moving to t3.medium, leaving headroom for CI/CD agent bursts.
+                      # Tag kept alongside the digest for readability; the digest after @ is
+                      # what the kubelet actually pulls, resolved directly against the
+                      # registry at pin time. Re-pin by re-querying, not by guessing.
                       - name: "python"
                         image: "python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7"
                         command: "sleep"
@@ -172,11 +128,9 @@ controller:
                         resourceRequestMemory: "400Mi"
                         resourceLimitCpu: "1"
                         resourceLimitMemory: "800Mi"
-                      # Scans the images Kaniko just pushed, straight from ECR
-                      # via ci-build-sa's IRSA (needs the pull actions added
-                      # alongside the push ones in terraform/iam.tf - Kaniko
-                      # only ever needed to push, scanning is the first thing
-                      # in this pipeline that reads an image back).
+                      # Scans the images Kaniko just pushed, straight from ECR via
+                      # ci-build-sa's IRSA (needs the pull actions added alongside push in
+                      # terraform/iam.tf - scanning is the first step here that reads an image back).
                       - name: "trivy"
                         image: "aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969"
                         command: "sleep"
@@ -192,13 +146,12 @@ controller:
                     yamlMergeStrategy: merge
                     yaml: |
                       spec:
-                        # runAsNonRoot NOT set Pod-wide - confirmed live it cascades to the
-                        # jnlp sidecar every template auto-gets from the Kubernetes plugin,
-                        # and jenkins/inbound-agent's image declares USER jenkins (a name, not
-                        # a numeric UID), which the kubelet can't statically verify as non-root
-                        # - CreateContainerConfigError on jnlp specifically. Same reason
-                        # ci-agent's Pod-level securityContext below never sets it either; put
-                        # it on the one container that actually needs it instead.
+                        # runAsNonRoot NOT set Pod-wide - it cascades to the jnlp sidecar every
+                        # template auto-gets, and jenkins/inbound-agent's image declares USER
+                        # jenkins (a name, not numeric UID), which the kubelet can't verify as
+                        # non-root - CreateContainerConfigError on jnlp. Same reason ci-agent's
+                        # Pod-level securityContext never sets it either; put it on the one
+                        # container that needs it instead.
                         securityContext:
                           seccompProfile:
                             type: RuntimeDefault
@@ -214,12 +167,9 @@ controller:
                               readOnlyRootFilesystem: true
                               capabilities:
                                 drop: ["ALL"]
-                            # kubectl/helm both want a writable HOME for
-                            # their own cache/config (~/.kube, ~/.cache/helm)
-                            # - not guessable under an arbitrary non-root UID
-                            # with no /etc/passwd entry, so both pointed at
-                            # the same writable tmp volume explicitly.
-                            # NOT verified live.
+                            # kubectl/helm both want a writable HOME for cache/config
+                            # (~/.kube, ~/.cache/helm) - not guessable under a UID with no
+                            # /etc/passwd entry, so pointed at the writable tmp volume explicitly.
                             env:
                               - name: HOME
                                 value: "/tmp"
@@ -236,12 +186,11 @@ controller:
                         resourceRequestMemory: "512Mi"
                         resourceLimitCpu: "500m"
                         resourceLimitMemory: "1Gi"
-        # Shared Library (jenkins/shared-library/vars/) - the same repo as
-        # everything else here, not a separate library repo: one less thing
-        # to keep in sync. `libraryPath` points the retriever at the
-        # subdirectory instead of expecting vars/ at the repo root -
-        # confirmed live against pipeline-groovy-lib 798.v5cc688825312, see
-        # evidence/06-bonus-features/12-shared-library-live-resolution.txt.
+        # Shared Library (jenkins/shared-library/vars/) - same repo as everything
+        # else here, not a separate library repo, one less thing to keep in sync.
+        # `libraryPath` points the retriever at the subdirectory instead of
+        # expecting vars/ at the repo root (see
+        # evidence/06-bonus-features/12-shared-library-live-resolution.txt).
         unclassified:
           globalLibraries:
             libraries:
@@ -254,28 +203,21 @@ controller:
                       git:
                         remote: "https://github.com/MaxTsyganov/Running_Devops_Project.git"
 
-  # Job creation deliberately does not happen here. An earlier attempt
-  # bootstrapped a seed job through JCasC's own jobs: section, which runs
-  # during Jenkins' startup - a syntax slip in that script crashed the
-  # whole controller boot, since job creation and core startup shared the
-  # same failure path. jenkins/jobs/create-jobs.sh creates
-  # ci-application/cd-application afterward instead, via Jenkins' REST API
-  # against an already-running controller - a bug there now fails just
-  # that script, not the controller.
+  # Job creation deliberately does not happen here. An earlier attempt bootstrapped
+  # a seed job through JCasC's own jobs: section (runs during startup), and a
+  # syntax slip there crashed the whole controller boot. jenkins/jobs/create-jobs.sh
+  # creates the jobs afterward instead, via REST API against an already-running
+  # controller - a bug there now fails just that script, not the controller.
 
-  # Every plugin pinned to shortName:version, not bare names - all 85
-  # entries (the 12 actually wanted below plus every transitive dependency)
-  # captured by jenkins/scripts/lock-plugin-versions.sh against a live
-  # controller that had just booted cleanly on this exact set, confirmed by
-  # re-running install-jenkins.sh fresh against it afterward - see
-  # jenkins/plugins.lock.txt. An earlier attempt pinned only the top-level
-  # plugins, each to whatever version plugins.jenkins.io reported
-  # independently - those turned out mutually incompatible (a
-  # snakeyaml/credentials ClassNotFoundException killed the controller on
-  # boot), because each plugin's dependency graph was checked in isolation,
-  # not as a set. This is the fix: a full set that's already proven
-  # compatible, not individually-guessed versions. Re-generate by re-running
-  # that script after any change to the 12 top-level entries below.
+  # Every plugin pinned to shortName:version, not bare names - all 85 entries (12
+  # actually wanted plus every transitive dependency) captured by
+  # jenkins/scripts/lock-plugin-versions.sh against a live controller that had
+  # just booted cleanly on this exact set (see jenkins/plugins.lock.txt). An
+  # earlier attempt pinned only top-level plugins, each to whatever version
+  # plugins.jenkins.io reported independently - those were mutually incompatible
+  # (a snakeyaml/credentials ClassNotFoundException killed the controller on
+  # boot) since each dependency graph was checked in isolation, not as a set.
+  # Re-generate by re-running that script after any change to the top-level entries.
   installPlugins:
     - "antisamy-markup-formatter:173.v680e3a_b_69ff3"
     - "apache-httpcomponents-client-4-api:4.5.14-269.vfa_2321039a_83"
@@ -410,10 +352,9 @@ agent:
 rbac:
   create: false # own Role/RoleBinding supplied instead (jenkins/rbac/controller-rbac.yaml)
 
-# serviceAccount is a top-level key in this chart, not nested under
-# controller - confirmed against the chart's default values. An earlier
-# attempt nested it, and the override was silently ignored, leaving the
-# pod on the chart's autogenerated SA name.
+# serviceAccount is a top-level key in this chart, not nested under controller -
+# an earlier attempt nested it and the override was silently ignored, leaving
+# the pod on the chart's autogenerated SA name.
 serviceAccount:
   create: true
   name: jenkins-controller

@@ -1,20 +1,17 @@
 # Non-sensitive defaults, safe to commit. Real infrastructure data (RDS
-# endpoint, S3 bucket, AWS account ID) or secrets are left empty here -
-# Jenkins CD supplies the real values at deploy time, read from a ConfigMap.
-# See ../values-dynamic.example.yaml for the shape of that data, and how to
-# supply it by hand instead. (TLS isn't part of any of this - see the note
-# at the bottom of this file.)
+# endpoint, S3 bucket, AWS account ID) and secrets are left empty here -
+# Jenkins CD supplies the real values at deploy time. See
+# ../values-dynamic.example.yaml for that data's shape and how to supply it
+# by hand. (TLS is handled separately - see the note at the bottom.)
 
 image:
   # e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com - set at install time
   registry: ""
   tag: v1.0.0
-  # nginx-prometheus-exporter sidecar (Assignment 5) - a public, third-party
-  # image, unlike the three above, so pinned by digest resolved directly
-  # against Docker Hub's manifest API at the time it was pinned - same
-  # "checked, not guessed" standard as jenkins/values.yaml's agent images.
-  # Tag kept alongside for human readability; the digest is what's actually
-  # pulled. Re-pin by re-querying the registry, not by guessing.
+  # nginx-prometheus-exporter sidecar - a public, third-party image, so
+  # pinned by digest resolved against Docker Hub's manifest API, not
+  # guessed. Tag kept alongside for readability; the digest is what's
+  # actually pulled.
   nginxExporter: "nginx/nginx-prometheus-exporter:1.5.3@sha256:85666e7fde7e253f1c6d978f9a961245df4c9cdb7677e1866d9bb28e8f9ee41d"
 
 frontend:
@@ -55,15 +52,13 @@ config:
   s3BucketName: ""
   snsTopicArn: ""
   # Same value as image.tag (the full commit SHA) - cd/Jenkinsfile passes
-  # both together so the app_info metric (Assignment 5) reports the exact
-  # deployed commit, not just whatever image tag happens to be running.
+  # both so the app_info metric reports the exact deployed commit.
   releaseVersion: "unknown"
 
-# Not a secret value - just the NAME of the AWS Secrets Manager secret that
-# holds the real password. External Secrets Operator (see
-# templates/externalsecret.yaml) reads the actual value from AWS at sync
-# time; the password itself never passes through this chart, Helm, or this
-# repo.
+# Not a secret value - just the NAME of the AWS Secrets Manager secret
+# holding the real password. External Secrets Operator
+# (templates/externalsecret.yaml) reads the actual value from AWS at sync
+# time; the password never passes through this chart, Helm, or this repo.
 secrets:
   dbPasswordSecretName: ""
 

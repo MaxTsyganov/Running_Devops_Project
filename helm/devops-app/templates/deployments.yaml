@@ -7,12 +7,11 @@ metadata:
     app: frontend
 spec:
   replicas: {{ .Values.frontend.replicas }}
-  # maxSurge: 0 - on the original t3.small nodes, the default strategy's
-  # old+new pods coexisting briefly during a rollout hit real "Insufficient
-  # memory" and "Too many pods" scheduling failures. maxUnavailable: 1 frees
-  # an old pod before creating its replacement instead, trading a few
-  # seconds of reduced capacity for never needing surge headroom. Kept even
-  # after moving to t3.medium - still a fine trade for a low-traffic demo app.
+  # maxSurge: 0 - on the original t3.small nodes, old+new pods coexisting
+  # during a rollout hit real "Insufficient memory"/"Too many pods"
+  # scheduling failures. maxUnavailable: 1 frees an old pod before creating
+  # its replacement instead. Kept after moving to t3.medium - still a fine
+  # trade for a low-traffic demo app.
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -70,11 +69,10 @@ spec:
             port: 8080
           initialDelaySeconds: 15
           periodSeconds: 20
-      # Scrapes the nginx container's own stub_status (127.0.0.1:8081,
-      # frontend/nginx.k8s.conf - only reachable inside this Pod's network
-      # namespace, which is exactly why this has to be a sidecar rather than
-      # a separate Deployment) and re-exposes it in Prometheus format on
-      # :9113 (Assignment 5).
+      # Scrapes the nginx container's own stub_status (127.0.0.1:8081, only
+      # reachable inside this Pod's network namespace, hence a sidecar
+      # rather than a separate Deployment) and re-exposes it in Prometheus
+      # format on :9113.
       - name: nginx-exporter
         image: {{ .Values.image.nginxExporter | quote }}
         args:
@@ -206,8 +204,8 @@ spec:
       - name: worker
         image: {{ .Values.image.registry }}/devops-worker:{{ .Values.image.tag }}
         # Unlike frontend/backend, this container's only inbound traffic is
-        # its own /metrics (Assignment 5) - it opens no other server, still
-        # only makes outbound connections (DB, SNS) for its actual work.
+        # its own /metrics - it opens no other server, otherwise only makes
+        # outbound connections (DB, SNS).
         ports:
         - containerPort: 9100
           name: metrics
@@ -240,9 +238,8 @@ spec:
           periodSeconds: 15
         livenessProbe:
           # Fails if the heartbeat is older than 3x POLL_INTERVAL_SECONDS,
-          # meaning the loop is stuck. Reads the env var at check time (same
-          # one worker.py reads, via app-config) instead of a hardcoded
-          # number, so it stays correct if the poll interval ever changes.
+          # meaning the loop is stuck. Reads the same env var worker.py
+          # uses instead of a hardcoded number, so it tracks changes to it.
           exec:
             command:
             - sh

@@ -40,34 +40,21 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "")
 SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
 
-# Normally unset in Kubernetes: the pod's IAM role (IRSA) supplies credentials
-# automatically through boto3's default credential chain. These only matter
-# when running outside the cluster with manually exported AWS keys.
+# Unset in Kubernetes - IRSA supplies credentials via boto3's default chain.
+# Only needed when running outside the cluster with exported AWS keys.
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "") or None
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "") or None
 
-# Set by Jenkins CD at deploy time (the full commit SHA it just built and
-# pushed - see cd/Jenkinsfile) - not guessed or derived at runtime, so
-# app_info always reflects exactly what was actually deployed, not whatever
-# happened to be checked out in this image's build context.
+# Full commit SHA, set by Jenkins CD at deploy time - lets app_info report
+# exactly what was deployed.
 RELEASE_VERSION = os.environ.get("RELEASE_VERSION", "unknown")
 
 # --- Prometheus metrics (Assignment 5) ---------------------------------
-# path label uses request.url_rule.rule (the Flask route pattern, e.g.
-# "/api/items"), never request.path (the raw URL) - every current route is
-# static so this makes no visible difference today, but it's what keeps a
-# future path-parameter route (e.g. "/api/items/<int:id>") from blowing up
-# label cardinality with one series per ID instead of one for the route.
+# path label uses the Flask route pattern (request.url_rule.rule), never the
+# raw URL, to keep cardinality bounded if a path-parameter route is added later.
 #
-# git_sha is on every metric below, not just app_info - the dashboards'
-# $version template variable filters directly on it
-# (http_requests_total{git_sha=~"$version"}), which only works if the label
-# actually exists on the series being filtered. The alternative (a PromQL
-# `* on(pod) group_left(git_sha) app_info` join in every panel instead of
-# duplicating the label) was considered and rejected: RELEASE_VERSION is a
-# fixed constant for this process's whole lifetime, so duplicating it here
-# costs nothing in cardinality (still exactly one label combination per
-# metric per process) and keeps every panel's PromQL simple.
+# git_sha is duplicated on every metric (not just app_info) so dashboard
+# panels can filter directly on it without a join.
 HTTP_REQUESTS_TOTAL = Counter(
     "http_requests_total", "Total HTTP requests",
     ["method", "path", "status", "git_sha"],
@@ -76,36 +63,24 @@ HTTP_REQUEST_DURATION_SECONDS = Histogram(
     "http_request_duration_seconds", "HTTP request duration in seconds",
     ["method", "path", "git_sha"],
 )
-# Gauge, not a label on some other metric - app_info's own value is always 1;
-# the labels themselves carry the information (the standard Prometheus
-# "info" metric pattern). Set once at import time, never changes for the
-# life of this process.
+# Standard Prometheus "info" pattern: value is always 1, labels carry the data.
 APP_INFO = Gauge(
     "app_info", "Static build/release info for this running process",
     ["version", "git_sha", "release"],
 )
 APP_INFO.labels(version=RELEASE_VERSION, git_sha=RELEASE_VERSION, release=RELEASE_VERSION).set(1)
-# The one required business metric - a real user action (creating an item),
-# not an infrastructure signal.
+# Required business metric - a real user action, not an infra signal.
 ITEMS_CREATED_TOTAL = Counter(
     "items_created_total", "Total items successfully created via POST /api/items",
     ["git_sha"],
 )
-# Assignment 5's own "dependency failures" metric - distinct from the
-# generic http_requests_total{status=500}: this counts WHICH downstream
-# dependency actually failed (rds/s3/sns), not just that some request
-# failed. Not incremented for /api/health's own DB check - that's a
-# deliberate probe, not a user-facing request failing because of a
-# dependency, same reasoning as excluding it from http_requests_total.
+# Tracks which downstream dependency failed (rds/s3/sns), distinct from the
+# generic http_requests_total{status=500}.
 DEPENDENCY_FAILURES_TOTAL = Counter(
     "dependency_call_failures_total", "Total failed calls to an external dependency",
     ["dependency", "git_sha"],
 )
-# Excluded from request-metrics instrumentation below: scrape traffic to
-# /metrics itself, and the two liveness/readiness endpoints (already
-# excluded from the point of the assignment's own "traffic, errors, latency"
-# dashboard - probe hits every few seconds would otherwise dominate every
-# rate/latency panel with noise that has nothing to do with real usage).
+# Excluded so probe/scrape traffic doesn't dominate rate/latency panels.
 _METRICS_EXCLUDED_PATHS = {"/metrics", "/healthz", "/api/health"}
 
 
@@ -219,32 +194,23 @@ def health():
 
 @app.get("/healthz")
 def healthz():
-    # Liveness only: confirms the process can serve a request, nothing more.
-    # A transient RDS outage should mark the pod not-ready (via /api/health,
-    # used by readinessProbe) rather than get it killed and restarted
-    # (livenessProbe's job) - the process itself isn't what's stuck.
+    # Liveness only. DB health lives in /api/health (readinessProbe) so a
+    # transient RDS outage marks the pod not-ready instead of killing it.
     return jsonify({"status": "alive"}), 200
 
 
 @app.get("/metrics")
 def metrics():
-    # Separate from liveness/readiness and accessible only via the scrape
-    # path a NetworkPolicy allows (Prometheus's own ServiceMonitor, in the
-    # observability namespace) - see helm/devops-app/templates/
-    # networkpolicies.yaml. Nothing here is proxied through the public
-    # frontend either (nginx only proxies /api/, not /metrics).
+    # Scraped only by Prometheus via NetworkPolicy - see
+    # helm/devops-app/templates/networkpolicies.yaml. Not proxied by nginx.
     return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
 
 
 @app.post("/api/debug/fail")
 def debug_fail():
-    # Deliberate, controlled failure endpoint - exists purely to make the
-    # HighErrorRate alert's failure exercise real (see observability/runbooks/
-    # HighErrorRate.md). Unconditional 500, on demand, from a real Flask
-    # request - so it goes through the same before/after_request hooks as
-    # every other route and genuinely increments http_requests_total with
-    # status=500, unlike scaling the backend to 0 (which would kill the
-    # process that owns that counter instead of exercising it).
+    # Controlled failure endpoint for the HighErrorRate alert drill - a real
+    # request through the normal hooks, so it genuinely increments
+    # http_requests_total{status=500}.
     abort(500)
 
 

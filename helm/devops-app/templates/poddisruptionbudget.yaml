@@ -1,8 +1,7 @@
-# PodDisruptionBudgets only apply to voluntary disruptions (node drains,
-# cluster upgrades, `kubectl drain`) - they don't affect crashes or manual
-# `kubectl delete pod`. worker-deployment has no PDB here on purpose: with
-# only 1 replica, `minAvailable: 1` would mean 0 pods are ever allowed to be
-# evicted, blocking node drains/upgrades instead of just slowing them down.
+# PDBs only apply to voluntary disruptions (node drains, `kubectl drain`),
+# not crashes. worker-deployment has none: with only 1 replica,
+# `minAvailable: 1` would block node drains entirely instead of just
+# slowing them down.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

@@ -1,32 +1,23 @@
-// Posts a short build-result message to Slack via an Incoming Webhook URL,
-// read from the 'slack-webhook-url' Jenkins Credential
-// (jenkins/scripts/configure-jenkins.sh creates it the same way as the
-// existing GitHub webhook secret via the Kubernetes Credentials Provider -
-// never inlined here, never printed to a log). Shared between ci/Jenkinsfile
-// and cd/Jenkinsfile's post{} blocks - pr-Jenkinsfile doesn't call this, a
-// quality-gate result showing on the PR's own build page is enough.
+// Posts a short build-result message to Slack via an Incoming Webhook URL, read
+// from the 'slack-webhook-url' Jenkins Credential (jenkins/scripts/configure-jenkins.sh
+// creates it via the Kubernetes Credentials Provider - never inlined, never logged).
+// Shared between ci/Jenkinsfile and cd/Jenkinsfile's post{} blocks; pr-Jenkinsfile
+// doesn't call this since the PR's own build page already shows the gate result.
 //
-// Two POST implementations, picked automatically by which agent container
-// this runs in: ci-agent's python container has neither curl nor wget
-// (checked directly earlier in this project, not assumed); cd-agent's
-// deploy container is Alpine-based and already uses wget for the CD smoke
-// test. The JSON payload is written to a file rather than embedded inline
-// in any command, and the webhook URL is read from the process environment
-// rather than string-substituted - avoids shell/Python/Groovy quoting
-// collisions entirely instead of trying to escape around them.
+// Picks wget or a urllib fallback depending on which agent container this runs in
+// (ci-agent's python container has neither curl nor wget). The JSON payload goes to
+// a file and the webhook URL is read from the environment, avoiding shell/Python/
+// Groovy quoting collisions entirely.
 
 String esc(String s) {
     return s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
 }
 
 def call(String status, String context) {
-    // Notifications are documented as optional (configure-jenkins.sh skips
-    // creating the credential entirely if SLACK_WEBHOOK_URL was never set) -
-    // that promise only holds if a missing/invalid credential can never fail
-    // an otherwise-successful build. withCredentials throws
-    // CredentialsNotFoundException for a credentialsId that doesn't exist;
-    // caught here so a real CI/CD result is never overridden by a bonus
-    // feature's own setup being incomplete.
+    // Notifications are optional (configure-jenkins.sh skips creating the credential
+    // if SLACK_WEBHOOK_URL was never set), so a missing credential must never fail an
+    // otherwise-successful build. withCredentials throws CredentialsNotFoundException
+    // in that case; caught here to avoid that.
     try {
         def color = (status == 'SUCCESS') ? 'good' : 'danger'
         def title = "${env.JOB_NAME} #${env.BUILD_NUMBER} - ${status}"

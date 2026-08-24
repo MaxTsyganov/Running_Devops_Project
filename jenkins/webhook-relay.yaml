@@ -1,42 +1,26 @@
 # Gets GitHub push events to Jenkins without ever opening an inbound port on
-# Jenkins itself. The assignment requires both a real webhook trigger (not
-# polling) AND that the Jenkins UI/endpoints stay off the public internet -
-# a relay satisfies both at once: this pod holds an *outbound* connection to
-# a public smee.io channel and forwards whatever GitHub POSTs there straight
-# to Jenkins' internal ClusterIP service. Jenkins never gets an inbound port,
-# public IP, Ingress, or LoadBalancer of its own.
+# Jenkins itself: this pod holds an *outbound* connection to a public smee.io
+# channel and forwards whatever GitHub POSTs there to Jenkins' internal
+# ClusterIP. Jenkins never gets an inbound port, public IP, Ingress, or LoadBalancer.
 #
-# Not using the official smee-client npm package. Every version checked
-# (2.0.4 through current 5.0.0) has a real bug: its forwarding code does
-# `mode: data["sec-fetch-mode"]`, blindly reusing whatever incoming header
-# value GitHub's delivery included as the `mode` option on its own outgoing
-# fetch call. A real GitHub push includes that header (via GitHub's
-# Hookshot agent / smee.io's Azure App Service front-end); a synthetic
-# test request doesn't - which is why manual curl/wget tests against this
-# endpoint succeeded while real GitHub deliveries got HTTP 405 from
-# Jenkins every time. Root-caused by reading smee-client's source and
-# confirmed with webhook.site captures of the real payload/headers. The
-# replacement below has been proven against a real GitHub push -
-# ci-application started on its own, no manual Build Now.
+# Not using the official smee-client npm package: every version checked (2.0.4
+# through 5.0.0) blindly reuses an incoming `sec-fetch-mode` header value as the
+# `mode` option on its own outgoing fetch call, which real GitHub deliveries
+# include but synthetic test requests don't - causing manual curl/wget tests to
+# succeed while real GitHub deliveries got HTTP 405 from Jenkins every time. The
+# replacement below has been proven against a real GitHub push.
 #
-# The script below talks the same SSE protocol smee.io uses (a chunked
-# text/event-stream GET) directly via Node's stable fetch/streams - no
-# experimental flags, no extra dependencies - and forwards only a deliberate
-# allowlist of the actual GitHub headers Jenkins' github-webhook endpoint
-# needs, instead of blindly copying every incoming header/metadata key.
+# The script talks the same SSE protocol smee.io uses (chunked text/event-stream
+# GET) via Node's stable fetch/streams, and forwards only an allowlist of the
+# GitHub headers Jenkins' github-webhook endpoint needs.
 #
-# SMEE_URL comes from a ConfigMap that configure-jenkins.sh creates (a fresh
-# https://smee.io/<channel> generated once via `curl -sI https://smee.io/new`
-# and persisted, not committed - re-running configure.sh reuses the existing
-# channel instead of minting a new one each time).
+# SMEE_URL comes from a ConfigMap configure-jenkins.sh creates (a fresh
+# https://smee.io/<channel>, persisted so re-running configure.sh reuses it
+# instead of minting a new one).
 #
-# Signature verification lives here, not in Jenkins' own GitHub plugin: this
-# relay is the one component with an outbound connection to the public
-# internet, so it's the actual trust boundary between a real GitHub delivery
-# and anything Jenkins ever sees - verifying here means neither Jenkins
-# endpoint has to trust an unauthenticated POST from inside the cluster
-# network, regardless of what the GitHub plugin's own System Config does or
-# doesn't check.
+# Signature verification lives here, not in Jenkins' GitHub plugin: this relay
+# is the one component with an outbound connection to the public internet, so
+# it's the actual trust boundary between a real GitHub delivery and Jenkins.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -48,28 +32,22 @@ data:
 
     const smeeUrl = process.env.SMEE_URL;
     const target = process.env.TARGET_URL;
-    // Separate target for pull_request events: the "github" plugin's push
-    // trigger (TARGET_URL, /github-webhook/) only ever fires on push -
-    // ci-application-pr is triggered by the generic-webhook-trigger plugin
-    // instead, which listens on its own endpoint. push/ping keep going to
-    // TARGET_URL exactly as before; only pull_request gets routed here.
-    // PR_WEBHOOK_TOKEN is appended at runtime (never baked into this
-    // ConfigMap or committed to git) - generated fresh by
-    // configure-jenkins.sh and read from git-webhook-secret.
+    // Separate target for pull_request events: the "github" plugin's push trigger
+    // (TARGET_URL, /github-webhook/) only fires on push - ci-application-pr is
+    // triggered by the generic-webhook-trigger plugin on its own endpoint instead.
+    // push/ping keep going to TARGET_URL; only pull_request routes here.
+    // PR_WEBHOOK_TOKEN is appended at runtime, never baked into this ConfigMap or
+    // committed to git - generated by configure-jenkins.sh, read from git-webhook-secret.
     const targetPrBase = process.env.TARGET_URL_PR;
     const prToken = process.env.PR_WEBHOOK_TOKEN;
     const targetPr = (targetPrBase && prToken) ? `${targetPrBase}?token=${prToken}` : targetPrBase;
 
     // HMAC secret GitHub signs every real delivery with (configure-jenkins.sh
-    // generates it, stored in git-webhook-secret). VERIFY_SIGNATURES defaults
-    // to enforcing this and is deliberately a plain env var (not read from a
-    // Secret) so it's a one-line manifest edit to flip off, not a credential
-    // to rotate, if a real GitHub delivery is ever seen failing verification
-    // that a manual curl/wget test against this endpoint wouldn't catch
-    // (smee.io re-encodes the original payload as JSON before this relay
-    // ever sees it - verified against the actual byte layout smee.io hands
-    // back over its SSE stream, but a mismatch here means "reject a real
-    // delivery," not "forward a forged one," so fail loud instead of silent).
+    // generates it, stored in git-webhook-secret). VERIFY_SIGNATURES defaults to
+    // enforcing this and is deliberately a plain env var, not a Secret, so it's a
+    // one-line manifest edit to flip off rather than a credential to rotate if a
+    // real delivery is ever seen failing verification - a mismatch here means
+    // "reject a real delivery," not "forward a forged one," so fail loud.
     const hmacSecret = process.env.WEBHOOK_HMAC_SECRET;
     const verifySignatures = process.env.VERIFY_SIGNATURES !== "false";
 
@@ -84,9 +62,8 @@ data:
     }
 
     async function forward(data) {
-      // smee.io sends housekeeping messages (e.g. an empty {} on connect)
-      // through the same channel alongside real GitHub deliveries - only
-      // real webhook payloads have an event type and a body.
+      // smee.io sends housekeeping messages (e.g. an empty {} on connect) through
+      // the same channel - only real webhook payloads have an event type and a body.
       const event = data["x-github-event"];
       if (!event || !data.body) {
         return;
@@ -188,11 +165,10 @@ spec:
                   key: url
             - name: TARGET_URL
               value: "http://jenkins.jenkins.svc.cluster.local:8080/github-webhook/"
-            # Base URL only - relay.js appends ?token=$PR_WEBHOOK_TOKEN at
-            # runtime. jenkins/jobs/create-jobs.sh injects the same generated
-            # token into ci-application-pr-config.xml's <token> when it
-            # creates that job, so the two stay in sync without either one
-            # being a committed literal.
+            # Base URL only - relay.js appends ?token=$PR_WEBHOOK_TOKEN at runtime.
+            # jenkins/jobs/create-jobs.sh injects the same generated token into
+            # ci-application-pr-config.xml's <token>, so the two stay in sync
+            # without either being a committed literal.
             - name: TARGET_URL_PR
               value: "http://jenkins.jenkins.svc.cluster.local:8080/generic-webhook-trigger/invoke"
             - name: WEBHOOK_HMAC_SECRET
@@ -205,11 +181,9 @@ spec:
                 secretKeyRef:
                   name: git-webhook-secret
                   key: pr-token
-            # Plain value, not a Secret ref - a one-line manifest edit to
-            # flip off if a real GitHub delivery is ever seen failing
-            # verification (see relay.js's own comment on why that's a
-            # "reject a real one" risk here, not a "forward a forged one"
-            # risk), not something that needs rotating like the two above.
+            # Plain value, not a Secret ref - a one-line manifest edit to flip off
+            # if verification is ever seen rejecting a real delivery (see relay.js's
+            # comment), not something that needs rotating like the two above.
             - name: VERIFY_SIGNATURES
               value: "true"
           volumeMounts:

@@ -1,6 +1,5 @@
-# Assignment 5 - discovered cluster-wide by Prometheus (see
-# observability/values.yaml: serviceMonitorSelectorNilUsesHelmValues: false,
-# serviceMonitorNamespaceSelector: {}), so nothing here needs a
+# Discovered cluster-wide by Prometheus (see observability/values.yaml:
+# serviceMonitorSelectorNilUsesHelmValues: false), so nothing here needs a
 # release-specific label to be picked up.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -10,10 +9,8 @@ metadata:
   labels:
     app: frontend
 spec:
-  # Matches only frontend-metrics-service (app: frontend + component:
-  # metrics), not the public frontend-service - that one carries just
-  # app: frontend and has no port named "metrics" to find anyway, but the
-  # extra label keeps the selector precise rather than relying on that.
+  # Matches only frontend-metrics-service, not the public frontend-service -
+  # the extra component: metrics label keeps the selector precise.
   selector:
     matchLabels:
       app: frontend

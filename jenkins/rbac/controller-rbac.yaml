@@ -1,14 +1,12 @@
-# RBAC for the Jenkins controller itself: scoped to the jenkins namespace
-# only, permissions limited to what's needed to launch/manage ephemeral agent
-# Pods. No cluster-admin, no access to devops-app resources.
+# RBAC for the Jenkins controller: scoped to the jenkins namespace only,
+# limited to what's needed to launch/manage ephemeral agent Pods. No
+# cluster-admin, no access to devops-app resources.
 #
-# No ServiceAccount here on purpose - the Helm chart creates and owns
-# "jenkins-controller" itself (controller.serviceAccount.create=true). Trying
-# to also create it here would hit the same Helm ownership conflict as the
-# devops-app namespace did: Helm refuses to adopt a resource it didn't create.
-# rbac.create=false in jenkins/values.yaml disables the chart's own default
-# Role/RoleBinding so this one (more explicit, reviewable) is the only one in
-# effect.
+# No ServiceAccount here on purpose - the Helm chart already creates and owns
+# "jenkins-controller" (controller.serviceAccount.create=true); recreating it
+# here would hit a Helm ownership conflict. rbac.create=false in
+# jenkins/values.yaml disables the chart's own default Role/RoleBinding so this
+# one is the only one in effect.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -20,12 +18,10 @@ rules:
     verbs: ["get", "list", "watch", "create", "delete", "update"]
   - apiGroups: [""]
     resources: ["secrets"]
-    # In-namespace only. The Kubernetes Credentials Provider plugin reads
-    # Secrets here for credential injection into pipelines, and watches them
-    # to pick up changes live instead of only at controller startup. Missing
-    # "watch" doesn't break credential reads, but logs a continuous stream of
-    # "403 Forbidden ... watch=true" errors from the plugin retrying -
-    # confirmed via `kubectl logs` on a real controller.
+    # In-namespace only. The Kubernetes Credentials Provider plugin reads Secrets
+    # here for credential injection and watches them to pick up changes live.
+    # Missing "watch" doesn't break reads, but logs a continuous stream of
+    # "403 Forbidden ... watch=true" retry errors.
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["configmaps"]

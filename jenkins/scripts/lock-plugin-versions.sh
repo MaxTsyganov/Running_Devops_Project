@@ -1,23 +1,18 @@
 #!/bin/bash
 set -e
 
-# Captures the exact plugin versions a live, already-running controller
-# actually resolved and booted successfully with, into jenkins/plugins.lock.txt
-# - not guessed version numbers. jenkins/values.yaml's installPlugins list
-# names plugins only, no versions (see that file's own comment): an earlier
-# attempt pinned each plugin's version independently and those versions
-# turned out mutually incompatible (a snakeyaml/credentials
-# ClassNotFoundException killed the controller on boot), because each
-# plugin's dependency graph was checked in isolation, not as a set. This
-# script instead captures a set that's already *proven* compatible, because
-# it's what the installer actually resolved and Jenkins is actually running
-# on - the standard Jenkins "plugins.txt lock file" pattern.
+# Captures the exact plugin versions a live, already-running controller actually
+# resolved and booted with, into jenkins/plugins.lock.txt - not guessed version
+# numbers. An earlier attempt pinned each plugin's version independently and
+# those turned out mutually incompatible (a snakeyaml/credentials
+# ClassNotFoundException killed the controller on boot), since each dependency
+# graph was checked in isolation, not as a set. This captures a set that's
+# already *proven* compatible - the standard Jenkins "plugins.txt lock file" pattern.
 #
-# Run this once after a clean install-jenkins.sh boots successfully (or
-# after any deliberate plugin-list change in values.yaml), then paste the
-# resulting jenkins/plugins.lock.txt entries into values.yaml's
-# installPlugins list as "shortName:version" instead of bare names - see the
-# instructions this script prints at the end.
+# Run this once after a clean install-jenkins.sh boots successfully (or after
+# any deliberate plugin-list change in values.yaml), then paste the resulting
+# entries into values.yaml's installPlugins list as "shortName:version" - see
+# the instructions this script prints at the end.
 #
 # Requires: kubectl pointed at the cluster, and a port-forward to Jenkins
 # already running in another terminal:

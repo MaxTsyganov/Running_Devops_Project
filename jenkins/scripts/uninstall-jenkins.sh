@@ -1,11 +1,9 @@
 #!/bin/bash
 set -e
 
-# Removes Jenkins and everything install-jenkins.sh/configure-jenkins.sh
-# created, without touching the app (devops-app namespace), the EKS cluster,
-# or any Terraform-managed AWS infra. Counterpart to those two scripts, for
-# when you want Jenkins gone but the app to keep running. For a full
-# environment teardown (cluster, RDS, everything), use teardown.sh instead.
+# Removes Jenkins and everything install-jenkins.sh/configure-jenkins.sh created,
+# without touching the app, the EKS cluster, or Terraform-managed AWS infra. For
+# a full environment teardown, use teardown.sh instead.
 #
 # Idempotent - safe to re-run; every step no-ops cleanly if its target is
 # already gone.
@@ -26,9 +24,8 @@ else
 fi
 
 step "[2/4] Deleting the Jenkins home PVC..."
-# helm uninstall deliberately never deletes a PVC (protects data by default)
-# - same reasoning as teardown.sh's Jenkins PVC step. Left alone, the
-# underlying EBS volume outlives Jenkins entirely and keeps costing money.
+# helm uninstall deliberately never deletes a PVC (protects data by default).
+# Left alone, the underlying EBS volume outlives Jenkins and keeps costing money.
 kubectl delete pvc --all -n jenkins --timeout=120s 2>/dev/null \
     && success "Jenkins home PVC deleted." \
     || info "No Jenkins PVC found."

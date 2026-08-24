@@ -1,10 +1,6 @@
-# RBAC for the CD agent Pod. The ServiceAccount object lives in the jenkins
-# namespace - CD agent Pods are scheduled there (same as the controller and
-# CI agents), and a Pod can only use a ServiceAccount from its own namespace.
-# The Role it's bound to grants access only in devops-app (where it needs to
-# act), via a cross-namespace RoleBinding - a normal, supported RBAC pattern:
-# the Role/RoleBinding live in devops-app, the subject they name lives in
-# jenkins.
+# RBAC for the CD agent Pod. The ServiceAccount lives in the jenkins namespace
+# (where CD agent Pods are scheduled), bound via a cross-namespace RoleBinding to
+# a Role that grants access only in devops-app - a normal, supported RBAC pattern.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -25,15 +21,10 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: [""]
     resources: ["secrets"]
-    # delete, in addition to the others: Helm stores its own release history
-    # as Secrets (sh.helm.release.v1.<release>.v<N>) in this same namespace,
-    # and prunes old ones once past its default history limit (10 - real,
-    # not hypothetical: this cluster hit revision 10 during evidence
-    # capture, and the next deploy failed with "cannot delete resource
-    # secrets" until this was added). Scoped to this one namespace, same as
-    # everything else in this Role - not the app's own least-privilege
-    # boundary being loosened, just Helm's own bookkeeping needing the same
-    # lifecycle control over its own storage that create/update already grant.
+    # delete, in addition to the others: Helm stores release history as Secrets
+    # in this namespace and prunes old ones past its default history limit (10) -
+    # this cluster hit revision 10 during evidence capture and deploys failed with
+    # "cannot delete resource secrets" until this was added.
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses", "networkpolicies"]
@@ -50,11 +41,9 @@ rules:
   - apiGroups: ["external-secrets.io"]
     resources: ["externalsecrets", "secretstores"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
-  # ServiceMonitor (Assignment 5, helm/devops-app/templates/servicemonitors.yaml)
-  # - a real deploy failure caught this live: `helm upgrade` GETs every
-  # resource the chart declares before deciding create vs. patch, the same
-  # reason every other resource type above is listed even though most
-  # upgrades only ever patch, not create.
+  # ServiceMonitor (Assignment 5, helm/devops-app/templates/servicemonitors.yaml) -
+  # `helm upgrade` GETs every resource the chart declares before deciding
+  # create vs. patch, so this is needed even though upgrades only ever patch it.
   - apiGroups: ["monitoring.coreos.com"]
     resources: ["servicemonitors"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
@@ -73,12 +62,10 @@ roleRef:
   name: cd-deploy
   apiGroup: rbac.authorization.k8s.io
 ---
-# Namespace is cluster-scoped, so no namespace-scoped Role can ever grant
-# access to it - this is the one genuinely unavoidable ClusterRole in this
-# project. `helm upgrade --install` GETs the target Namespace object as part
-# of its normal logic regardless of --create-namespace, and that call was
-# failing without this. Kept as narrow as a ClusterRole can be: resourceNames
-# restricts it to exactly "devops-app", get only - not "read all namespaces".
+# Namespace is cluster-scoped, so no namespace-scoped Role can grant access to
+# it - the one unavoidable ClusterRole in this project. `helm upgrade --install`
+# GETs the target Namespace regardless of --create-namespace. Kept as narrow as
+# possible: resourceNames restricts it to exactly "devops-app", get only.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

@@ -26,10 +26,8 @@ def test_healthz_does_not_touch_the_database():
 
 
 def test_create_item_rejects_name_over_255_chars():
-    # No real database needed - rejected before get_db_connection() is
-    # called. This exercises the validation branch: items.name is
-    # VARCHAR(255), so we return a clean 400 instead of letting Postgres's
-    # truncation error leak through as a raw 500.
+    # Rejected before get_db_connection() - a clean 400 instead of letting
+    # Postgres's VARCHAR(255) truncation error leak through as a 500.
     client = app_module.app.test_client()
     resp = client.post("/api/items", json={"name": "x" * 256})
     assert resp.status_code == 400

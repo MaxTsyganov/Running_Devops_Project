@@ -60,8 +60,7 @@ resource "aws_s3_bucket_public_access_block" "app_bucket" {
 }
 
 # SSE-S3 (AES256, AWS-managed key) - free. A customer-managed KMS key would
-# satisfy stricter scanners too, but costs ~$1/month for a key this project
-# doesn't otherwise need, for marginal benefit on non-sensitive data.
+# satisfy stricter scanners too, but costs ~$1/month for marginal benefit here.
 # trivy:ignore:AWS-0132
 resource "aws_s3_bucket_server_side_encryption_configuration" "app_bucket" {
   bucket = aws_s3_bucket.app_bucket.id

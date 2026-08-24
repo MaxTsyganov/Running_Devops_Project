@@ -1,15 +1,10 @@
-# Shared console-output helpers for this project's setup/teardown/verify
-# scripts - the same handful of lines used to be copy-pasted verbatim into
-# 8 different files. Sourced, not executed directly.
+# Shared console-output helpers for setup/teardown/verify scripts - used to
+# be copy-pasted into 8 different files. Sourced, not executed directly.
 #
-# step/info/success/fail: the common case - narrate progress, exit
-# immediately on a real failure (paired with `set -e` in every caller).
-#
-# ok/bad: for the two read-only verify scripts, which deliberately run
-# every check and report a full pass/fail summary instead of stopping at
-# the first failure - same visual style, different control flow. Callers
-# must set ISSUES_FOUND=0 before their first check; bad() only sets it,
-# never exits.
+# step/info/success/fail: narrate progress, exit immediately on a real
+# failure (paired with `set -e` in every caller). ok/bad: for the read-only
+# verify scripts, which run every check and report a full summary instead of
+# stopping at the first failure - callers must set ISSUES_FOUND=0 first.
 BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; RESET='\033[0m'
 step()    { echo -e "\n${BOLD}${YELLOW}==> $1${RESET}"; }
 info()    { echo "    $1"; }

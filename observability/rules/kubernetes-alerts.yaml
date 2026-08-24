@@ -21,11 +21,9 @@ spec:
             summary: "{{ $labels.deployment }} has fewer available replicas than desired"
             description: "Deployment {{ $labels.deployment }} in devops-app has had a replica mismatch for 5 minutes - some Pods are likely stuck NotReady."
             runbook_url: "https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/replicas-mismatch.md"
-        # Two different condition polarities in one alert, not two separate
-        # alerts: Ready=false means "not ready" (alert when status != true),
-        # while MemoryPressure/DiskPressure/PIDPressure=true means "under
-        # pressure" (alert when status == true) - opposite senses of the
-        # same underlying kube_node_status_condition metric.
+        # One alert, two polarities: Ready=false means "not ready" (fire when
+        # status != true), while the pressure conditions mean "under
+        # pressure" (fire when status == true).
         - alert: NodeNotReady
           expr: >
             (kube_node_status_condition{condition="Ready",status="true"} == 0)

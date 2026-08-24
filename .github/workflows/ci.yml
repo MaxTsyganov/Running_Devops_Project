@@ -1,10 +1,9 @@
 name: CI
 
 # Validates the code on every push/PR - no AWS credentials involved, nothing
-# here ever deploys anything. Actual deployment stays a deliberate, manual
-# `make k8s-deploy` run: this is a public repo, and wiring real cloud
-# credentials into Actions secrets so every push could touch live infra is a
-# different risk profile than read-only validation.
+# here deploys anything. Deployment stays a deliberate, manual `make
+# k8s-deploy` run: wiring cloud credentials into Actions on a public repo is
+# a different risk profile than read-only validation.
 on:
   push:
     branches: [main]
@@ -69,8 +68,7 @@ jobs:
           path: trivy-${{ matrix.service }}.json
 
       # The actual gate: fails the build on fixable CRITICAL findings.
-      # --ignore-unfixed excludes CVEs with no available patch (nothing
-      # actionable to do about those from this project alone); accepted-risk
+      # --ignore-unfixed skips CVEs with no available patch; accepted-risk
       # exceptions go in .trivyignore with a documented reason, never a
       # blanket exit-code override.
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -86,12 +84,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      # Unlike the image scan above, this one is blocking (no exit-code
-      # override): every finding Trivy currently knows about in this repo
-      # has already been fixed or explicitly suppressed with a documented
-      # reason (see terraform/data.tf, terraform/network.tf). A clean run
-      # should always pass - if this fails, something genuinely new needs
-      # looking at, not silent tolerance.
+      # Unlike the image scan above, this one is blocking: every finding
+      # Trivy currently knows about here is already fixed or suppressed with
+      # a documented reason (terraform/data.tf, terraform/network.tf) - a
+      # failure here means something genuinely new, not silent tolerance.
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: config

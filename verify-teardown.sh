@@ -1,10 +1,8 @@
 #!/bin/bash
-# Confirms teardown.sh actually left nothing behind - checks every category
-# of resource that either costs money while it exists (compute, storage,
-# load balancers, NAT gateways), that teardown.sh has been found to miss
-# before (see its own commit history), or that could silently block a clean
-# setup.sh re-run later even though it costs nothing (e.g. a stuck
-# CloudFormation stack). Read-only: never deletes anything, just reports.
+# Confirms teardown.sh left nothing behind - checks resources that cost
+# money while they exist, that teardown.sh has missed before, or that could
+# silently block a clean setup.sh re-run (e.g. a stuck CloudFormation stack).
+# Read-only: never deletes anything, just reports.
 
 source "$(dirname "${BASH_SOURCE[0]}")/output.sh"
 ISSUES_FOUND=0
@@ -84,11 +82,10 @@ IAM_COUNT=$(aws iam list-roles \
     --output text 2>/dev/null || echo 0)
 [ "$IAM_COUNT" = "0" ] && ok "No orphaned eksctl-created IAM roles." || bad "$IAM_COUNT orphaned eksctl-created IAM role(s) still exist."
 
-# Leftover eksctl CloudFormation stacks - each `eksctl create cluster` /
-# `eksctl create iamserviceaccount` call creates its own stack. None of these
-# cost money by existing, but a stuck one (e.g. DELETE_FAILED) blocks a clean
-# `setup.sh` re-run later and won't show up in any resource-specific check
-# above if the resources it once owned are already individually gone.
+# Leftover eksctl CloudFormation stacks - each create cluster/
+# iamserviceaccount call creates its own. None cost money, but a stuck one
+# (DELETE_FAILED) blocks a clean setup.sh re-run and won't show up in any
+# resource-specific check above.
 CFN_COUNT=$(aws cloudformation list-stacks --region "$REGION" \
     --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE ROLLBACK_COMPLETE DELETE_FAILED \
     --query "length(StackSummaries[?starts_with(StackName, 'eksctl-devops-cluster')])" \
@@ -110,11 +107,10 @@ SECRET_COUNT=$(aws secretsmanager list-secrets --region "$REGION" \
     --output text 2>/dev/null || echo 0)
 [ "$SECRET_COUNT" = "0" ] && ok "No leftover Secrets Manager secret." || bad "$SECRET_COUNT leftover Secrets Manager secret(s) still exist."
 
-# CloudWatch log group (terraform/logging.tf) - MSYS_NO_PATHCONV=1: the
-# /devops-app prefix looks like a Unix path to Windows Git Bash, which
-# silently rewrites it into a Windows path before aws-cli ever sees it
-# otherwise (the exact bug fixed in setup.sh's Fluent Bit step - see that
-# commit). No-op everywhere else.
+# CloudWatch log group (terraform/logging.tf) - MSYS_NO_PATHCONV=1: on
+# Windows Git Bash, /devops-app looks like a Unix path and gets rewritten
+# before aws-cli sees it otherwise (same bug fixed in setup.sh's Fluent Bit
+# step). No-op elsewhere.
 LOGGROUP_COUNT=$(MSYS_NO_PATHCONV=1 aws logs describe-log-groups --region "$REGION" \
     --log-group-name-prefix "/devops-app" \
     --query "length(logGroups)" --output text 2>/dev/null || echo 0)
@@ -132,13 +128,10 @@ S3_COUNT=$(aws s3api list-buckets \
     --output text 2>/dev/null || echo 0)
 [ "$S3_COUNT" = "0" ] && ok "No leftover S3 bucket." || bad "$S3_COUNT leftover S3 bucket(s) still exist."
 
-# Cosign KMS key (terraform/kms.tf) - has a mandatory 7-day AWS deletion
-# window (deletion_window_in_days), so a healthy `terraform destroy` leaves
-# it in PendingDeletion, not gone outright - that state is correct and
-# expected, not a leak. Only flag a key that's still Enabled (destroy
-# never scheduled it at all) or PendingDeletion with a description that
-# doesn't match this project's key at all is fine to ignore; the real
-# failure mode is finding *this* project's key still Enabled.
+# Cosign KMS key (terraform/kms.tf) has a mandatory 7-day deletion window,
+# so a healthy `terraform destroy` leaves it PendingDeletion, not gone
+# outright - that's expected, not a leak. The real failure mode is finding
+# this project's key still Enabled (destroy never scheduled it at all).
 KMS_STATE=$(aws kms list-aliases --region "$REGION" \
     --query "Aliases[?AliasName=='alias/devops-app-cosign'].TargetKeyId" \
     --output text 2>/dev/null || echo "")

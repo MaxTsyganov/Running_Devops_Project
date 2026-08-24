@@ -21,8 +21,7 @@ fi
 step "[2/3] Deleting the Prometheus PVC..."
 # helm uninstall deliberately never deletes a PVC (protects data by default)
 # - same reasoning as teardown.sh's own Jenkins/observability PVC steps.
-# Left alone, the underlying EBS volume outlives the release and keeps
-# costing money.
+# Left alone, the EBS volume outlives the release and keeps costing money.
 kubectl delete pvc --all -n observability --timeout=120s 2>/dev/null \
     && success "Observability PVC deleted." \
     || info "No observability PVC found."

@@ -1,6 +1,6 @@
-# ClusterIP: reachable only from inside the cluster, never from the internet.
-# Named port (Assignment 5) so the backend ServiceMonitor can target it by
-# name - /metrics is served on this same 5000, no separate port needed.
+# ClusterIP: reachable only from inside the cluster, never the internet.
+# Named port so the backend ServiceMonitor can target it - /metrics is
+# served on this same 5000, no separate port needed.
 apiVersion: v1
 kind: Service
 metadata:
@@ -18,11 +18,10 @@ spec:
     targetPort: 5000
 
 ---
-# LoadBalancer: the only component in this app exposed to the internet. Kept
-# to exactly the two ports it's always had - a LoadBalancer Service's ELB
-# provisions a public listener for every port listed here, so frontend's new
-# metrics port (Assignment 5) is deliberately a *separate*, ClusterIP-only
-# Service below instead of a third entry on this one.
+# LoadBalancer: the only component exposed to the internet. Kept to exactly
+# two ports - an ELB provisions a public listener for every port listed
+# here, so the metrics port is deliberately a separate ClusterIP Service
+# below instead of a third entry on this one.
 apiVersion: v1
 kind: Service
 metadata:
@@ -64,8 +63,8 @@ spec:
 
 ---
 # ClusterIP: worker's first-ever Service, exists purely for Prometheus to
-# reach /metrics - the worker still has no other server and initiates no
-# inbound traffic of its own.
+# reach /metrics - the worker has no other server and initiates no inbound
+# traffic of its own.
 apiVersion: v1
 kind: Service
 metadata:

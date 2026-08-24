@@ -1,36 +1,27 @@
 # NetworkPolicy objects for the observability namespace. Applied by
-# observability/scripts/install-observability.sh after the stack is up
-# (labels below were checked against real running Pods via `kubectl get
-# pods --show-labels` and `helm template`, not assumed from chart docs) -
-# same structure and same enforcement caveats as jenkins/networkpolicies.yaml.
+# observability/scripts/install-observability.sh after the stack is up;
+# labels were checked against real running Pods, not assumed from chart
+# docs - same structure/caveats as jenkins/networkpolicies.yaml.
 #
 # Enforcement prerequisite: VPC CNI NetworkPolicy support (setup.sh step
-# [4/11]) - already on cluster-wide, nothing extra needed here.
+# [4/11]) is already on cluster-wide.
 #
-# Two honest limitations, both inherited from the same AWS VPC CNI
-# behavior already documented in jenkins/networkpolicies.yaml:
+# Two limitations inherited from AWS VPC CNI behavior (also documented in
+# jenkins/networkpolicies.yaml):
 #
-# 1. node-exporter and kubelet/cAdvisor are reached at the NODE's own IP
-#    (node-exporter runs hostNetwork: true; kubelet is the node's own
-#    process) - standard NetworkPolicy does not meaningfully constrain
-#    hostNetwork traffic on this CNI. The egress rules below are still
-#    written as tightly as possible (this cluster's real private-subnet
-#    CIDRs, not 0.0.0.0/0), but are a statement of intent, not a real
-#    enforcement boundary - same honesty already applied to the Jenkins
-#    agent policy's own hostNetwork-adjacent traffic.
+# 1. node-exporter (hostNetwork: true) and kubelet/cAdvisor are reached at
+#    the node's own IP, which standard NetworkPolicy can't meaningfully
+#    constrain on this CNI. Egress rules below are scoped as tightly as
+#    possible anyway (real private-subnet CIDRs, not 0.0.0.0/0), but are a
+#    statement of intent, not real enforcement.
 #
-# 2. The prometheus-operator's validating/mutating admission webhooks
-#    (observability-admission) are called INTO its Pod by the EKS control
-#    plane - a source no podSelector/namespaceSelector can match, since
-#    it's not a cluster Pod. No ingress rule is written for it below.
-#    Confirmed live this is safe: `kubectl get validatingwebhookconfigurations
-#    observability-admission -o yaml` shows `failurePolicy: Ignore` (the
-#    chart's own default) - if this traffic were ever blocked, Kubernetes
-#    skips the webhook and proceeds rather than rejecting the request, so
-#    `kubectl apply` of a PrometheusRule/AlertmanagerConfig never hangs or
-#    fails over it. CI's own promtool/kubeconform validation (see
-#    jenkins/ci/Jenkinsfile) is the real gate for those objects' shape
-#    anyway.
+# 2. The prometheus-operator's admission webhooks are called into its Pod
+#    by the EKS control plane, a source no selector can match, so no
+#    ingress rule exists for it. Safe because `failurePolicy: Ignore` (the
+#    chart default) means Kubernetes skips the webhook rather than
+#    rejecting the request if this traffic is ever blocked; CI's
+#    promtool/kubeconform validation is the real gate on those objects'
+#    shape.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -118,19 +109,11 @@ spec:
           port: 8080
     - to:
         # One combined rule for every same-namespace scrape target sharing
-        # this direction - each port below only matters to whichever of
-        # these actually listens on it (grafana:3000, operator's own
-        # metrics:10250, kube-state-metrics:8080, alertmanager:8080/9093),
-        # the extra reachability on ports the others don't listen on is
-        # harmless. Caught live: this rule originally covered only
-        # kube-state-metrics/alertmanager - Prometheus's own EGRESS to
-        # Grafana and the operator was missing entirely, which is a
-        # different, equally necessary half of the pairing from the
-        # ingress rules already written on grafana-policy/
-        # prometheus-operator-policy (NetworkPolicy requires both the
-        # source's egress AND the destination's ingress to independently
-        # allow traffic - having only one side denies it just as
-        # completely as having neither).
+        # this direction; each port only matters to whichever pod actually
+        # listens on it, so extra reachability is harmless. NetworkPolicy
+        # needs both source egress and destination ingress independently
+        # allowed - this rule originally omitted Prometheus's egress to
+        # Grafana/operator even though their ingress rules existed.
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: kube-state-metrics
@@ -184,25 +167,18 @@ spec:
           port: 10250 # kubelet + cAdvisor
         - protocol: TCP
           port: 10249 # kube-proxy
-        # Port 443 here too - caught live: the chart's own "apiserver" job
-        # (observability-apiserver ServiceMonitor) scrapes the API server's
-        # real control-plane ENI IPs directly (Prometheus's "endpoints" role
-        # service discovery resolves straight to backend IPs, bypassing the
-        # kubernetes.default.svc ClusterIP entirely for the actual scrape
-        # connection) - and those ENI IPs land in this cluster's private
-        # subnets, same as node/kubelet IPs, not in the 172.20.0.0/16
-        # Service CIDR the rule above covers. Confirmed live: this job was
-        # the one real target still down after every other fix here.
+        # Port 443 here too: the "apiserver" ServiceMonitor's "endpoints"
+        # discovery resolves straight to the API server's control-plane ENI
+        # IPs, which land in these private subnets, not the 172.20.0.0/16
+        # Service CIDR covered above.
         - protocol: TCP
           port: 443
 
 ---
-# Alertmanager: accepts alerts from Prometheus (and optionally queries from
-# Grafana's Alertmanager datasource) on 9093, plus its own separate /metrics
-# on 8080 (a second port on the same Service - caught live: the chart's own
-# observability-alertmanager ServiceMonitor has two endpoints, 9093 for the
-# API and 8080 for metrics, and only allowing 9093 left the metrics scrape
-# down). Egresses to Slack.
+# Alertmanager: accepts alerts from Prometheus (and Grafana's Alertmanager
+# datasource queries) on 9093, plus its own /metrics on 8080 - the
+# ServiceMonitor scrapes both endpoints, so allowing only 9093 left metrics
+# scraping down. Egresses to Slack.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -250,15 +226,10 @@ spec:
 
 ---
 # Grafana: queries Prometheus and Alertmanager as datasources; its sidecar
-# (dashboard/datasource provisioning) watches ConfigMaps cluster-wide via
-# the Kubernetes API. Reachable itself only via kubectl port-forward - same
-# posture as Jenkins/Prometheus/Alertmanager, no *inbound-user-traffic*
-# ingress rule needed for that (see jenkins-controller-policy precedent:
-# port-forward already works today with no explicit ingress-from-apiserver
-# rule). Does still need one real ingress rule though - Prometheus scrapes
-# Grafana's own /metrics (the observability-grafana ServiceMonitor) -
-# caught live, this was the one Ingress rule missing from this policy
-# entirely (it only declared Egress).
+# watches ConfigMaps cluster-wide via the Kubernetes API. Reachable itself
+# only via kubectl port-forward, so no inbound-user-traffic ingress rule is
+# needed (same posture as Jenkins/Prometheus/Alertmanager). Does need one
+# ingress rule though: Prometheus scrapes Grafana's own /metrics.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -315,9 +286,8 @@ spec:
 
 ---
 # kube-state-metrics: read-only Kubernetes API client, no pod-to-pod egress
-# of its own. Ingress covered by prometheus-policy's egress rule above
-# (NetworkPolicy allows are matched from both sides independently, so this
-# still needs its own ingress rule to actually accept that traffic).
+# of its own. Still needs its own ingress rule since NetworkPolicy allows
+# are matched from both sides independently.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -372,11 +342,8 @@ spec:
 ---
 # prometheus-operator: manages the Prometheus/Alertmanager StatefulSets and
 # watches every monitoring.coreos.com CRD cluster-wide via the Kubernetes
-# API. No ingress rule for its admission webhooks - see header comment #2 -
-# but it does need one for Prometheus scraping its own /metrics (the
-# observability-operator ServiceMonitor, port "https"/10250, TLS) - caught
-# live, same class of gap as grafana-policy above (Egress-only policyTypes
-# left ingress fully denied by the namespace's default-deny baseline).
+# API. No ingress rule for its admission webhooks (see header comment #2),
+# but it does need one for Prometheus scraping its own /metrics.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

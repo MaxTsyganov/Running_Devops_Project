@@ -1,8 +1,6 @@
-// CD pipeline: deploys an image that CI already built and pushed. Never
-// rebuilds an image, never touches application source. Runs on the
-// "cd-agent" Kubernetes pod template (jenkins/values.yaml, kubectl+helm), as
-// cd-deploy-sa - RBAC scoped to exactly the devops-app namespace and the
-// resource types Helm needs to touch, nothing broader (jenkins/rbac/cd-deploy-rbac.yaml).
+// CD pipeline: deploys an image CI already built and pushed - never rebuilds or
+// touches source. Runs as cd-deploy-sa on the "cd-agent" pod template
+// (jenkins/values.yaml), RBAC-scoped to devops-app only (jenkins/rbac/cd-deploy-rbac.yaml).
 @Library('devops-shared-lib') _
 pipeline {
     agent {
@@ -16,10 +14,8 @@ pipeline {
 
     parameters {
         string(name: 'IMAGE_TAG', defaultValue: '', description: 'Immutable tag built by ci-application - never "latest"')
-        // KEY=value manifest (release-manifest.txt) ci-Jenkinsfile always
-        // supplies when it triggers this job - tag, CI build number, commit,
-        // and all three service digests. `text`, not `string`: needs
-        // multi-line values, which Jenkins' plain string parameter can't hold.
+        // KEY=value manifest ci-Jenkinsfile supplies when triggering this job (tag,
+        // build number, commit, all three digests). `text`, not `string`: needs multi-line values.
         text(name: 'RELEASE_MANIFEST', defaultValue: '', description: 'release-manifest.txt from the ci-application build that produced IMAGE_TAG. Required for a manual Build Now too - copy it from that build\'s archived artifact.')
     }
 
@@ -53,29 +49,18 @@ pipeline {
                     if (!params.RELEASE_MANIFEST?.trim()) {
                         error("RELEASE_MANIFEST is required - it carries the per-service image digests CI produced, which is how a CD build satisfies Traceability back to the CI build, the commit, and the digest. ci-Jenkinsfile always supplies this when it triggers cd-application; a manual Build Now needs to copy it from that CI build's archived release-manifest.txt artifact.")
                     }
-                    // Written to a file, not interpolated into the shell
-                    // heredoc below - keeps the validation step below a plain
-                    // file read with no shell-quoting surface, even though
-                    // this content is CI's own output, not attacker-controlled.
+                    // Written to a file rather than interpolated into the shell below,
+                    // so validation is a plain file read with no shell-quoting surface.
                     writeFile file: 'release-manifest.txt', text: params.RELEASE_MANIFEST
                 }
                 container('deploy') {
                     sh '''
                         set -e
-                        # Confirms the manifest was actually produced for *this*
-                        # IMAGE_TAG (catches a stale/mismatched manifest on a manual
-                        # trigger) and that all three digests are well-formed. This
-                        # is deliberately format validation, not a live registry
-                        # existence check: cd-deploy-sa is intentionally non-IRSA
-                        # (jenkins/rbac/cd-deploy-rbac.yaml - it only ever calls the
-                        # in-cluster Kubernetes API), and the assignment's own CD
-                        # RBAC requirement is "only the namespace/resource types
-                        # deployment needs" - granting AWS/ECR read access here to
-                        # perform a live check would cut against that. A genuinely
-                        # nonexistent image still fails safely regardless: kubelet's
-                        # ImagePullBackOff surfaces in the Rollout stage below,
-                        # which already triggers the same automated rollback path
-                        # as any other post-deploy failure.
+                        # Confirms the manifest matches this IMAGE_TAG and all three digests
+                        # are well-formed. Format validation only, not a live registry check -
+                        # cd-deploy-sa is intentionally non-IRSA (jenkins/rbac/cd-deploy-rbac.yaml),
+                        # and a genuinely missing image still fails safely via ImagePullBackOff
+                        # in the Rollout stage below.
                         MANIFEST_TAG=$(grep '^IMAGE_TAG=' release-manifest.txt | cut -d= -f2)
                         if [ "$MANIFEST_TAG" != "${IMAGE_TAG}" ]; then
                             echo "RELEASE_MANIFEST is for tag '$MANIFEST_TAG', not the requested IMAGE_TAG '${IMAGE_TAG}' - refusing to deploy a mismatched manifest."
@@ -90,10 +75,8 @@ pipeline {
                         echo "Release manifest validated: tag ${IMAGE_TAG}, all three service digests well-formed."
                     '''
                 }
-                // Traceability: who triggered this, which image, where it's
-                // going, and now which CI build/commit/digests produced it -
-                // all straight from the validated manifest above, not just
-                // inferred from the tag.
+                // Traceability: trigger, image, target, and the CI build/commit/digests
+                // that produced it, straight from the validated manifest above.
                 echo "=== Deployment request ==="
                 echo "Triggered by:     ${currentBuild.getBuildCauses()}"
                 echo "Image tag:        ${params.IMAGE_TAG}"
@@ -106,10 +89,8 @@ pipeline {
 
         stage('Load infra config') {
             steps {
-                // Non-secret infra values (RDS host, S3 bucket, SNS topic,
-                // the Secrets Manager secret NAME) change every terraform
-                // apply, so they come from a ConfigMap instead of being
-                // hardcoded here.
+                // Non-secret infra values change on every terraform apply, so they
+                // come from a ConfigMap instead of being hardcoded here.
                 container('deploy') {
                     script {
                         env.DB_HOST        = sh(script: "kubectl get configmap terraform-outputs -n ${env.TARGET_NAMESPACE} -o jsonpath='{.data.dbHost}'", returnStdout: true).trim()
@@ -146,32 +127,20 @@ pipeline {
             steps {
                 container('deploy') {
                     script {
-                        // Set before invoking Helm, not after it returns -
-                        // read by post{failure{}} below to decide whether to
-                        // even look for a rollback target. If `--wait`
-                        // below times out, `helm upgrade --install` has
-                        // already created the new revision server-side
-                        // before its own CLI process exits non-zero; setting
-                        // this only on success would miss exactly that case
-                        // and report "nothing applied" while a bad revision
-                        // sits live on the cluster. Checkout/Validation/
-                        // Manifest-Validation failures never reach this
-                        // stage, so the flag correctly stays unset for those.
+                        // Set before invoking Helm, not after: post{failure{}} below uses this
+                        // to decide whether to look for a rollback target. If --wait times out,
+                        // Helm has already created the revision server-side, so setting this only
+                        // on success would miss that case and report "nothing applied" on a live
+                        // bad revision.
                         env.HELM_DEPLOY_ATTEMPTED = 'true'
                     }
                     sh '''
                         set -e
-                        # No --create-namespace: that makes Helm touch the
-                        # Namespace object itself, which is cluster-scoped -
-                        # no namespace-scoped Role can grant that without
-                        # widening cd-deploy-sa to a ClusterRole. devops-app
-                        # already exists from infra bring-up; CD deploys the
-                        # app into it, it doesn't own namespace lifecycle.
-                        # 10m, not 5m: --wait also blocks on frontend-service
-                        # (type LoadBalancer) getting a hostname assigned, and
-                        # a brand-new AWS load balancer's first provision
-                        # routinely takes longer than 5 minutes on its own,
-                        # even with every pod already healthy.
+                        # No --create-namespace: that's cluster-scoped and would require
+                        # widening cd-deploy-sa beyond its namespace Role. devops-app already
+                        # exists from infra bring-up.
+                        # 10m timeout: --wait also blocks on the LoadBalancer Service getting a
+                        # hostname, which routinely takes longer than 5m even when pods are healthy.
                         helm upgrade --install devops-app ./helm/devops-app \
                             --namespace ${TARGET_NAMESPACE} \
                             --set image.registry=${ECR_REGISTRY} \
@@ -212,13 +181,10 @@ pipeline {
                         echo "=== Running image versions ==="
                         kubectl get pods -n ${TARGET_NAMESPACE} -o custom-columns='NAME:.metadata.name,IMAGE:.spec.containers[0].image'
 
-                        # Excludes pods with a deletionTimestamp set (Terminating). With
-                        # maxSurge=0/maxUnavailable=1, the old ReplicaSet's replica count
-                        # drops as soon as a pod is marked for deletion, but the pod stays
-                        # visible in `kubectl get pods` (status.phase still "Running") until
-                        # its terminationGracePeriodSeconds elapses. Without this filter,
-                        # Verify can catch that pod mid-exit and report a false "wrong
-                        # version" failure - the rollout is actually done.
+                        # Excludes Terminating pods (deletionTimestamp set): with maxSurge=0/
+                        # maxUnavailable=1 they can still show "Running" until their grace
+                        # period elapses, which would otherwise cause a false "wrong version"
+                        # failure.
                         WRONG_VERSION=$(kubectl get pods -n ${TARGET_NAMESPACE} \
                             -o custom-columns='IMAGE:.spec.containers[0].image,DELETING:.metadata.deletionTimestamp' --no-headers \
                             | awk '$2 == "<none>" {print $1}' \
@@ -239,20 +205,11 @@ pipeline {
                 container('deploy') {
                     sh '''
                         set -e
-                        # In-cluster Service DNS, not the public ELB hostname - deliberately,
-                        # for a NetworkPolicy reason, not a connectivity one: cd-agent's
-                        # egress on port 80 (this smoke test is plain HTTP) can be scoped
-                        # tightly to exactly `app: frontend` Pods in devops-app
-                        # (jenkins/networkpolicies.yaml) only because this target resolves to
-                        # a real Pod IP NetworkPolicy can match against. The public ELB's
-                        # hostname resolves to AWS IPs outside the cluster that no podSelector
-                        # can ever reference, which would force that port-80 rule wide open to
-                        # 0.0.0.0/0 instead - unlike port 443 (GitHub/ECR/KMS/PyPI/smee.io),
-                        # port 80 here has exactly one real destination, so there's no reason
-                        # to accept that broader exposure. Still proves the actual thing a
-                        # smoke test needs to prove: the newly-deployed code is up and serving
-                        # real HTTP responses - Rollout/Verify already confirm the Pods
-                        # themselves are Ready.
+                        # In-cluster Service DNS, not the public ELB hostname: this resolves to
+                        # a real Pod IP that NetworkPolicy can scope egress to
+                        # (jenkins/networkpolicies.yaml). The ELB hostname resolves to AWS IPs
+                        # outside the cluster, which would force that port-80 rule open to
+                        # 0.0.0.0/0 instead.
                         INTERNAL_HOST="frontend-service.${TARGET_NAMESPACE}.svc.cluster.local"
                         for i in $(seq 1 6); do
                             if wget -q -O- --timeout=5 "http://${INTERNAL_HOST}/" >/dev/null 2>&1; then
@@ -269,40 +226,28 @@ pipeline {
             }
         }
 
-        // Assignment 5. A failure here reaches the exact same post{failure{}}
-        // rollback logic below as every earlier stage - HELM_DEPLOY_ATTEMPTED
-        // is already true by this point, so nothing about the rollback
-        // mechanism itself needed to change for this stage to exist.
+        // Assignment 5. A failure here hits the same post{failure{}} rollback as any
+        // earlier stage - HELM_DEPLOY_ATTEMPTED is already true by this point.
         stage('Monitoring Gate') {
             steps {
                 container('deploy') {
                     sh '''
                         set -e
-                        # In-cluster Service DNS, same reasoning as Smoke
-                        # Test's own INTERNAL_HOST above - resolves to a real
-                        # Pod IP jenkins-agent-policy's egress rule can match
-                        # against (jenkins/networkpolicies.yaml, port 9090
-                        # added alongside the existing port-80 rule).
+                        # In-cluster Service DNS again (same reasoning as Smoke Test's
+                        # INTERNAL_HOST) - port 9090 added to jenkins-agent-policy's egress
+                        # alongside port 80 (jenkins/networkpolicies.yaml).
                         PROM_HOST="observability-prometheus.observability.svc.cluster.local:9090"
 
-                        # wget --post-data, not a GET query string: PromQL
-                        # itself is full of characters (spaces, {}, ", |, ~)
-                        # that would need careful percent-encoding in a URL -
-                        # sending it as a form-encoded POST body sidesteps
-                        # that entirely, since neither query below contains a
-                        # literal "&" (the one character that actually needs
-                        # escaping in a form body).
+                        # wget --post-data, not a GET query string: PromQL is full of
+                        # characters that would need percent-encoding in a URL; neither query
+                        # below contains "&", the one character that needs escaping in a form body.
                         prom_query() {
                             wget -q -O- --timeout=10 --post-data="query=$1" "http://${PROM_HOST}/api/v1/query" 2>/dev/null || echo ""
                         }
 
                         echo "=== Waiting for Prometheus to confirm all three scrape targets are up ==="
-                        # Not an immediate query: the freshly-rolled-out Pods'
-                        # first scrape may not have happened yet
-                        # (observability/values.yaml: scrapeInterval 30s) -
-                        # a bounded retry here, same style as Smoke Test's own
-                        # loop, not a blind sleep or a single query that could
-                        # misreport a healthy deploy as down.
+                        # Bounded retry, not a blind sleep or single query: freshly-rolled-out
+                        # Pods' first scrape may not have happened yet (scrapeInterval 30s).
                         TARGETS_UP=""
                         for i in $(seq 1 12); do
                             RESPONSE=$(prom_query 'min(up{job=~"backend-service|worker-service|frontend-metrics-service"})')
@@ -321,28 +266,14 @@ pipeline {
                             exit 1
                         fi
 
-                        # Smoke Test above exits on its first successful
-                        # request - one real HTTP request total in the normal
-                        # case, and even that one hits "/" - the static
-                        # frontend root, served by nginx directly
-                        # (frontend/nginx.k8s.conf's `location /`), which
-                        # never reaches the backend at all. The error-rate
-                        # check below reads http_requests_total{job="backend-
-                        # service"}, so this deliberately hits GET
-                        # /api/items instead - proxied to the backend
-                        # (`location /api/`), read-only. Not /api/health:
-                        # that path is in backend/app.py's own
-                        # _METRICS_EXCLUDED_PATHS (health-check noise is
-                        # deliberately kept out of http_requests_total), so
-                        # hitting it here would generate zero traffic this
-                        # query could ever see.
+                        # Smoke Test only hits "/" (static nginx root, never reaches the
+                        # backend), but the error-rate check below reads backend metrics - so
+                        # this hits GET /api/items instead. Not /api/health: that path is
+                        # excluded from http_requests_total (backend/app.py's
+                        # _METRICS_EXCLUDED_PATHS).
                         echo "=== Generating backend traffic for the error-rate check ==="
-                        # 40 requests over ~40s, deliberately longer than one
-                        # scrape interval (observability/values.yaml: 30s) -
-                        # not just "some traffic", but traffic that spans at
-                        # least one real scrape, so increase() below sees an
-                        # actual counter delta instead of racing a window
-                        # where nothing was sampled yet.
+                        # 40 requests over ~40s - deliberately longer than one scrape interval
+                        # (30s) so increase() below sees a real counter delta, not an empty window.
                         INTERNAL_HOST="frontend-service.${TARGET_NAMESPACE}.svc.cluster.local"
                         for i in $(seq 1 40); do
                             wget -q -O- --timeout=5 "http://${INTERNAL_HOST}/api/items" >/dev/null 2>&1 || true
@@ -350,48 +281,22 @@ pipeline {
                         done
 
                         echo "=== Checking backend error rate over the traffic window just generated ==="
-                        # (sum(...) or vector(0)) around the 5xx numerator -
-                        # not optional. Caught live: when zero requests
-                        # actually returned a 5xx (the healthy case this
-                        # gate exists to confirm), the label filter
-                        # status=~"5.." matches no time series at all, and
-                        # PromQL's sum()/increase() over zero matched series
-                        # produces an EMPTY vector, not a literal 0 - so the
-                        # division below yields empty too (no result for a
-                        # missing numerator to divide), which the "no data"
-                        # check above would then wrongly fail the gate on a
-                        # perfectly healthy deploy. vector(0) supplies a real
-                        # zero to divide by instead. Same fix applied to
-                        # job:http_availability:ratio_rate5m in
-                        # observability/rules/slo-recording-rules.yaml,
-                        # which had the identical flaw.
-                        # Bounded retry here too, not a single query - caught
-                        # live on this exact deploy: increase() needs at
-                        # least two scraped samples within its window to
-                        # compute a delta, and a brand-new Pod's
-                        # http_requests_total series doesn't exist at all
-                        # until the first request with each exact label
-                        # combination lands (prometheus_client only creates
-                        # a labeled Counter series on first use, not at
-                        # startup) - so a query fired the instant the
-                        # traffic loop above ends can still race ahead of
-                        # the second scrape that would let increase()
-                        # produce a real value, even though the traffic
-                        # itself already succeeded.
+                        # (sum(...) or vector(0)) around the 5xx numerator is required: with
+                        # zero 5xx responses, the status=~"5.." filter matches no series and
+                        # PromQL returns an empty vector (not 0), which would wrongly fail the
+                        # "no data" check on a healthy deploy. Same fix applied in
+                        # observability/rules/slo-recording-rules.yaml.
+                        # Bounded retry here too: increase() needs two scraped samples to
+                        # compute a delta, and a brand-new Pod's counter series doesn't exist
+                        # until first use - a query fired right as the traffic loop ends can
+                        # still race the next scrape.
                         RESPONSE=""
                         for i in $(seq 1 6); do
                             RESPONSE=$(prom_query '(sum(increase(http_requests_total{job="backend-service",status=~"5.."}[2m])) or vector(0)) / sum(increase(http_requests_total{job="backend-service"}[2m]))')
-                            # An empty result vector has no "value" key
-                            # anywhere in the response at all - checked
-                            # explicitly. Skipping this check is a real
-                            # trap: with no "value" key, the "last ,\"...\"
-                            # substring" extraction below would instead grab
-                            # the JSON key name "result" (from an empty
-                            # "result":[]), and awk's non-numeric-string-to-0
-                            # coercion would then read that as "0% errors" -
-                            # silently passing the gate on missing data
-                            # instead of failing it. Caught live before this
-                            # ever ran in a real build, not assumed safe.
+                            # An empty result vector has no "value" key at all. Skipping this
+                            # check would let the substring extraction below grab the JSON key
+                            # "result" instead, which awk would coerce to 0 - silently passing
+                            # the gate on missing data.
                             if echo "$RESPONSE" | grep -q '"value":'; then
                                 break
                             fi
@@ -404,24 +309,14 @@ pipeline {
                             echo "Rolling back - see post{failure{}} below."
                             exit 1
                         fi
-                        # Last ,"..." substring in the response, not a
-                        # bracket-anchored pattern - avoids relying on how
-                        # this shell's grep handles escaped [ ] (BRE
-                        # semantics for that differ enough across
-                        # implementations - GNU vs. BusyBox - that this is
-                        # worth sidestepping rather than assuming). Safe now
-                        # that the check above guarantees a "value" pair
-                        # actually exists - it's always the last quoted
-                        # string Prometheus emits for a single-result query.
+                        # Last ,"..." substring, not a bracket-anchored pattern - avoids
+                        # relying on BRE semantics for [ ] that differ between grep
+                        # implementations (GNU/BusyBox).
                         ERROR_VALUE=$(echo "$RESPONSE" | grep -o ',"[^"]*"' | tail -1 | tr -d ',"')
                         echo "Backend error rate over the traffic window: ${ERROR_VALUE}"
-                        # Same 5% threshold as the HighErrorRate alert
-                        # (observability/rules/application-alerts.yaml) - a
-                        # release CD would let through shouldn't already be
-                        # sitting a hair away from paging someone. NaN (e.g.
-                        # a 0/0 from zero traffic reaching the backend at
-                        # all) fails the comparison too, correctly treated
-                        # as "no meaningful data" rather than "0% errors".
+                        # Same 5% threshold as the HighErrorRate alert (observability/rules/
+                        # application-alerts.yaml). NaN (e.g. 0/0 from zero traffic) fails the
+                        # comparison too - treated as "no data" rather than "0% errors".
                         awk -v v="$ERROR_VALUE" 'BEGIN { exit !(v+0 <= 0.05) }' || {
                             echo "Monitoring Gate FAILED: backend error rate ${ERROR_VALUE} exceeds the 5% threshold"
                             echo "Runbook: https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/high-error-rate.md"
@@ -430,37 +325,18 @@ pipeline {
                         }
                         echo "Monitoring Gate passed: backend error rate ${ERROR_VALUE} within threshold."
 
-                        # Second SLO check, real gap caught on review: the
-                        # assignment requires the gate to check BOTH error
-                        # rate and latency before passing ("target UP and
-                        # that error rate/latency don't exceed the
-                        # threshold") - only error rate was implemented
-                        # here. Same bounded-retry pattern as above:
-                        # histogram_quantile()/rate() need at least two
-                        # scraped samples in their window, same reasoning
-                        # as the error-rate check's own retry loop. No
-                        # vector(0) fallback needed here though - unlike
-                        # the error-rate numerator (which can legitimately
-                        # match zero series when there are no 5xx
-                        # responses), http_request_duration_seconds_bucket
-                        # always has series to aggregate as long as any
-                        # request was served at all.
+                        # Second SLO check: the assignment requires the gate to check both
+                        # error rate and latency. Same bounded-retry pattern as above; no
+                        # vector(0) fallback needed since the duration histogram always has
+                        # series once any traffic exists.
                         echo "=== Checking backend p95 latency over the traffic window ==="
                         LATENCY_RESPONSE=""
                         for i in $(seq 1 6); do
                             LATENCY_RESPONSE=$(prom_query 'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="backend-service"}[2m])) by (le))')
-                            # Checked for NaN here too, not just a missing
-                            # "value" key - caught live: unlike the
-                            # error-rate query, this one still returns a
-                            # "value" pair even with too few samples, just
-                            # with the literal string "NaN" as its payload
-                            # (histogram_quantile's own internal 0/0 when
-                            # there's nothing to interpolate from yet). awk's
-                            # non-numeric-string-to-0 coercion would read
-                            # "NaN" as 0s latency - well within threshold -
-                            # silently passing the gate on the exact same
-                            # "no real data" condition the retry loop exists
-                            # to wait out.
+                            # Checked for NaN too, not just a missing "value" key: with too few
+                            # samples histogram_quantile returns "NaN" as its value, which awk
+                            # would coerce to 0s - silently passing the gate on the same "no data"
+                            # condition.
                             if echo "$LATENCY_RESPONSE" | grep -q '"value":' && ! echo "$LATENCY_RESPONSE" | grep -q '"NaN"'; then
                                 break
                             fi
@@ -475,11 +351,8 @@ pipeline {
                         fi
                         LATENCY_VALUE=$(echo "$LATENCY_RESPONSE" | grep -o ',"[^"]*"' | tail -1 | tr -d ',"')
                         echo "Backend p95 latency over the traffic window: ${LATENCY_VALUE}s"
-                        # Same 1s threshold as the HighLatencyP95 alert
-                        # (observability/rules/application-alerts.yaml) -
-                        # same reasoning as the error-rate check above: a
-                        # release CD lets through shouldn't already be
-                        # sitting past the point that alert would page on.
+                        # Same 1s threshold as the HighLatencyP95 alert (observability/rules/
+                        # application-alerts.yaml) - same reasoning as the error-rate check above.
                         awk -v v="$LATENCY_VALUE" 'BEGIN { exit !(v+0 <= 1) }' || {
                             echo "Monitoring Gate FAILED: backend p95 latency ${LATENCY_VALUE}s exceeds the 1s threshold"
                             echo "Runbook: https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/high-latency-p95.md"
@@ -501,24 +374,16 @@ pipeline {
                     container('deploy') {
                         sh '''
                             set -e
-                            # Checked against the cluster's own recorded state, not a
-                            # Groovy flag: this must equally cover (a) helm upgrade
-                            # --install succeeding but a later Rollout/Verify/Smoke-Test
-                            # stage failing, and (b) --wait itself timing out, where Helm
-                            # already created the revision server-side before its own CLI
-                            # process exited non-zero - a bare "did the sh step return 0"
-                            # check would misreport case (b) as nothing having been applied.
+                            # Checked against the cluster's recorded state, not a bare "did
+                            # sh return 0": that would misreport a --wait timeout as nothing
+                            # applied, even though Helm already created the revision server-side.
                             if ! helm status devops-app -n ${TARGET_NAMESPACE} >/dev/null 2>&1; then
                                 echo "No devops-app Helm release exists on the cluster - Deploy never actually created one. Nothing to roll back."
                             else
-                                # `helm rollback` errors ("release has no 0 version") on a
-                                # first-ever deploy - revision 1 has nothing earlier to roll
-                                # back to. Caught live on this project's actual first deploy,
-                                # not hypothesized: a bare `helm rollback` there crashed this
-                                # whole post{failure{}} block with a raw Helm error instead of
-                                # the informative message below. `helm history` always prints
-                                # one header line plus one line per revision, so 2 lines total
-                                # means exactly one revision exists.
+                                # `helm rollback` errors on a first-ever deploy (revision 1 has
+                                # nothing to roll back to) - crashed this whole block with a raw
+                                # Helm error until this check was added. `helm history` prints a
+                                # header plus one line per revision.
                                 REVISION_LINES=$(helm history devops-app -n ${TARGET_NAMESPACE} 2>/dev/null | wc -l)
                                 if [ "$REVISION_LINES" -le 2 ]; then
                                     echo "This was the first-ever deploy (revision 1) - no earlier revision exists to roll back to. devops-app stays as deployed; fix forward with a new commit."

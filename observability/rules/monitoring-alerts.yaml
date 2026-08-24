@@ -1,7 +1,6 @@
-# The monitoring stack's own self-check: catches a scrape target going
-# dark (Pod crashed, NetworkPolicy misconfigured, ServiceMonitor pointing
-# at the wrong port) - a failure mode none of the other alerts can see,
-# since they all depend on the target's own metrics still being scraped.
+# Self-check for the monitoring stack: catches a scrape target going dark,
+# a failure mode none of the other alerts can see since they all depend on
+# the target's own metrics still being scraped.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:

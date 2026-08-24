@@ -1,14 +1,12 @@
-# DB password is mirrored into Secrets Manager and read into the cluster by
-# External Secrets Operator (see helm/devops-app/templates/externalsecret.yaml)
-# instead of ever passing through a live, readable cluster object. It only
-# ever exists as this Terraform variable in memory, and in Secrets Manager.
+# DB password is mirrored into Secrets Manager and synced into the cluster
+# by External Secrets Operator (helm/devops-app/templates/externalsecret.yaml)
+# - it only ever exists here and in Secrets Manager, never as a readable
+# cluster object.
 resource "aws_secretsmanager_secret" "db_password" {
   name        = "devops-app/db-password"
   description = "RDS PostgreSQL password for the DevOps app - synced into the cluster by External Secrets Operator."
-  # Secrets Manager's default 30-day recovery window would block re-creating
-  # a secret with this name on the next `terraform apply` after a teardown -
-  # this project gets torn down and redeployed too often for that default;
-  # 0 deletes it immediately instead.
+  # 0 skips Secrets Manager's default 30-day recovery window, which would
+  # otherwise block re-creating this secret on the next apply after a teardown.
   recovery_window_in_days = 0
 }
 

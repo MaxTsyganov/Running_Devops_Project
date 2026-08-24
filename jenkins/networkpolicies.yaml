@@ -1,46 +1,25 @@
-# NetworkPolicy objects for the jenkins namespace. Applied by
-# install-jenkins.sh after the chart is up (labels below have to match what
-# the controller/webhook-relay/agent pods actually run with).
+# NetworkPolicy objects for the jenkins namespace. Applied by install-jenkins.sh
+# after the chart is up (labels below must match the controller/webhook-relay/agent pods).
 #
-# Enforcement prerequisite: VPC CNI NetworkPolicy support is off by default
-# on EKS - setup.sh (Assignment 3, step [4/11]) already turns it on
-# cluster-wide via `aws eks update-addon --addon-name vpc-cni
-# --configuration-values '{"enableNetworkPolicy":"true"}'`, the same
-# mechanism the app's own policies (helm/devops-app/templates/
-# networkpolicies.yaml) already depend on. Nothing extra needed here.
+# Enforcement prerequisite: VPC CNI NetworkPolicy support is off by default on EKS -
+# setup.sh already enables it cluster-wide, the same mechanism the app's own
+# policies (helm/devops-app/templates/networkpolicies.yaml) depend on.
 #
-# Honest limitation: this cluster's nodes reach the internet through a plain
-# NAT Gateway (terraform/network.tf) - no VPC endpoints for ECR/KMS/S3.
-# GitHub, ECR, AWS KMS, PyPI, and smee.io are all public internet endpoints
-# with wide, non-static IP ranges, and plain Kubernetes NetworkPolicy is
-# L3/L4 only (no FQDN-based egress filtering - that needs a different CNI
-# feature, e.g. Cilium FQDN policies, out of scope here). So HTTPS egress to
-# those destinations can only be scoped by port (443), not by destination
-# IP. What these policies DO meaningfully enforce: default-deny as the
-# baseline, zero lateral movement between pods inside the namespace (an
-# agent pod can't reach another agent pod, or anything in devops-app), and
-# no ingress to any agent/relay pod from anywhere.
+# Honest limitation: nodes reach the internet via a plain NAT Gateway (no VPC
+# endpoints for ECR/KMS/S3), and plain NetworkPolicy is L3/L4 only - no
+# FQDN-based egress filtering. So HTTPS to GitHub/ECR/KMS/PyPI/smee.io can only
+# be scoped by port (443), not destination IP. What these policies DO enforce:
+# default-deny baseline, zero lateral movement between pods in the namespace,
+# and no ingress to any agent/relay pod.
 #
-# Two corrections made after live test runs, not caught by inspection:
-#
-# 1. The controller itself needs GitHub egress too, not just its ephemeral
-#    agents - a Pipeline-from-SCM job makes the controller do a lightweight
-#    `git fetch` to read the Jenkinsfile before it ever provisions an agent
-#    Pod. The first real build here failed on exactly that.
-#
-# 2. ci-agent and cd-agent Pods do NOT carry a `jenkins/label: ci-agent` /
-#    `jenkins/label: cd-agent` label the way the Jenkinsfiles' `inheritFrom
-#    'ci-agent'` naming suggested. The Kubernetes plugin stamps each
-#    dynamically-provisioned Pod with `jenkins/label: <job-name>_<build>-
-#    <random>` (e.g. `ci-application_2-6cjfx`) - a per-build, per-provision
-#    value, not the pod template's name. The only label EVERY agent Pod
-#    actually shares, confirmed live via `kubectl get pods --show-labels`,
-#    is the static `jenkins: slave`. There is no stable label that
-#    distinguishes a ci-agent Pod from a cd-agent Pod, so - since both
-#    templates already needed the identical broad-443/JNLP/DNS egress
-#    shape in this design anyway - they're one combined policy below
-#    instead of two, rather than a NetworkPolicy that looks like it
-#    separates them but actually never matched either.
+# Two corrections made after live test runs:
+# 1. The controller itself needs GitHub egress too - a Pipeline-from-SCM job
+#    makes it `git fetch` the Jenkinsfile before provisioning an agent Pod.
+# 2. ci-agent/cd-agent Pods don't carry a stable per-template label - the
+#    Kubernetes plugin stamps each with a per-build `jenkins/label` value
+#    instead. The only label every agent Pod shares (confirmed via `kubectl
+#    get pods --show-labels`) is the static `jenkins: slave`, so both
+#    templates share one combined policy below instead of two.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -56,12 +35,9 @@ spec:
   # governed by multiple policies gets the union of their rules).
 
 ---
-# Controller: only ephemeral agent pods (JNLP) and webhook-relay (the
-# internal /github-webhook/ POST) ever need to reach it. Egress needs the
-# Kubernetes API (to launch/watch/delete agent Pods) plus GitHub - see
-# header comment #1 for why the controller itself needs GitHub egress, not
-# just its agents. ECR/KMS/PyPI remain agent-only (no evidence the
-# controller ever calls them, and nothing in this job type would make it).
+# Controller: only ephemeral agent pods (JNLP) and webhook-relay (the internal
+# /github-webhook/ POST) ever need to reach it. Egress needs the Kubernetes API
+# plus GitHub (header #1); ECR/KMS/PyPI remain agent-only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -78,7 +54,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              jenkins: slave # every dynamically-provisioned agent Pod (ci-agent and cd-agent alike) - see header comment #2 for why this is the only label that actually matches them
+              jenkins: slave # every dynamically-provisioned agent Pod (ci-agent and cd-agent alike) - see header #2
         - podSelector:
             matchLabels:
               app: webhook-relay
@@ -87,9 +63,8 @@ spec:
           port: 50000 # JNLP agent tunnel (jenkinsTunnel in values.yaml)
         - protocol: TCP
           port: 8080 # agent HTTP handshake + webhook-relay's POST target
-    # Assignment 5: Prometheus (observability namespace) scraping /prometheus
-    # on this same port - confirmed live that path needs no auth, so no
-    # basicAuth/bearerToken config on the ServiceMonitor side either.
+    # Assignment 5: Prometheus (observability namespace) scrapes /prometheus on
+    # this port - no auth needed, so no basicAuth/bearerToken on the ServiceMonitor side.
     - from:
         - namespaceSelector:
             matchLabels:
@@ -100,16 +75,16 @@ spec:
   egress:
     - to:
         - ipBlock:
-            cidr: 172.20.0.0/16 # this cluster's Kubernetes Service CIDR (`aws eks describe-cluster ... kubernetesNetworkConfig.serviceIpv4Cidr`) - NOT the VPC CIDR (10.0.0.0/16, terraform/network.tf). Confirmed live: an earlier version of this rule used the VPC CIDR, which silently blocked the controller's watch connection to kubernetes.default.svc (172.20.0.1) - AWS VPC CNI's NetworkPolicy enforcement matches the Service's ClusterIP itself, not the real backend IP the CNI later DNATs to.
+            cidr: 172.20.0.0/16 # cluster's Service CIDR, NOT the VPC CIDR (10.0.0.0/16, terraform/network.tf). An earlier version used the VPC CIDR, which silently blocked the controller's watch on kubernetes.default.svc - VPC CNI matches the Service's ClusterIP, not the backend IP it DNATs to.
       ports:
         - protocol: TCP
           port: 443
     - to:
         - ipBlock:
-            cidr: 0.0.0.0/0 # explicit rather than an omitted `to:` (the spec treats both as "match all destinations") - easier for a reader to see this is deliberately unrestricted, not a rule that forgot its `to:`.
+            cidr: 0.0.0.0/0 # explicit rather than an omitted `to:` - makes clear this is deliberately unrestricted, not a rule that forgot its `to:`.
       ports:
         - protocol: TCP
-          port: 443 # GitHub - the controller's own lightweight Jenkinsfile checkout (see header comment above). Can't be scoped by IP, same reasoning as the agent policy below.
+          port: 443 # GitHub - the controller's own lightweight Jenkinsfile checkout (header #1). Can't be scoped by IP, same reasoning as the agent policy below.
     - to:
         - namespaceSelector:
             matchLabels:
@@ -124,10 +99,8 @@ spec:
           port: 53
 
 ---
-# webhook-relay: holds an outbound SSE connection to smee.io and forwards to
-# the controller's ClusterIP - see jenkins/webhook-relay.yaml's own header
-# for why this exists. Nothing ever calls into it, so ingress is denied
-# entirely by the base policy above and never re-opened here.
+# webhook-relay: outbound SSE to smee.io, forwarded to the controller's ClusterIP
+# (see jenkins/webhook-relay.yaml). Nothing calls into it, so ingress stays denied.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -167,15 +140,10 @@ spec:
           port: 53
 
 ---
-# Agent Pods (both ci-agent and cd-agent templates - see header comment #2
-# for why these are one policy, not two): ci-agent checks out from GitHub,
-# builds with Kaniko, pushes to ECR, scans + SBOMs with Trivy, and signs
-# with Cosign via KMS; cd-agent checks out the Helm chart from GitHub and
-# calls the in-cluster Kubernetes API (kubectl/helm) to deploy into
-# devops-app. All outbound HTTPS to public AWS/GitHub/PyPI endpoints (see
-# header re: port-only scoping), plus the JNLP callback to the controller.
-# Accepts no ingress from anywhere (nothing ever initiates a connection to
-# a build agent).
+# Agent Pods (ci-agent and cd-agent share one policy - see header #2): ci-agent
+# builds/scans/signs and pushes to ECR; cd-agent deploys via the in-cluster
+# Kubernetes API. Outbound HTTPS to AWS/GitHub/PyPI plus the JNLP callback to
+# the controller. No ingress accepted from anywhere.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -205,34 +173,14 @@ spec:
           port: 443 # GitHub, ECR, AWS KMS, PyPI, Cosign/Trivy-DB downloads, and (for cd-agent) the in-VPC Kubernetes API
     - to:
         - ipBlock:
-            cidr: 172.20.0.0/16 # this cluster's Service CIDR, same one and same reason as
-            # jenkins-controller-policy's Kubernetes-API rule - NOT a podSelector for
-            # `app: frontend`, even though that's what was tried first and is what the
-            # comment below explains. cd-agent's Smoke Test hits frontend-service by its
-            # in-cluster Service DNS, and a podSelector rule for `app: frontend` resolves
-            # correctly at the control-plane level (confirmed via the generated
-            # PolicyEndpoint object listing the real frontend Pod IPs) but is never
-            # actually matched at enforcement time: AWS VPC CNI's NetworkPolicy agent
-            # evaluates egress against the pre-DNAT destination - the Service's ClusterIP
-            # - not the Pod IP kube-proxy later rewrites it to, so traffic to the Service
-            # never matched a Pod-IP-scoped rule at all. Confirmed live three ways: a
-            # podSelector rule timed out against both the ClusterIP and the DNS name;
-            # curling a frontend Pod's IP directly got a real "connection refused" (its
-            # container listens on 8080/8443, not 80 - the Service does that mapping, so
-            # this proves the packet WAS reaching the Pod when addressed directly, just
-            # not through the Service); and this ipBlock, once applied, worked instantly
-            # on the very same ClusterIP and DNS name that timed out before. Still tighter
-            # than port 443's necessarily-unpredictable 0.0.0.0/0 above (GitHub/ECR/KMS/
-            # PyPI/smee.io) - this is scoped to "anything inside this cluster," not the
-            # open internet, since port 80 has exactly one real destination in this whole
-            # pipeline. Also grants ci-agent pods this same access, since both templates
-            # share one policy (see header comment #2) - harmless, since nothing in
-            # ci-agent's own steps ever makes any HTTP call anywhere in-cluster.
-            # Port 9090 added for Assignment 5's Monitoring Gate stage
-            # (jenkins/cd/Jenkinsfile) - cd-agent queries
-            # observability-prometheus's Service by the same in-cluster DNS
-            # mechanism, so the identical pre-DNAT-ClusterIP reasoning above
-            # applies unchanged, not a new problem to re-diagnose.
+            cidr: 172.20.0.0/16 # Service CIDR, not a podSelector for `app: frontend`: AWS
+            # VPC CNI evaluates egress against the pre-DNAT ClusterIP, not the Pod IP
+            # kube-proxy rewrites to, so a Pod-IP-scoped rule never matches Service traffic
+            # (confirmed live - podSelector timed out, this ipBlock worked instantly on the
+            # same target). Also grants ci-agent this access via the shared policy (header
+            # #2) - harmless, ci-agent makes no in-cluster HTTP calls.
+            # Port 9090 added for Assignment 5's Monitoring Gate (jenkins/cd/Jenkinsfile) -
+            # same pre-DNAT-ClusterIP reasoning applies to Prometheus.
       ports:
         - protocol: TCP
           port: 80
