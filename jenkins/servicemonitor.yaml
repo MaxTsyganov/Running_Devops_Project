@@ -1,0 +1,22 @@
+# Assignment 5 - discovered cluster-wide by Prometheus (see
+# observability/values.yaml: serviceMonitorSelectorNilUsesHelmValues: false,
+# serviceMonitorNamespaceSelector: {}), same as helm/devops-app's
+# ServiceMonitors. Targets the existing jenkins Service (no new Service
+# needed - jenkins/values.yaml's new prometheus plugin serves /prometheus
+# on this same port once installed). Confirmed live, unauthenticated: no
+# basicAuth/bearerToken needed here either.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: jenkins-servicemonitor
+  namespace: jenkins
+  labels:
+    app.kubernetes.io/component: jenkins-controller
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: jenkins-controller
+  endpoints:
+  - port: http
+    path: /prometheus
+    interval: 30s

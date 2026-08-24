@@ -134,6 +134,7 @@ pipeline {
                             --set config.dbHost=${DB_HOST} \
                             --set config.s3BucketName=${S3_BUCKET} \
                             --set config.snsTopicArn=${SNS_TOPIC} \
+                            --set config.releaseVersion=${IMAGE_TAG} \
                             --set secrets.dbPasswordSecretName=${DB_SECRET_NAME} \
                             > /dev/null
                     '''
@@ -178,6 +179,7 @@ pipeline {
                             --set config.dbHost=${DB_HOST} \
                             --set config.s3BucketName=${S3_BUCKET} \
                             --set config.snsTopicArn=${SNS_TOPIC} \
+                            --set config.releaseVersion=${IMAGE_TAG} \
                             --set secrets.dbPasswordSecretName=${DB_SECRET_NAME} \
                             --wait --timeout 10m
                     '''

@@ -50,6 +50,14 @@ rules:
   - apiGroups: ["external-secrets.io"]
     resources: ["externalsecrets", "secretstores"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # ServiceMonitor (Assignment 5, helm/devops-app/templates/servicemonitors.yaml)
+  # - a real deploy failure caught this live: `helm upgrade` GETs every
+  # resource the chart declares before deciding create vs. patch, the same
+  # reason every other resource type above is listed even though most
+  # upgrades only ever patch, not create.
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

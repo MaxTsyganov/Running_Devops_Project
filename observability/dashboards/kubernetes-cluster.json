@@ -1,0 +1,100 @@
+{
+  "title": "Kubernetes Cluster",
+  "uid": "kubernetes-cluster",
+  "tags": ["kubernetes", "assignment-5"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "type": "query",
+        "label": "Namespace",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": { "query": "label_values(kube_pod_info, namespace)", "refId": "namespace-variable" },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Node status",
+      "type": "table",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "kube_node_status_condition{condition=\"Ready\"}", "format": "table", "instant": true }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Node CPU usage",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Node memory available",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "node_memory_MemAvailable_bytes" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Deployment: desired vs available replicas",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "refId": "A", "expr": "kube_deployment_spec_replicas{namespace=~\"$namespace\"}", "legendFormat": "{{deployment}} desired" },
+        { "refId": "B", "expr": "kube_deployment_status_replicas_available{namespace=~\"$namespace\"}", "legendFormat": "{{deployment}} available" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Pod restarts (rate)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "refId": "A", "expr": "rate(kube_pod_container_status_restarts_total{namespace=~\"$namespace\"}[15m])" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Pod phase count",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        { "refId": "A", "expr": "sum(kube_pod_status_phase{namespace=~\"$namespace\"}) by (phase)" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "PVC usage",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "1 - (kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes)" }
+      ]
+    }
+  ]
+}

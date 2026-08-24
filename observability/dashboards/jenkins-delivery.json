@@ -1,0 +1,86 @@
+{
+  "title": "Jenkins Delivery",
+  "uid": "jenkins-delivery",
+  "tags": ["jenkins", "assignment-5"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Build queue size",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "jenkins_queue_size_value{job=\"jenkins\"}" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Executors: queue length by agent label",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "default_jenkins_executors_queue_length{job=\"jenkins\"}", "legendFormat": "{{label}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Queue: blocked vs buildable vs pending",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "refId": "A", "expr": "jenkins_queue_blocked_value{job=\"jenkins\"}", "legendFormat": "blocked" },
+        { "refId": "B", "expr": "jenkins_queue_buildable_value{job=\"jenkins\"}", "legendFormat": "buildable" },
+        { "refId": "C", "expr": "jenkins_queue_pending_value{job=\"jenkins\"}", "legendFormat": "pending" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Controller JVM heap used",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "jvm_memory_bytes_used{job=\"jenkins\", area=\"heap\"}" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Controller JVM GC time (rate)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "refId": "A", "expr": "rate(jvm_gc_collection_seconds_sum{job=\"jenkins\"}[5m])", "legendFormat": "{{gc}}" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Controller process CPU (rate)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "rate(process_cpu_seconds_total{job=\"jenkins\"}[5m])" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "CD deploy replica health (devops-app)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "targets": [
+        { "refId": "A", "expr": "kube_deployment_status_replicas_available{namespace=\"devops-app\"}", "legendFormat": "{{deployment}} available" },
+        { "refId": "B", "expr": "kube_deployment_spec_replicas{namespace=\"devops-app\"}", "legendFormat": "{{deployment}} desired" }
+      ]
+    }
+  ]
+}
