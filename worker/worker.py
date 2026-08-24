@@ -50,17 +50,26 @@ RELEASE_VERSION = os.environ.get("RELEASE_VERSION", "unknown")
 METRICS_PORT = int(os.environ.get("METRICS_PORT", "9100"))
 
 # --- Prometheus metrics (Assignment 5) ---------------------------------
+# git_sha on every metric, not just app_info - same reasoning as
+# backend/app.py's own metrics: the dashboards' $version variable filters
+# directly on this label (e.g. worker_items_processed_total{git_sha=~"$version"}),
+# which only works if the label actually exists on the series. A fixed
+# constant for this process's lifetime, so it costs nothing in cardinality.
 ITEMS_PROCESSED_TOTAL = Counter(
     "worker_items_processed_total", "Total items successfully processed",
+    ["git_sha"],
 )
 POLL_DURATION_SECONDS = Histogram(
     "worker_poll_duration_seconds", "Duration of one poll cycle in seconds",
+    ["git_sha"],
 )
 POLL_ERRORS_TOTAL = Counter(
     "worker_poll_errors_total", "Total poll cycles that raised an exception",
+    ["git_sha"],
 )
 LAST_POLL_TIMESTAMP_SECONDS = Gauge(
     "worker_last_poll_timestamp_seconds", "Unix time of the most recently completed poll cycle",
+    ["git_sha"],
 )
 APP_INFO = Gauge(
     "app_info", "Static build/release info for this running process",
@@ -141,7 +150,7 @@ def run_one_cycle():
         conn = get_db_connection()
     except Exception:
         logger.exception("Database connection failed. Retrying next cycle.")
-        POLL_ERRORS_TOTAL.inc()
+        POLL_ERRORS_TOTAL.labels(git_sha=RELEASE_VERSION).inc()
         return
 
     try:
@@ -159,10 +168,10 @@ def run_one_cycle():
                 process_item(item)
                 mark_item_done(conn, item["id"])
                 processed_names.append(item["name"])
-                ITEMS_PROCESSED_TOTAL.inc()
+                ITEMS_PROCESSED_TOTAL.labels(git_sha=RELEASE_VERSION).inc()
             except Exception:
                 logger.exception(f"Failed to process item ID {item['id']}")
-                POLL_ERRORS_TOTAL.inc()
+                POLL_ERRORS_TOTAL.labels(git_sha=RELEASE_VERSION).inc()
 
         if processed_names:
             count = len(processed_names)
@@ -182,7 +191,7 @@ def run_one_cycle():
         # (backend creates the table, worker doesn't). Log and retry next
         # cycle instead of crashing over what's usually transient.
         logger.exception("Poll cycle failed")
-        POLL_ERRORS_TOTAL.inc()
+        POLL_ERRORS_TOTAL.labels(git_sha=RELEASE_VERSION).inc()
     finally:
         conn.close()
 
@@ -200,9 +209,9 @@ def main():
 
     touch_heartbeat()
     while True:
-        with POLL_DURATION_SECONDS.time():
+        with POLL_DURATION_SECONDS.labels(git_sha=RELEASE_VERSION).time():
             run_one_cycle()
-        LAST_POLL_TIMESTAMP_SECONDS.set_to_current_time()
+        LAST_POLL_TIMESTAMP_SECONDS.labels(git_sha=RELEASE_VERSION).set_to_current_time()
         touch_heartbeat()
         time.sleep(POLL_INTERVAL_SECONDS)
 

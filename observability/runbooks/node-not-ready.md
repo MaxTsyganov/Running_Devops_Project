@@ -1,7 +1,8 @@
 # NodeNotReady
 
-Fires when an EKS node reports condition `Ready` as `false` (or unknown)
-for 5 minutes.
+Fires when an EKS node reports condition `Ready` as `false` (or unknown),
+**or** reports `MemoryPressure`/`DiskPressure`/`PIDPressure` as `true`, for
+5 minutes. `{{ $labels.condition }}` in the alert tells you which one.
 
 ## Check first
 

@@ -891,13 +891,24 @@ for the CRD first and skips (not fails) if it isn't there yet.
 
 Access is `kubectl port-forward` only, same posture as Jenkins - see [§17](#17-observability-security).
 
+**Troubleshooting**: `observability/scripts/verify-observability.sh` is the first stop - Pods,
+PVC, Helm release, every alert/recording rule group, every scrape target's up/down state, and
+which dashboards actually loaded, in one read-only pass. Beyond that, each alert's own
+`observability/runbooks/*.md` doubles as its troubleshooting guide (check-first commands, likely
+causes, resolution) - there's no separate general-purpose troubleshooting doc, since a symptom
+worth troubleshooting almost always already has an alert (and therefore a runbook) attached to it.
+
 ---
 
 ## 14. Application instrumentation
 
 Every service gets a `/metrics` (or equivalent) endpoint and a matching `ServiceMonitor`
 (`helm/devops-app/templates/servicemonitors.yaml`, `jenkins/servicemonitor.yaml`) - nothing here is
-manually registered in Prometheus.
+manually registered in Prometheus. Jenkins's ServiceMonitor targets the existing `jenkins` Service
+(no new one needed - the prometheus plugin serves `/prometheus` on that same ClusterIP-only
+port 8080, already the dedicated scrape target `ServiceMonitor` discovery needs); the frontend
+gets a genuinely separate, `ClusterIP`-only Service instead (see below) specifically because its
+main Service is a public `LoadBalancer`, a constraint Jenkins's UI Service never has.
 
 **Backend** (`backend/app.py`, `prometheus_client`) - manual `before_request`/`after_request`
 hooks, not `prometheus_flask_exporter`, for full control over label cardinality:
@@ -910,7 +921,18 @@ hooks, not `prometheus_flask_exporter`, for full control over label cardinality:
   commit SHA `cd/Jenkinsfile`'s `IMAGE_TAG` deployed, passed through as a new
   `config.releaseVersion` Helm value into the ConfigMap (the same env var backend/worker both
   read) - so `app_info` reports the literal deployed commit, not a guess.
+* `dependency_call_failures_total{dependency}` (Counter, `rds`/`s3`/`sns`) - distinct from the
+  generic `http_requests_total{status=500}`: this names *which* downstream dependency actually
+  failed, incremented at each real `except` block around a DB/S3/SNS call (never for
+  `/api/health`'s own DB check - that's a deliberate probe, not a user request failing because of
+  a dependency).
 * `items_created_total` (Counter) - the required business metric, incremented in `POST /api/items`.
+* Every one of the metrics above also carries a `git_sha` label (not just `app_info`) - the
+  dashboards' `$version` variable filters directly on it
+  (`http_requests_total{git_sha=~"$version"}`), which only works if the label actually exists on
+  the series being filtered. `RELEASE_VERSION` is a fixed constant for a process's whole lifetime,
+  so this costs nothing in cardinality - still exactly one label combination per metric per
+  process, the same way `app_info` already works.
 * `/metrics`, `/healthz`, and `/api/health` are excluded from `http_requests_total` - health-check
   noise doesn't belong in a request-rate/error-rate metric.
 * `POST /api/debug/fail` - unconditionally `abort(500)`. The one deliberate business-logic addition
@@ -921,7 +943,8 @@ hooks, not `prometheus_flask_exporter`, for full control over label cardinality:
 
 **Worker** (`worker/worker.py`) - `prometheus_client.start_http_server(9100)`, its first-ever open
 port: `worker_items_processed_total`, `worker_poll_duration_seconds`, `worker_poll_errors_total`,
-`worker_last_poll_timestamp_seconds`, `app_info`.
+`worker_last_poll_timestamp_seconds`, `app_info` - same `git_sha`-on-every-metric treatment as the
+backend's own metrics, for the same reason.
 
 **Frontend** - nginx's `stub_status` on a `127.0.0.1:8081`-only server block
 (`frontend/nginx.k8s.conf`), scraped by an `nginx-prometheus-exporter` sidecar
@@ -952,7 +975,7 @@ monitoring self-check:
 | `HighErrorRate` | Backend 5xx rate > 5% (`rate(http_requests_total{status=~"5.."}[5m])`) | 2m | critical |
 | `HighLatencyP95` | Backend p95 request duration > 1s | 5m | warning |
 | `ReplicasMismatch` | A `devops-app` Deployment's available replicas != desired | 5m | warning |
-| `NodeNotReady` | A node's `Ready` condition is false/unknown | 5m | critical |
+| `NodeNotReady` | A node's `Ready` condition is false/unknown, **or** `MemoryPressure`/`DiskPressure`/`PIDPressure` is true - two opposite condition polarities in one `or` expression | 5m | critical |
 | `JenkinsQueueStuck` | Jenkins' build queue (`jenkins_queue_size_value`) non-empty | 5m | warning |
 | `PrometheusTargetDown` | Any scrape target reports `up == 0` | 5m | critical |
 
@@ -986,14 +1009,15 @@ sidecar-ConfigMap mechanism (`grafana_dashboard: "1"` label) - reinstalling the 
 every dashboard from these files alone, never a manual import:
 
 * **Application Overview** - request rate by status, error rate, p50/p95 latency, items-created
-  rate, worker throughput/poll-errors, frontend connection count. `$version` (backed by
-  `label_values(app_info, git_sha)`) and `$pod` template variables, actually wired into the
-  relevant panels' PromQL (`http_requests_total{git_sha=~"$version"}`), not just present as unused
-  variables next to metrics that happen to carry that label.
-* **Kubernetes Cluster** - node status/CPU/memory, deployment replica health, pod restarts, PVC
-  usage. `$namespace` variable.
+  rate, dependency call failures by dependency, worker throughput/poll-errors, frontend connection
+  count. `$version` (backed by `label_values(app_info, git_sha)`) and `$pod` template variables,
+  actually wired into the relevant panels' PromQL (`http_requests_total{git_sha=~"$version"}`),
+  not just present as unused variables next to metrics that happen to carry that label.
+* **Kubernetes Cluster** - node status/CPU/memory, deployment replica health, pod restarts,
+  OOM-kill events, CPU-throttled periods, PVC usage. `$namespace` variable.
 * **Jenkins Delivery** - build queue size, executor queue length by agent label, controller JVM
-  heap/GC/CPU, `devops-app` deployment replica health.
+  heap/GC/CPU, last build result/duration and all-time success rate by job, `devops-app`
+  deployment replica health.
 
 ---
 

@@ -81,6 +81,38 @@
         { "refId": "A", "expr": "kube_deployment_status_replicas_available{namespace=\"devops-app\"}", "legendFormat": "{{deployment}} available" },
         { "refId": "B", "expr": "kube_deployment_spec_replicas{namespace=\"devops-app\"}", "legendFormat": "{{deployment}} desired" }
       ]
+    },
+    {
+      "id": 8,
+      "title": "Last build result by job (1 = success, 0 = failure)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "targets": [
+        { "refId": "A", "expr": "default_jenkins_builds_last_build_result{job=\"jenkins\"}", "legendFormat": "{{jenkins_job}}" }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Last build duration by job",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "default_jenkins_builds_last_build_duration_milliseconds{job=\"jenkins\"}", "legendFormat": "{{jenkins_job}}" }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Build success rate by job (all-time)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 40 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "default_jenkins_builds_success_build_count_total{job=\"jenkins\"} / default_jenkins_builds_total_build_count_total{job=\"jenkins\"}", "legendFormat": "{{jenkins_job}}" }
+      ]
     }
   ]
 }

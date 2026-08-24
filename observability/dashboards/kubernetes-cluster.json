@@ -95,6 +95,26 @@
       "targets": [
         { "refId": "A", "expr": "1 - (kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes)" }
       ]
+    },
+    {
+      "id": 9,
+      "title": "OOM kill events (rate)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(container_oom_events_total{namespace=~\"$namespace\"}[15m])) by (namespace, pod)" }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "CPU throttled periods (rate)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(container_cpu_cfs_throttled_periods_total{namespace=~\"$namespace\"}[5m])) by (namespace, pod)" }
+      ]
     }
   ]
 }

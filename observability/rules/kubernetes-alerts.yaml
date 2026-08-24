@@ -21,12 +21,20 @@ spec:
             summary: "{{ $labels.deployment }} has fewer available replicas than desired"
             description: "Deployment {{ $labels.deployment }} in devops-app has had a replica mismatch for 5 minutes - some Pods are likely stuck NotReady."
             runbook_url: "https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/replicas-mismatch.md"
+        # Two different condition polarities in one alert, not two separate
+        # alerts: Ready=false means "not ready" (alert when status != true),
+        # while MemoryPressure/DiskPressure/PIDPressure=true means "under
+        # pressure" (alert when status == true) - opposite senses of the
+        # same underlying kube_node_status_condition metric.
         - alert: NodeNotReady
-          expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+          expr: >
+            (kube_node_status_condition{condition="Ready",status="true"} == 0)
+            or
+            (kube_node_status_condition{condition=~"MemoryPressure|DiskPressure|PIDPressure",status="true"} == 1)
           for: 5m
           labels:
             severity: critical
           annotations:
-            summary: "Node {{ $labels.node }} is not Ready"
-            description: "Node {{ $labels.node }} has reported condition Ready=false (or unknown) for 5 minutes."
+            summary: "Node {{ $labels.node }} is not Ready or under resource pressure"
+            description: "Node {{ $labels.node }} has reported {{ $labels.condition }}={{ $labels.status }} (not-Ready, or a resource-pressure condition) for 5 minutes."
             runbook_url: "https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/node-not-ready.md"

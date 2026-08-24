@@ -123,6 +123,16 @@
       "targets": [
         { "refId": "A", "expr": "kube_pod_info{namespace=\"devops-app\", pod=~\"$pod\"}", "format": "table", "instant": true }
       ]
+    },
+    {
+      "id": 9,
+      "title": "Dependency call failures (rate, by dependency)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(dependency_call_failures_total{git_sha=~\"$version\"}[5m])) by (dependency)" }
+      ]
     }
   ]
 }

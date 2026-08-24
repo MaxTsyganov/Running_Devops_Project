@@ -58,13 +58,23 @@ RELEASE_VERSION = os.environ.get("RELEASE_VERSION", "unknown")
 # static so this makes no visible difference today, but it's what keeps a
 # future path-parameter route (e.g. "/api/items/<int:id>") from blowing up
 # label cardinality with one series per ID instead of one for the route.
+#
+# git_sha is on every metric below, not just app_info - the dashboards'
+# $version template variable filters directly on it
+# (http_requests_total{git_sha=~"$version"}), which only works if the label
+# actually exists on the series being filtered. The alternative (a PromQL
+# `* on(pod) group_left(git_sha) app_info` join in every panel instead of
+# duplicating the label) was considered and rejected: RELEASE_VERSION is a
+# fixed constant for this process's whole lifetime, so duplicating it here
+# costs nothing in cardinality (still exactly one label combination per
+# metric per process) and keeps every panel's PromQL simple.
 HTTP_REQUESTS_TOTAL = Counter(
     "http_requests_total", "Total HTTP requests",
-    ["method", "path", "status"],
+    ["method", "path", "status", "git_sha"],
 )
 HTTP_REQUEST_DURATION_SECONDS = Histogram(
     "http_request_duration_seconds", "HTTP request duration in seconds",
-    ["method", "path"],
+    ["method", "path", "git_sha"],
 )
 # Gauge, not a label on some other metric - app_info's own value is always 1;
 # the labels themselves carry the information (the standard Prometheus
@@ -79,6 +89,17 @@ APP_INFO.labels(version=RELEASE_VERSION, git_sha=RELEASE_VERSION, release=RELEAS
 # not an infrastructure signal.
 ITEMS_CREATED_TOTAL = Counter(
     "items_created_total", "Total items successfully created via POST /api/items",
+    ["git_sha"],
+)
+# Assignment 5's own "dependency failures" metric - distinct from the
+# generic http_requests_total{status=500}: this counts WHICH downstream
+# dependency actually failed (rds/s3/sns), not just that some request
+# failed. Not incremented for /api/health's own DB check - that's a
+# deliberate probe, not a user-facing request failing because of a
+# dependency, same reasoning as excluding it from http_requests_total.
+DEPENDENCY_FAILURES_TOTAL = Counter(
+    "dependency_call_failures_total", "Total failed calls to an external dependency",
+    ["dependency", "git_sha"],
 )
 # Excluded from request-metrics instrumentation below: scrape traffic to
 # /metrics itself, and the two liveness/readiness endpoints (already
@@ -99,10 +120,11 @@ def _record_request_metrics(response):
         path = request.url_rule.rule if request.url_rule else "unmatched"
         duration = time.time() - g.get("_request_start_time", time.time())
         HTTP_REQUESTS_TOTAL.labels(
-            method=request.method, path=path, status=response.status_code
+            method=request.method, path=path, status=response.status_code,
+            git_sha=RELEASE_VERSION,
         ).inc()
         HTTP_REQUEST_DURATION_SECONDS.labels(
-            method=request.method, path=path
+            method=request.method, path=path, git_sha=RELEASE_VERSION,
         ).observe(duration)
     return response
 
@@ -175,6 +197,7 @@ def publish_sns(subject: str, message: str):
             f"Notification sent successfully. Message ID: {resp['MessageId']}")
     except ClientError:
         logger.exception("Failed to send notification")
+        DEPENDENCY_FAILURES_TOTAL.labels(dependency="sns", git_sha=RELEASE_VERSION).inc()
 
 
 def _row_to_dict(row: dict) -> dict:
@@ -236,6 +259,7 @@ def list_items():
         return jsonify({"items": [_row_to_dict(r) for r in rows]}), 200
     except Exception as exc:
         logger.exception("Failed to fetch items")
+        DEPENDENCY_FAILURES_TOTAL.labels(dependency="rds", git_sha=RELEASE_VERSION).inc()
         return jsonify({"error": str(exc)}), 500
     finally:
         if conn:
@@ -270,6 +294,7 @@ def create_item():
         logger.info(f"Item created with ID {row_id}")
     except Exception as exc:
         logger.exception("Failed to save item to database")
+        DEPENDENCY_FAILURES_TOTAL.labels(dependency="rds", git_sha=RELEASE_VERSION).inc()
         return jsonify({"error": str(exc)}), 500
     finally:
         if conn:
@@ -277,7 +302,7 @@ def create_item():
 
     # Only incremented on a real, committed creation - not on the 400s
     # above, which never reach here.
-    ITEMS_CREATED_TOTAL.inc()
+    ITEMS_CREATED_TOTAL.labels(git_sha=RELEASE_VERSION).inc()
 
     publish_sns(
         subject=f"[App] New item created: {name}",
@@ -328,6 +353,7 @@ def upload_file():
         logger.info(f"File uploaded to S3 successfully: {s3_key}")
     except ClientError:
         logger.exception("Failed to upload file to S3")
+        DEPENDENCY_FAILURES_TOTAL.labels(dependency="s3", git_sha=RELEASE_VERSION).inc()
         return jsonify({"error": "S3 upload failed"}), 500
 
     conn = None
@@ -342,6 +368,7 @@ def upload_file():
         conn.commit()
     except Exception as exc:
         logger.exception("Failed to save upload record in database")
+        DEPENDENCY_FAILURES_TOTAL.labels(dependency="rds", git_sha=RELEASE_VERSION).inc()
         return jsonify({"error": str(exc)}), 500
     finally:
         if conn:

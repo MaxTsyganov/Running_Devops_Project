@@ -316,6 +316,8 @@ pipeline {
                         done
                         if [ "$TARGETS_UP" != "true" ]; then
                             echo "Monitoring Gate FAILED: scrape targets never reported up within the observation window"
+                            echo "Runbook: https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/prometheus-target-down.md"
+                            echo "Rolling back - see post{failure{}} below."
                             exit 1
                         fi
 
@@ -398,6 +400,8 @@ pipeline {
                         done
                         if ! echo "$RESPONSE" | grep -q '"value":'; then
                             echo "Monitoring Gate FAILED: error-rate query returned no data"
+                            echo "Runbook: https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/prometheus-target-down.md"
+                            echo "Rolling back - see post{failure{}} below."
                             exit 1
                         fi
                         # Last ,"..." substring in the response, not a
@@ -420,6 +424,8 @@ pipeline {
                         # as "no meaningful data" rather than "0% errors".
                         awk -v v="$ERROR_VALUE" 'BEGIN { exit !(v+0 <= 0.05) }' || {
                             echo "Monitoring Gate FAILED: backend error rate ${ERROR_VALUE} exceeds the 5% threshold"
+                            echo "Runbook: https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/high-error-rate.md"
+                            echo "Rolling back - see post{failure{}} below."
                             exit 1
                         }
                         echo "Monitoring Gate passed: backend error rate ${ERROR_VALUE} within threshold."
