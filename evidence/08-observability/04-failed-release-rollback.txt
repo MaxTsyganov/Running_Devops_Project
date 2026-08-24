@@ -1,0 +1,87 @@
+Failed-release rollback drill - live capture
+================================================
+Mechanism: trigger cd-application with a deliberately nonexistent
+image tag - deploy either fails to pull the image or fails the new
+Monitoring Gate stage, and the existing post{failure{}} rollback
+logic (jenkins/cd/Jenkinsfile) should fire automatically.
+
+--- Baseline: current good release ---
+Mon Aug 24 13:55:23 UTC 2026
+20      	Mon Aug 24 12:52:39 2026	superseded	devops-app-1.0.0	1.0.0      	Upgrade complete                                                                                                                                                                                                                                                                                                    
+21      	Mon Aug 24 16:17:34 2026	superseded	devops-app-1.0.0	1.0.0      	Upgrade complete                                                                                                                                                                                                                                                                                                    
+22      	Mon Aug 24 16:24:55 2026	deployed  	devops-app-1.0.0	1.0.0      	Upgrade complete                                                                                                                                                                                                                                                                                                    
+NAME                  READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment    2/2     2            2           5h12m
+frontend-deployment   2/2     2            2           5h12m
+worker-deployment     1/1     1            1           5h12m
+
+--- Triggering cd-application with a nonexistent image tag: deadbeef0000000000000000000000000000dead ---
+Mon Aug 24 13:55:39 UTC 2026
+trigger status: 201
+
+--- First attempt failed too early: Input Validation correctly
+rejected the placeholder digests (not 64 real hex chars) before Deploy
+was ever attempted - a real, working safety check, but not what this
+drill is after. Retrying with well-formed (fake but valid-shaped)
+digests so the pipeline actually reaches Deploy/Rollout against the
+bad image tag. ---
+Mon Aug 24 13:56:55 UTC 2026
+
+--- Retry (build #8) with valid-shaped digests: reached Deploy for
+real, image pull failed against the fake tag, helm upgrade --wait
+timed out after 10m, post{failure{}} correctly detected
+HELM_DEPLOY_ATTEMPTED and ran a real 'helm rollback' - succeeded. ---
+Mon Aug 24 14:08:15 UTC 2026
+
+Relevant console excerpt:
+[2026-08-24T13:57:39.448Z] + set -e
+[2026-08-24T13:57:39.449Z] + helm upgrade --install devops-app ./helm/devops-app --namespace devops-app --set 'image.registry=957905603240.dkr.ecr.us-east-1.amazonaws.com' --set 'image.tag=deadbeef0000000000000000000000000000dead' --set 'config.dbHost=appdb-instance.cs1amicmwnx1.us-east-1.rds.amazonaws.com' --set 'config.s3BucketName=devops-app-mtsyganov-rf3u4n' --set 'config.snsTopicArn=arn:aws:sns:us-east-1:957905603240:devops-project-alerts' --set 'config.releaseVersion=deadbeef0000000000000000000000000000dead' --set 'secrets.dbPasswordSecretName=devops-app/db-password' --wait --timeout 10m
+[2026-08-24T14:07:46.404Z] Error: UPGRADE FAILED: context deadline exceeded
+[Pipeline] }
+[Pipeline] // container
+[Pipeline] }
+--
+[Pipeline] {
+[Pipeline] echo
+[2026-08-24T14:07:47.318Z] === DEPLOYMENT FAILED after Deploy was attempted - checking actual cluster state for a rollback target ===
+[Pipeline] container
+[Pipeline] {
+[Pipeline] sh
+--
+[2026-08-24T14:07:48.310Z] + REVISION_LINES=11
+[2026-08-24T14:07:48.310Z] + '[' 11 -le 2 ]
+[2026-08-24T14:07:48.311Z] + helm rollback devops-app -n devops-app --wait --timeout 5m
+[2026-08-24T14:07:50.214Z] Rollback was a success! Happy Helming!
+[2026-08-24T14:07:50.214Z] + echo '=== Rolled back. Pods now: ==='
+[2026-08-24T14:07:50.214Z] === Rolled back. Pods now: ===
+[2026-08-24T14:07:50.214Z] + kubectl get pods -n devops-app -o 'custom-columns=NAME:.metadata.name,IMAGE:.spec.containers[0].image'
+
+Pod evidence of the failed image pull during the attempt:
+7m27s       Normal    Pulling                        pod/frontend-deployment-787d8b44bf-7swnr    Pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:deadbeef0000000000000000000000000000dead"
+7m27s       Warning   Failed                         pod/frontend-deployment-787d8b44bf-7swnr    Failed to pull image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:deadbeef0000000000000000000000000000dead": rpc error: code = NotFound desc = failed to pull and unpack image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:deadbeef0000000000000000000000000000dead": failed to resolve reference "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:deadbeef0000000000000000000000000000dead": 957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:deadbeef0000000000000000000000000000dead: not found
+29s         Warning   Failed                         pod/frontend-deployment-787d8b44bf-7swnr    Error: ImagePullBackOff
+5m30s       Warning   Failed                         pod/worker-deployment-5f6b8986cf-46qdt      Error: ImagePullBackOff
+5m30s       Normal    BackOff                        pod/worker-deployment-5f6b8986cf-46qdt      Back-off pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:deadbeef0000000000000000000000000000dead"
+29s         Normal    BackOff                        pod/frontend-deployment-787d8b44bf-7swnr    Back-off pulling image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:deadbeef0000000000000000000000000000dead"
+27s         Normal    Pulled                         pod/frontend-deployment-55cbcb6659-2jj2l    Container image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:0c0985504b47e7f70972c115aaf8e1af789c06f6" already present on machine
+27s         Normal    Pulled                         pod/backend-deployment-79456488cb-dg264     Container image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:0c0985504b47e7f70972c115aaf8e1af789c06f6" already present on machine
+26s         Normal    Pulled                         pod/worker-deployment-6b794bf8fc-flpf8      Container image "957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:0c0985504b47e7f70972c115aaf8e1af789c06f6" already present on machine
+26s         Normal    Pulled                         pod/frontend-deployment-55cbcb6659-2jj2l    Container image "nginx/nginx-prometheus-exporter:1.5.3@sha256:85666e7fde7e253f1c6d978f9a961245df4c9cdb7677e1866d9bb28e8f9ee41d" already present on machine
+
+--- Post-rollback: confirm the app is genuinely back on the good release ---
+Mon Aug 24 14:08:24 UTC 2026
+NAME                  READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment    2/2     2            2           5h25m
+frontend-deployment   2/2     2            2           5h25m
+worker-deployment     1/1     1            1           5h25m
+NAME                                   IMAGE
+backend-deployment-79456488cb-cjpfc    957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:0c0985504b47e7f70972c115aaf8e1af789c06f6
+backend-deployment-79456488cb-dg264    957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-backend:0c0985504b47e7f70972c115aaf8e1af789c06f6
+frontend-deployment-55cbcb6659-2jj2l   957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:0c0985504b47e7f70972c115aaf8e1af789c06f6
+frontend-deployment-55cbcb6659-dr587   957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-frontend:0c0985504b47e7f70972c115aaf8e1af789c06f6
+worker-deployment-6b794bf8fc-flpf8     957905603240.dkr.ecr.us-east-1.amazonaws.com/devops-worker:0c0985504b47e7f70972c115aaf8e1af789c06f6
+20      	Mon Aug 24 12:52:39 2026	superseded	devops-app-1.0.0	1.0.0      	Upgrade complete                                      
+21      	Mon Aug 24 16:17:34 2026	superseded	devops-app-1.0.0	1.0.0      	Upgrade complete                                      
+22      	Mon Aug 24 16:24:55 2026	superseded	devops-app-1.0.0	1.0.0      	Upgrade complete                                      
+23      	Mon Aug 24 13:57:39 2026	failed    	devops-app-1.0.0	1.0.0      	Upgrade "devops-app" failed: context deadline exceeded
+24      	Mon Aug 24 14:07:48 2026	deployed  	devops-app-1.0.0	1.0.0      	Rollback to 22                                        

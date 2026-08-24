@@ -1,0 +1,78 @@
+Assignment 5 - Observability failure exercises and recovery drill
+====================================================================
+This folder is the evidence trail for the assignment's four required
+failure exercises plus the PVC/Pod recovery drill, in the same style as
+evidence/01-07: real captured command/API output, not paraphrased or
+simulated. Every alert transition below (pending -> firing -> resolved)
+is a live Prometheus/Alertmanager state change, not a description of one.
+
+Several of these files show a live bug being hit and fixed mid-drill,
+same standard as the rest of this project - documented as found, not
+smoothed over after the fact.
+
+1. HighErrorRate (backend 5xx rate > 5%)
+   01-high-error-rate-drill.txt
+     - Hit the real public frontend LoadBalancer's POST /api/debug/fail
+       repeatedly. Baseline not-firing -> pending -> firing (Prometheus
+       ALERTS metric and Alertmanager's own /api/v2/alerts, routed to the
+       "slack" receiver with the runbook_url attached) -> resolved once
+       the drill traffic stopped and the 5m rate() window rolled off.
+
+2. ReplicasMismatch (backend stuck below desired replica count)
+   02-replicasmismatch-drill.txt
+     - Pointed config.dbHost at an unreachable host and rolled backend.
+       Real bug found live: backend/app.py calls init_db() synchronously
+       at Flask startup, so an unreachable DB host actually crashes the
+       container outright (CrashLoopBackOff) rather than just failing
+       readiness - same net effect for this alert, discovered rather than
+       assumed. Also caught: a config-only Helm value change doesn't
+       trigger a rollout on its own (no checksum/config annotation on the
+       pod template) - a real CD deploy never hits this since IMAGE_TAG
+       always changes alongside it, but this drill needed an explicit
+       `kubectl rollout restart`. Pending -> firing -> reverted -> resolved.
+
+3. JenkinsQueueStuck (build queue non-empty for 5 minutes)
+   03-jenkinsqueuestuck-drill.txt
+     - A throwaway branch/job with a Jenkinsfile designed to be
+       unschedulable. Two mechanisms tried and rejected live before one
+       actually worked: `label` on a bad name silently defines a new
+       inline pod template and just runs (deprecated option, Jenkins
+       warns about it); `inheritFrom` on a nonexistent template name
+       silently falls back to a bare default jnlp Pod instead of failing.
+       What actually reproduces a genuinely stuck queue: requesting CPU no
+       node in the cluster could ever satisfy - a real Pod, confirmed
+       Pending via `kubectl describe` (`Insufficient cpu`), and Cluster
+       Autoscaler correctly declining to scale up for an unsatisfiable
+       request. Pending -> firing -> cleaned up (build stopped, throwaway
+       job/branch/Pod deleted) -> resolved.
+
+4. Deploy a failed release -> automatic rollback
+   04-failed-release-rollback.txt
+     - Triggered cd-application with a nonexistent image tag. First
+       attempt correctly rejected even earlier than intended: Input
+       Validation's own digest-format check caught the placeholder digests
+       before Deploy was ever attempted (a real, working safety check).
+       Retried with valid-shaped fake digests so the pipeline actually
+       reached Deploy: image pull failed, `helm upgrade --wait` timed out
+       after 10 minutes, and the existing post{failure{}} logic correctly
+       detected HELM_DEPLOY_ATTEMPTED and ran a real `helm rollback` -
+       succeeded, every Pod back on the exact prior working image tag.
+
+5. PVC / Pod recovery (observability/runbooks/pvc-pod-recovery.md)
+   05-pvc-pod-recovery-drill.txt
+     - Scenario 1 (Pod deleted): StatefulSet recreated it against the
+       exact same PVC (identical volume UID before/after) - no data
+       touched.
+     - Scenario 2 (PVC deleted): had to scale the Prometheus CR itself to
+       0 replicas first - deleting just the Pod let the StatefulSet
+       recreate it and re-claim the PVC before the delete could complete,
+       same live-discovered nuance as exercise 2's rollout-trigger gap.
+       With nothing re-claiming it, the PVC deleted for real - AWS
+       confirms the underlying EBS volume itself is gone, not just
+       unbound. Recovery: scaled back to 1 replica, a brand-new PVC
+       (different volume UID) was provisioned, and every alert rule group
+       and all 18 scrape pools came back healthy - reproduced entirely
+       from Git, nothing manually reconfigured.
+
+All exercises left the cluster in its normal healthy state afterward -
+confirmed at the end of each file.

@@ -1,0 +1,73 @@
+PVC / Pod recovery drill - live capture
+===========================================
+Per observability/runbooks/pvc-pod-recovery.md - two scenarios,
+both tested live: Pod deletion (PVC survives) vs PVC deletion
+(real data loss, recovered via a clean reinstall).
+
+=== Scenario 1: Pod deleted ===
+Mon Aug 24 14:08:37 UTC 2026
+Before:
+NAME                                    READY   STATUS    RESTARTS   AGE
+prometheus-observability-prometheus-0   2/2     Running   0          99m
+NAME                                                                           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+prometheus-observability-prometheus-db-prometheus-observability-prometheus-0   Bound    pvc-e349de3f-b0f7-4fbc-b2cd-dbb67c7476dc   5Gi        RWO            ebs-gp3        <unset>                 138m
+
+--- Deleting the Prometheus Pod ---
+pod "prometheus-observability-prometheus-0" deleted from observability namespace
+
+--- Pod recreated by the StatefulSet, same PVC re-attached ---
+Mon Aug 24 14:09:06 UTC 2026
+NAME                                    READY   STATUS    RESTARTS   AGE
+prometheus-observability-prometheus-0   1/2     Running   0          16s
+NAME                                                                           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+prometheus-observability-prometheus-db-prometheus-observability-prometheus-0   Bound    pvc-e349de3f-b0f7-4fbc-b2cd-dbb67c7476dc   5Gi        RWO            ebs-gp3        <unset>                 139m
+
+--- Fully Ready again, same PVC throughout - data preserved ---
+NAME                                    READY   STATUS    RESTARTS   AGE
+prometheus-observability-prometheus-0   2/2     Running   0          36s
+
+=== Scenario 2: PVC deleted (real data loss) ===
+Mon Aug 24 14:09:37 UTC 2026
+Deleting the Pod first (PVC has a finalizer while a Pod uses it):
+pod "prometheus-observability-prometheus-0" deleted from observability namespace
+
+Deleting the PVC itself:
+persistentvolumeclaim "prometheus-observability-prometheus-db-prometheus-observability-prometheus-0" deleted from observability namespace
+
+--- Correction: StatefulSet immediately recreated the Pod (same as
+scenario 1), which re-claimed the PVC before the delete could finish -
+PVC delete just hung in Terminating. Scaling the Prometheus CR itself
+to 0 replicas first so nothing re-claims the PVC. ---
+prometheus.monitoring.coreos.com/observability-prometheus patched
+
+--- PVC (and, per ebs-gp3's reclaimPolicy: Delete, the underlying EBS
+volume) genuinely deleted - real data loss ---
+Mon Aug 24 14:11:39 UTC 2026
+
+AWS confirms the underlying EBS volume itself is gone (empty result,
+no volume found for that PVC's tag) - genuinely unrecoverable, not
+just unbound.
+
+--- Recovery: scaling Prometheus back to 1 replica ---
+Mon Aug 24 14:11:53 UTC 2026
+prometheus.monitoring.coreos.com/observability-prometheus patched
+
+--- Recovered Prometheus fully Ready with a brand-new PVC
+(pvc-20666952... vs the original pvc-e349de3f...) - config
+reproduced entirely from Git, nothing manually reconfigured ---
+Mon Aug 24 14:13:09 UTC 2026
+NAME                                    READY   STATUS    RESTARTS   AGE
+prometheus-observability-prometheus-0   2/2     Running   0          75s
+NAME                                                                           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+prometheus-observability-prometheus-db-prometheus-observability-prometheus-0   Bound    pvc-20666952-dba1-41cf-83d0-382618cdfe9b   5Gi        RWO            ebs-gp3        <unset>                 77s
+
+Alert rule groups reproduced from Git (observability/rules/):
+  application.rules: present
+  kubernetes.rules: present
+  jenkins.rules: present
+  monitoring.rules: present
+  slo.rules: present
+
+Scrape targets reproduced (all discovered fresh via ServiceMonitors):
+18 scrape pools discovered
+all up

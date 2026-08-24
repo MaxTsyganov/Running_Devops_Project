@@ -1,0 +1,150 @@
+ReplicasMismatch alert drill - live capture
+==============================================
+Mechanism: point config.dbHost at an unreachable host, roll backend -
+readiness probe (/api/health) fails its DB check, new Pod never
+becomes Ready. maxSurge:0/maxUnavailable:1 means only one old Pod is
+ever removed at a time, so the deployment sticks at 1/2 available
+(not 0/2) for the whole drill - one old, healthy Pod keeps serving.
+
+--- Baseline ---
+Mon Aug 24 13:17:21 UTC 2026
+Deployment:
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment   2/2     2            2           4h34m
+ReplicasMismatch not firing:
+{"status":"success","data":{"resultType":"vector","result":[]}}
+--- Drill triggered: config.dbHost -> unreachable-db-drill.invalid ---
+Mon Aug 24 13:17:56 UTC 2026
+Pods after rollout begins:
+NAME                                  READY   STATUS    RESTARTS   AGE   IP          NODE                         NOMINATED NODE   READINESS GATES
+backend-deployment-6bfb6c77c4-ljwpl   1/1     Running   0          25m   10.0.3.71   ip-10-0-3-87.ec2.internal    <none>           <none>
+backend-deployment-6bfb6c77c4-zf4t5   1/1     Running   0          25m   10.0.2.57   ip-10-0-2-244.ec2.internal   <none>           <none>
+
+Deployment status:
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment   2/2     2            2           4h35m
+
+New Pod's readiness failure (kubectl describe):
+
+--- Correction: config.dbHost alone doesn't trigger a rollout (no
+checksum/config annotation on the pod template - a ConfigMap-only
+change never restarts already-running Pods on its own, same gap
+reasoned about but not hit during the CD Monitoring Gate work).
+Forced explicitly with 'kubectl rollout restart' for this drill;
+the real CD pipeline never hits this because IMAGE_TAG and
+config.releaseVersion always change together, which already forces
+a rollout via the image field itself. ---
+Mon Aug 24 13:18:43 UTC 2026
+Pods now:
+NAME                                  READY   STATUS             RESTARTS      AGE   IP          NODE                         NOMINATED NODE   READINESS GATES
+backend-deployment-6bfb6c77c4-zf4t5   1/1     Running            0             26m   10.0.2.57   ip-10-0-2-244.ec2.internal   <none>           <none>
+backend-deployment-86dc9474d9-mthv5   0/1     CrashLoopBackOff   2 (17s ago)   42s   10.0.3.90   ip-10-0-3-87.ec2.internal    <none>           <none>
+
+Deployment status:
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment   1/2     1            1           4h36m
+
+--- Real failure mode, more specific than the plan assumed: not just a
+readiness-probe failure - backend/app.py calls init_db() synchronously
+at Flask startup (before gunicorn ever serves a request), so an
+unreachable DB host crashes the container outright (CrashLoopBackOff),
+never even reaching the readiness probe. Same net effect for this
+alert (the Pod never becomes Ready, so kube_deployment_status_replicas_available
+stays below spec_replicas), just discovered live rather than assumed. ---
+    conn = get_db_connection()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/app/app.py", line 111, in get_db_connection
+    return psycopg2.connect(
+           ^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/psycopg2/__init__.py", line 122, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+psycopg2.OperationalError: could not translate host name "unreachable-db-drill.invalid" to address: Name or service not known
+
+
+--- Alert reached firing state (pending at 13:20:21, firing at 13:24:26 - just over the 5m for: window from when the mismatch first became true) ---
+{
+    "status": "success",
+    "data": {
+        "resultType": "vector",
+        "result": [
+            {
+                "metric": {
+                    "__name__": "ALERTS",
+                    "alertname": "ReplicasMismatch",
+                    "alertstate": "firing",
+                    "container": "kube-state-metrics",
+                    "deployment": "backend-deployment",
+                    "endpoint": "http",
+                    "instance": "10.0.3.145:8080",
+                    "job": "kube-state-metrics",
+                    "namespace": "devops-app",
+                    "pod": "observability-kube-state-metrics-b485b8f6-v8ksh",
+                    "service": "observability-kube-state-metrics",
+                    "severity": "warning"
+                },
+                "value": [
+                    1787577879.623,
+                    "1"
+                ]
+            }
+        ]
+    }
+}
+
+Alertmanager's own view:
+{
+  "annotations": {
+    "description": "Deployment backend-deployment in devops-app has had a replica mismatch for 5 minutes - some Pods are likely stuck NotReady.",
+    "runbook_url": "https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/replicas-mismatch.md",
+    "summary": "backend-deployment has fewer available replicas than desired"
+  },
+  "endsAt": "2026-08-24T13:28:10.842Z",
+  "fingerprint": "522b61d2e815a450",
+  "receivers": [
+    {
+      "name": "slack"
+    }
+  ],
+  "startsAt": "2026-08-24T13:24:10.842Z",
+  "status": {
+    "inhibitedBy": [],
+    "mutedBy": [],
+    "silencedBy": [],
+    "state": "active"
+  },
+  "updatedAt": "2026-08-24T13:24:10.844Z",
+  "generatorURL": "http://observability-prometheus.observability:9090/graph?g0.expr=kube_deployment_status_replicas_available%7Bnamespace%3D%22devops-app%22%7D+%21%3D+kube_deployment_spec_replicas%7Bnamespace%3D%22devops-app%22%7D&g0.tab=1",
+  "labels": {
+    "alertname": "ReplicasMismatch",
+    "container": "kube-state-metrics",
+    "deployment": "backend-deployment",
+    "endpoint": "http",
+    "instance": "10.0.3.145:8080",
+    "job": "kube-state-metrics",
+    "namespace": "devops-app",
+    "pod": "observability-kube-state-metrics-b485b8f6-v8ksh",
+    "prometheus": "observability/observability-prometheus",
+    "service": "observability-kube-state-metrics",
+    "severity": "warning"
+  }
+}
+
+Deployment state at firing:
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment   1/2     1            1           4h41m
+NAME                                  READY   STATUS    RESTARTS        AGE
+backend-deployment-6bfb6c77c4-zf4t5   1/1     Running   0               31m
+backend-deployment-86dc9474d9-mthv5   0/1     Error     6 (2m52s ago)   6m10s
+
+--- Reverted: config.dbHost restored to the real RDS endpoint, rollout forced again ---
+Mon Aug 24 13:30:45 UTC 2026
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+backend-deployment   2/2     2            2           4h47m
+NAME                                  READY   STATUS        RESTARTS       AGE
+backend-deployment-79456488cb-cjpfc   1/1     Running       0              26s
+backend-deployment-79456488cb-vkdh6   1/1     Running       0              38s
+backend-deployment-86dc9474d9-mthv5   1/1     Terminating   7 (6m7s ago)   12m
+
+--- Resolution confirmed ---
+{"status":"success","data":{"resultType":"vector","result":[]}}

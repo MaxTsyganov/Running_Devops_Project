@@ -1,0 +1,113 @@
+JenkinsQueueStuck alert drill - live capture
+===============================================
+Mechanism: a throwaway branch (drill/jenkins-queue-stuck) and a
+throwaway Jenkins job (drill-queue-stuck) whose Jenkinsfile requests
+agent { label 'nonexistent-drill-label' } - no real Kubernetes cloud
+pod template matches it, so the build queues forever without ever
+provisioning a Pod. Both deleted right after this drill.
+
+--- Baseline: JenkinsQueueStuck not firing ---
+Mon Aug 24 13:33:36 UTC 2026
+{"status":"success","data":{"resultType":"vector","result":[]}}
+jenkins_queue_size_value before triggering:
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"jenkins_queue_size_value","container":"jenkins","endpoint":"http","instance":"10.0.2.39:8080","job":"jenkins","namespace":"jenkins","pod":"jenkins-0","service":"jenkins"},"value":[1787578417.588,"0"]}]}}trigger status: 201
+
+--- Correction: build #1 used 'label' instead of 'inheritFrom' -
+Jenkins WARNED this is deprecated and creates a new inline template
+on the fly, so build #1 actually succeeded trivially instead of
+queuing. Fixed to inheritFrom (matches the real ci-agent/cd-agent
+Jenkinsfiles' own usage), re-triggering as build #2. ---
+Mon Aug 24 13:42:47 UTC 2026
+trigger status: 201
+{"_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob","builds":[{"_class":"org.jenkinsci.plugins.workflow.job.WorkflowRun","building":true,"number":2,"result":null},{"_class":"org.jenkinsci.plugins.workflow.job.WorkflowRun","building":false,"number":1,"result":"SUCCESS"}],"inQueue":false}
+--- Second correction: build #2's inheritFrom on a nonexistent
+template name also silently fell back to a default jnlp Pod instead
+of failing. Switched to requesting unsatisfiable CPU (1000 cores) -
+a real Pod, genuinely unschedulable. Re-triggering as build #3. ---
+Mon Aug 24 13:44:18 UTC 2026
+trigger status: 201
+{"_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob","builds":[{"_class":"org.jenkinsci.plugins.workflow.job.WorkflowRun","building":true,"number":3,"result":null},{"_class":"org.jenkinsci.plugins.workflow.job.WorkflowRun","building":false,"number":2,"result":"SUCCESS"},{"_class":"org.jenkinsci.plugins.workflow.job.WorkflowRun","building":false,"number":1,"result":"SUCCESS"}],"inQueue":false}
+--- Confirmed genuinely stuck (kubectl describe pod) ---
+NAME                                    READY   STATUS    RESTARTS   AGE
+drill-queue-stuck-3-9nrfw-1zp8c-tq511   0/1     Pending   0          34s
+Events:
+  Type     Reason             Age   From                Message
+  ----     ------             ----  ----                -------
+  Warning  FailedScheduling   36s   default-scheduler   0/3 nodes are available: 3 Insufficient cpu. no new claims to deallocate, preemption: 0/3 nodes are available: 3 Preemption is not helpful for scheduling.
+  Normal   NotTriggerScaleUp  26s   cluster-autoscaler  pod didn't trigger scale-up: 1 Insufficient cpu
+
+--- Alert reached firing state (queue_size stayed at 1 the whole time - pending at 13:46:44, firing at 13:51:55) ---
+{
+    "status": "success",
+    "data": {
+        "resultType": "vector",
+        "result": [
+            {
+                "metric": {
+                    "__name__": "ALERTS",
+                    "alertname": "JenkinsQueueStuck",
+                    "alertstate": "firing",
+                    "container": "jenkins",
+                    "endpoint": "http",
+                    "instance": "10.0.2.39:8080",
+                    "job": "jenkins",
+                    "namespace": "jenkins",
+                    "pod": "jenkins-0",
+                    "service": "jenkins",
+                    "severity": "warning"
+                },
+                "value": [
+                    1787579527.424,
+                    "1"
+                ]
+            }
+        ]
+    }
+}
+
+Alertmanager's own view:
+{
+  "annotations": {
+    "description": "At least one build has sat in Jenkins' queue for 5 minutes without an agent Pod picking it up - likely an unschedulable agent template (bad label, capacity exhausted).",
+    "runbook_url": "https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/jenkins-queue-stuck.md",
+    "summary": "Jenkins build queue has been non-empty for 5 minutes"
+  },
+  "endsAt": "2026-08-24T13:55:26.462Z",
+  "fingerprint": "8af8a950e2694ba9",
+  "receivers": [
+    {
+      "name": "slack"
+    }
+  ],
+  "startsAt": "2026-08-24T13:51:26.462Z",
+  "status": {
+    "inhibitedBy": [],
+    "mutedBy": [],
+    "silencedBy": [],
+    "state": "active"
+  },
+  "updatedAt": "2026-08-24T13:51:26.463Z",
+  "generatorURL": "http://observability-prometheus.observability:9090/graph?g0.expr=jenkins_queue_size_value%7Bjob%3D%22jenkins%22%7D+%3E+0&g0.tab=1",
+  "labels": {
+    "alertname": "JenkinsQueueStuck",
+    "container": "jenkins",
+    "endpoint": "http",
+    "instance": "10.0.2.39:8080",
+    "job": "jenkins",
+    "namespace": "jenkins",
+    "pod": "jenkins-0",
+    "prometheus": "observability/observability-prometheus",
+    "service": "jenkins",
+    "severity": "warning"
+  }
+}
+
+Jenkins Delivery dashboard's own queue-size panel would show a
+sustained plateau at 1 for this whole window (jenkins_queue_size_value).
+
+--- Cleanup: stopped build #3, deleted the throwaway job, deleted
+the leftover Pending Pod, deleted the branch (remote + local) ---
+Mon Aug 24 13:54:53 UTC 2026
+Alert resolved (queue back to 0):
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"jenkins_queue_size_value","container":"jenkins","endpoint":"http","instance":"10.0.2.39:8080","job":"jenkins","namespace":"jenkins","pod":"jenkins-0","service":"jenkins"},"value":[1787579693.977,"0"]}]}}
+{"status":"success","data":{"resultType":"vector","result":[]}}

@@ -1,0 +1,240 @@
+HighErrorRate alert drill - live capture
+==========================================
+Endpoint: POST http://ac0c4a3920a3647e694f4f321b56845b-1807960677.us-east-1.elb.amazonaws.com/api/debug/fail
+(backend/app.py: unconditionally abort(500), added purely for this drill)
+
+--- Baseline: HighErrorRate not firing ---
+Mon Aug 24 13:06:32 UTC 2026
+{"status":"success","data":{"resultType":"vector","result":[]}}
+
+--- Drill start: hitting POST /api/debug/fail repeatedly ---
+Mon Aug 24 13:06:39 UTC 2026
+500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 
+--- Alert transitioned pending -> firing (Prometheus ALERTS metric) ---
+Mon Aug 24 13:10:47 UTC 2026
+Check at T+150s (still pending):
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"ALERTS","alertname":"HighErrorRate","alertstate":"pending","severity":"critical"},"value":[1787576957.755,"1"]}]}}
+Check at T+210s (now firing):
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"ALERTS","alertname":"HighErrorRate","alertstate":"firing","severity":"critical"},"value":[1787577032.725,"1"]}]}}
+--- Alertmanager's own view of the same alert ---
+500    {
+        "annotations": {
+            "description": "More than 5% of backend requests have returned a 5xx status over the last 5 minutes.",
+            "runbook_url": "https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/high-error-rate.md",
+            "summary": "Backend 5xx error rate above 5%"
+        },
+        "endsAt": "2026-08-24T13:13:55.384Z",
+        "fingerprint": "3e2fd94efff033a8",
+        "receivers": [
+            {
+                "name": "slack"
+            }
+        ],
+        "startsAt": "2026-08-24T13:09:55.384Z",
+        "status": {
+            "inhibitedBy": [],
+            "mutedBy": [],
+            "silencedBy": [],
+            "state": "active"
+        },
+        "updatedAt": "2026-08-24T13:09:55.387Z",
+        "generatorURL": "http://observability-prometheus.observability:9090/graph?g0.expr=sum%28rate%28http_requests_total%7Bjob%3D%22backend-service%22%2Cstatus%3D~%225..%22%7D%5B5m%5D%29%29+%2F+sum%28rate%28http_requests_total%7Bjob%3D%22backend-service%22%7D%5B5m%5D%29%29+%3E+0.05&g0.tab=1",
+        "labels": {
+            "alertname": "HighErrorRate",
+            "prometheus": "observability/observability-prometheus",
+            "severity": "critical"
+        }
+    },
+    {
+        "annotations": {
+            "description": "This is an alert meant to ensure that the entire alerting pipeline is functional.\nThis alert is always firing, therefore it should always be firing in Alertmanager\nand always fire against a receiver. There are integrations with various notification\nmechanisms that send a notification when this alert is not firing. For example the\n\"DeadMansSnitch\" integration in PagerDuty.\n",
+            "runbook_url": "https://runbooks.prometheus-operator.dev/runbooks/general/watchdog",
+            "summary": "An alert that should always be firing to certify that Alertmanager is working properly."
+        },
+        "endsAt": "2026-08-24T13:13:56.662Z",
+        "fingerprint": "59b93646aa77e2c2",
+        "receivers": [
+            {
+                "name": "null"
+            }
+        ],
+        "startsAt": "2026-08-24T12:29:26.662Z",
+        "status": {
+            "inhibitedBy": [],
+            "mutedBy": [],
+            "silencedBy": [],
+            "state": "active"
+        },
+        "updatedAt": "2026-08-24T13:09:56.667Z",
+        "generatorURL": "http://observability-prometheus.observability:9090/graph?g0.expr=vector%281%29&g0.tab=1",
+        "labels": {
+            "alertname": "Watchdog",
+            "prometheus": "observability/observability-prometheus",
+            "severity": "none"
+        }
+    },
+    {
+        "annotations": {
+            "description": "KubeScheduler has disappeared from Prometheus target discovery.",
+            "runbook_url": "https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubeschedulerdown",
+            "summary": "Target disappeared from Prometheus target discovery."
+        },
+        "endsAt": "2026-08-24T13:14:44.861Z",
+        "fingerprint": "8a85fea02ff9178c",
+        "receivers": [
+            {
+                "name": "slack"
+            }
+        ],
+        "startsAt": "2026-08-24T12:30:14.861Z",
+        "status": {
+            "inhibitedBy": [],
+            "mutedBy": [],
+            "silencedBy": [],
+            "state": "active"
+        },
+        "updatedAt": "2026-08-24T13:10:44.864Z",
+        "generatorURL": "http://observability-prometheus.observability:9090/graph?g0.expr=absent%28up%7Bjob%3D%22kube-scheduler%22%7D%29&g0.tab=1",
+        "labels": {
+            "alertname": "KubeSchedulerDown",
+            "job": "kube-scheduler",
+            "prometheus": "observability/observability-prometheus",
+            "severity": "critical"
+        }
+    },
+    {
+        "annotations": {
+            "description": "The minimum notification failure rate to slack sent from any instance in the  cluster is 100%.",
+            "runbook_url": "https://runbooks.prometheus-operator.dev/runbooks/alertmanager/alertmanagerclusterfailedtosendalerts",
+            "summary": "All Alertmanager instances in a cluster failed to send notifications to a critical integration."
+        },
+        "endsAt": "2026-08-24T13:13:59.694Z",
+        "fingerprint": "9865151a28dbe822",
+        "receivers": [
+            {
+                "name": "slack"
+            }
+        ],
+        "startsAt": "2026-08-24T12:33:59.694Z",
+        "status": {
+            "inhibitedBy": [],
+            "mutedBy": [],
+            "silencedBy": [],
+            "state": "active"
+        },
+        "updatedAt": "2026-08-24T13:09:59.701Z",
+        "generatorURL": "http://observability-prometheus.observability:9090/graph?g0.expr=min+by+%28namespace%2C+service%2C+integration%29+%28rate%28alertmanager_notifications_failed_total%7Bcontainer%3D%22alertmanager%22%2Cintegration%3D~%22.%2A%22%2Cjob%3D%22observability-alertmanager%22%2Cnamespace%3D%22observability%22%7D%5B15m%5D%29+%2F+ignoring+%28reason%29+group_left+%28%29+rate%28alertmanager_notifications_total%7Bcontainer%3D%22alertmanager%22%2Cintegration%3D~%22.%2A%22%2Cjob%3D%22observability-alertmanager%22%2Cnamespace%3D%22observability%22%7D%5B15m%5D%29+%3E+0%29+%3E+0.01&g0.tab=1",
+        "labels": {
+            "alertname": "AlertmanagerClusterFailedToSendAlerts",
+            "integration": "slack",
+            "namespace": "observability",
+            "prometheus": "observability/observability-prometheus",
+            "service": "observability-alertmanager",
+            "severity": "critical"
+        }
+    },
+    {
+        "annotations": {
+            "description": "Alertmanager observability/alertmanager-observability-alertmanager-0 failed to send 100% of notifications to slack.",
+            "runbook_url": "https://runbooks.prometheus-operator.dev/runbooks/alertmanager/alertmanagerfailedtosendalerts",
+            "summary": "An Alertmanager instance failed to send notifications."
+        },
+        "endsAt": "2026-08-24T13:13:29.694Z",
+        "fingerprint": "9a972a4dbc90a05a",
+        "receivers": [
+            {
+                "name": "slack"
+            }
+        ],
+        "startsAt": "2026-08-24T12:45:29.694Z",
+        "status": {
+            "inhibitedBy": [],
+            "mutedBy": [],
+            "silencedBy": [],
+            "state": "active"
+        },
+        "updatedAt": "2026-08-24T13:09:29.700Z",
+        "generatorURL": "http://observability-prometheus.observability:9090/graph?g0.expr=%28rate%28alertmanager_notifications_failed_total%7Bcontainer%3D%22alertmanager%22%2Cjob%3D%22observability-alertmanager%22%2Cnamespace%3D%22observability%22%7D%5B15m%5D%29+%2F+ignoring+%28reason%29+group_left+%28%29+rate%28alertmanager_notifications_total%7Bcontainer%3D%22alertmanager%22%2Cjob%3D%22observability-alertmanager%22%2Cnamespace%3D%22observability%22%7D%5B15m%5D%29%29+%3E+0.01&g0.tab=1",
+        "labels": {
+            "alertname": "AlertmanagerFailedToSendAlerts",
+            "container": "alertmanager",
+            "endpoint": "http-web",
+            "instance": "10.0.3.74:9093",
+            "integration": "slack",
+            "job": "observability-alertmanager",
+            "namespace": "observability",
+            "pod": "alertmanager-observability-alertmanager-0",
+            "prometheus": "observability/observability-prometheus",
+            "reason": "clientError",
+            "service": "observability-alertmanager",
+            "severity": "warning"
+        }
+    },
+    {
+        "annotations": {
+            "description": "KubeControllerManager has disappeared from Prometheus target discovery.",
+            "runbook_url": "https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubecontrollermanagerdown",
+            "summary": "Target disappeared from Prometheus target discovery."
+        },
+        "endsAt": "2026-08-24T13:14:33.942Z",
+        "fingerprint": "e6a48ea7154d4cbb",
+        "receivers": [
+            {
+                "name": "slack"
+            }
+        ],
+        "startsAt": "2026-08-24T12:30:03.942Z",
+        "status": {
+            "inhibitedBy": [],
+            "mutedBy": [],
+            "silencedBy": [],
+            "state": "active"
+        },
+        "updatedAt": "2026-08-24T13:10:33.944Z",
+        "generatorURL": "http://observability-prometheus.observability:9090/graph?g0.expr=absent%28up%7Bjob%3D%22kube-controller-manager%22%7D%29&g0.tab=1",
+        "labels": {
+            "alertname": "KubeControllerManagerDown",
+            "job": "kube-controller-manager",
+            "prometheus": "observability/observability-prometheus",
+            "severity": "critical"
+        }
+    }
+]
+500 500 500 500 500 500 500 500 500 500 {
+  "annotations": {
+    "description": "More than 5% of backend requests have returned a 5xx status over the last 5 minutes.",
+    "runbook_url": "https://github.com/MaxTsyganov/Running_Devops_Project/blob/main/observability/runbooks/high-error-rate.md",
+    "summary": "Backend 5xx error rate above 5%"
+  },
+  "endsAt": "2026-08-24T13:13:55.384Z",
+  "fingerprint": "3e2fd94efff033a8",
+  "receivers": [
+    {
+      "name": "slack"
+    }
+  ],
+  "startsAt": "2026-08-24T13:09:55.384Z",
+  "status": {
+    "inhibitedBy": [],
+    "mutedBy": [],
+    "silencedBy": [],
+    "state": "active"
+  },
+  "updatedAt": "2026-08-24T13:09:55.387Z",
+  "generatorURL": "http://observability-prometheus.observability:9090/graph?g0.expr=sum%28rate%28http_requests_total%7Bjob%3D%22backend-service%22%2Cstatus%3D~%225..%22%7D%5B5m%5D%29%29+%2F+sum%28rate%28http_requests_total%7Bjob%3D%22backend-service%22%7D%5B5m%5D%29%29+%3E+0.05&g0.tab=1",
+  "labels": {
+    "alertname": "HighErrorRate",
+    "prometheus": "observability/observability-prometheus",
+    "severity": "critical"
+  }
+}
+===END OF CAPTURE===
+500 500 500 500 500 500 500 500 500 500 
+--- Drill loop finished ---
+Mon Aug 24 13:11:18 UTC 2026
+
+--- Resolution: drill traffic stopped at 13:11:18, alert cleared at 13:16:43 (5m rate() window fully rolled off) ---
+Prometheus ALERTS (empty result = not firing):
+{"status":"success","data":{"resultType":"vector","result":[]}}
+Alertmanager (no HighErrorRate entry = resolved and expired from the active list):
+HighErrorRate still present: False
