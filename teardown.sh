@@ -9,7 +9,7 @@ echo "  This deletes Kubernetes workloads, Jenkins, the EKS cluster, and every"
 echo "  Terraform-managed AWS resource (RDS, S3, SNS, ECR, IAM, networking)."
 echo -e "==================================================================${RESET}"
 
-step "[1/10] Deleting the app namespace..."
+step "[1/11] Deleting the app namespace..."
 # Assignment 3 deployed via ArgoCD (an Application with a resources-
 # finalizer, so deleting it cascades to everything it manages). Assignment 4
 # replaced that with Jenkins CD deploying straight via helm upgrade
@@ -26,12 +26,12 @@ kubectl delete namespace devops-app --ignore-not-found=true 2>/dev/null \
 # ArgoCD (if still installed), cert-manager, and Fluent Bit (the argocd/
 # cert-manager/amazon-cloudwatch namespaces) are left alone on purpose - none
 # of them own AWS resources directly (their IAM roles are deleted separately
-# in step [5/10], the CloudWatch log group by `terraform destroy` in step
-# [8/10]), so they disappear for free when `eksctl delete cluster` runs in
-# step [6/10]. Deleting them here would just make the script wait on
+# in step [6/11], the CloudWatch log group by `terraform destroy` in step
+# [9/11]), so they disappear for free when `eksctl delete cluster` runs in
+# step [7/11]. Deleting them here would just make the script wait on
 # components terminating for no benefit.
 
-step "[2/10] Waiting for the AWS Load Balancer to fully release..."
+step "[2/11] Waiting for the AWS Load Balancer to fully release..."
 # kubectl delete only removes the Service object immediately - the actual
 # AWS ELB/NLB and the network interfaces it planted in our subnets are
 # cleaned up asynchronously by a controller running INSIDE the cluster.
@@ -67,7 +67,7 @@ else
     info "Could not read the VPC ID from Terraform state - skipping this check."
 fi
 
-step "[3/10] Revoking the RDS rule that references the EKS cluster's security group..."
+step "[3/11] Revoking the RDS rule that references the EKS cluster's security group..."
 # setup.sh authorized RDS's security group to accept traffic from the EKS
 # cluster's security group. AWS won't delete a security group that's still
 # referenced elsewhere, so without this the cluster's own cleanup leaves it
@@ -87,7 +87,7 @@ else
     info "No RDS security group or no live cluster found - nothing to revoke."
 fi
 
-step "[4/10] Deleting the Jenkins PVC before the cluster disappears..."
+step "[4/11] Deleting the Jenkins PVC before the cluster disappears..."
 # Same reasoning as the load balancer wait above: `helm uninstall` (and even
 # `eksctl delete cluster` on its own) does NOT delete the PVC a StatefulSet
 # creates via volumeClaimTemplates - that's deliberate K8s behavior to
@@ -115,7 +115,32 @@ else
     info "No live cluster found - nothing to clean up here."
 fi
 
-step "[5/10] Deleting IRSA IAM service accounts (backend-sa, worker-sa, ci-build-sa, fluent-bit-sa, external-secrets-sa, cluster-autoscaler-sa)..."
+step "[5/11] Deleting the observability PVC before the cluster disappears..."
+# Same reasoning as the Jenkins PVC step above - Prometheus's own PVC
+# (observability/values.yaml: 5Gi, ebs-gp3) is exactly the same
+# StatefulSet-owned-volume situation, and left alone would orphan its own
+# EBS volume the same way.
+if eksctl get cluster --name devops-cluster --region us-east-1 >/dev/null 2>&1; then
+    helm uninstall observability -n observability --wait --timeout=120s 2>/dev/null \
+        || info "No observability Helm release found, continuing."
+    kubectl delete pvc --all -n observability --timeout=120s 2>/dev/null \
+        || info "No observability PVC found, continuing."
+    info "Confirming the EBS volume actually finished deleting..."
+    WAITED=0
+    while true; do
+        VOL_COUNT=$(aws ec2 describe-volumes --region us-east-1 \
+            --filters "Name=tag:kubernetes.io/created-for/pvc/name,Values=*" "Name=status,Values=available,in-use" \
+            --query "length(Volumes[?contains(Tags[?Key=='kubernetes.io/created-for/pvc/namespace'].Value | [0], 'observability')])" \
+            --output text 2>/dev/null || echo 0)
+        [ "$VOL_COUNT" = "0" ] && { success "Observability EBS volume cleaned up."; break; }
+        [ "$WAITED" -ge 120 ] && { echo -e "${YELLOW}    ⚠ Still waiting after 2 minutes - proceeding anyway. Check 'aws ec2 describe-volumes' manually afterward.${RESET}"; break; }
+        sleep 10; WAITED=$((WAITED + 10))
+    done
+else
+    info "No live cluster found - nothing to clean up here."
+fi
+
+step "[6/11] Deleting IRSA IAM service accounts (backend-sa, worker-sa, ci-build-sa, fluent-bit-sa, external-secrets-sa, cluster-autoscaler-sa)..."
 # Same lesson as the security-group rule above: these were created by
 # `eksctl create iamserviceaccount` as their own CloudFormation stacks,
 # separate from the main cluster stack. Deleting them explicitly first
@@ -160,7 +185,7 @@ else
     info "No live cluster found - nothing to delete here."
 fi
 
-step "[6/10] Deleting EKS cluster (10-15 minutes)..."
+step "[7/11] Deleting EKS cluster (10-15 minutes)..."
 # eksctl's own progress output is a wall of CloudFormation stack-wait lines -
 # logged to a temp file instead of the terminal, and only shown if something
 # actually goes wrong, so a normal run just prints one clean result line.
@@ -177,7 +202,7 @@ else
     info "Cluster already gone, continuing."
 fi
 
-step "[7/10] Cleaning up orphaned EKS networking objects (VPC-CNI ENIs, cluster SG)..."
+step "[8/11] Cleaning up orphaned EKS networking objects (VPC-CNI ENIs, cluster SG)..."
 # eksctl's own cluster deletion doesn't wait for or clean up two things it
 # doesn't own the lifecycle of - confirmed live to NOT self-resolve, not
 # just slow:
@@ -242,7 +267,7 @@ else
     info "Could not read the VPC ID - skipping this check."
 fi
 
-step "[8/10] Destroying Terraform infrastructure (RDS, S3, SNS, IAM, VPC)..."
+step "[9/11] Destroying Terraform infrastructure (RDS, S3, SNS, IAM, VPC)..."
 cd terraform
 # Never assume the local .terraform/ cache is already correctly pointed at
 # the real S3 backend - init is cheap and idempotent when it's already
@@ -277,11 +302,11 @@ cd ..
 # above already removed them along with every image pushed into them - no
 # separate `aws ecr delete-repository` step needed anymore.
 
-step "[9/10] Removing locally-generated files..."
+step "[10/11] Removing locally-generated files..."
 rm -f terraform/terraform.tfvars
 success "Removed terraform/terraform.tfvars (setup.sh recreates it, asking again, on the next run)."
 
-step "[10/10] Stopping any leftover local 'kubectl port-forward svc/jenkins' processes..."
+step "[11/11] Stopping any leftover local 'kubectl port-forward svc/jenkins' processes..."
 # Local hygiene only, not an AWS resource - pkill's own exit code is ignored,
 # since "nothing matched" and "not supported on this platform" both look the
 # same to this script and neither should fail the teardown.

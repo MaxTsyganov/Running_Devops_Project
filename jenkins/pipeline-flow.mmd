@@ -1,7 +1,8 @@
-%% Jenkins CI/CD architecture - Assignment 4 - Pipeline Flow View
+%% Jenkins CI/CD + Observability architecture - Assignments 4-5 - Pipeline Flow View
 %% Logical order of a single run: commit -> CI -> image build -> registry ->
-%% CD -> rollout -> smoke test -> rollback. For where each of these actually
-%% runs (clusters/namespaces/Pods/network boundaries), see architecture.mmd.
+%% CD -> rollout -> smoke test -> Monitoring Gate -> rollback. For where each
+%% of these actually runs (clusters/namespaces/Pods/network boundaries), see
+%% architecture.mmd.
 
 sequenceDiagram
     actor Dev as Developer
@@ -13,6 +14,7 @@ sequenceDiagram
     participant ECR as ECR registry
     participant CD as CD agent Pod
     participant K8s as Kubernetes (devops-app)
+    participant Prom as Prometheus (Assignment 5)
     participant Slack as Slack (bonus)
     actor User as End user
 
@@ -35,6 +37,7 @@ sequenceDiagram
         note over CI: CI Pipeline (ci-Jenkinsfile)
         CI->>CI: Checkout (branch, commit SHA, build #)
         CI->>CI: Validation (Dockerfiles, chart files present)
+        CI->>CI: Observability Validation (Assignment 5: dashboard JSON, promtool check rules, kubeconform schema)
         CI->>CI: Static Analysis / Lint
         CI->>CI: Tests (unit tests, results published to Jenkins)
         alt tests fail
@@ -79,7 +82,16 @@ sequenceDiagram
                 CD--xCtrl: build marked failed
                 CD->>K8s: automated rollback: helm rollback devops-app (only if a revision was already live)
             else smoke test passes
-                CD->>Ctrl: build succeeded
+                note over CD,Prom: Monitoring Gate (Assignment 5)
+                CD->>Prom: poll up==1 for all 3 services (bounded retry)
+                CD->>K8s: generate real traffic - GET /api/items via frontend-service
+                CD->>Prom: query backend error rate over that traffic window (bounded retry)
+                alt targets never came up, or error rate exceeds 5%
+                    CD--xCtrl: build marked failed
+                    CD->>K8s: automated rollback: helm rollback devops-app (only if a revision was already live)
+                else release is healthy
+                    CD->>Ctrl: build succeeded
+                end
             end
         end
         CD->>Slack: notifySlack() - bonus, success or failure either way

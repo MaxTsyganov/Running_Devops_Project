@@ -1,15 +1,21 @@
-# DevOps on AWS - Jenkins CI/CD on Kubernetes (Assignment 4)
+# DevOps on AWS - Jenkins CI/CD & Observability on Kubernetes (Assignments 4-5)
 
 This project is a self-hosted **Jenkins** running inside **Kubernetes (EKS)**, building and
 deploying a 3-tier app (nginx frontend, Flask backend, a background worker) through two separate
 pipelines: a real Git-push-triggered **CI** pipeline that builds, tests, scans, and pushes
 immutable-tagged Docker images, and a separate **CD** pipeline that deploys the exact image CI
-built via `helm upgrade --install`, verifies the rollout, and smoke-tests the result.
+built via `helm upgrade --install`, verifies the rollout, and smoke-tests the result. On top of
+that, a **Prometheus + Grafana + Alertmanager** stack (`observability/`) instruments the app and
+Jenkins itself, alerts on real failure conditions via Slack, and gates every CD deploy on the
+release's actual live health, not just `Running` - see [§13](#13-observability-architecture-and-install)
+onward.
 
 The app itself, its Helm chart, and the AWS infrastructure it runs on (RDS, S3, SNS, the VPC) come
 from earlier work in this rolling project - see [§12](#12-supporting-infrastructure) for how that's
-built, deployed, and torn down, and [History](#13-history) for how the project got here. This
-README is about Assignment 4: Jenkins CI/CD.
+built, deployed, and torn down, and [History](#19-history) for how the project got here. This
+README covers Assignment 4 (Jenkins CI/CD, [§1](#1-architecture-and-environment-choice)-
+[§12](#12-supporting-infrastructure)) and Assignment 5 (Observability,
+[§13](#13-observability-architecture-and-install)-[§18](#18-failure-exercises-and-recovery)).
 
 Built solo, not in a pair.
 
@@ -29,7 +35,13 @@ Built solo, not in a pair.
 10. [Cleanup](#10-cleanup)
 11. [Trade-offs](#11-trade-offs)
 12. [Supporting infrastructure](#12-supporting-infrastructure)
-13. [History](#13-history)
+13. [Observability architecture and install](#13-observability-architecture-and-install)
+14. [Application instrumentation](#14-application-instrumentation)
+15. [Alerts, SLOs, and dashboards](#15-alerts-slos-and-dashboards)
+16. [CI/CD integration](#16-cicd-integration)
+17. [Observability security](#17-observability-security)
+18. [Failure exercises and recovery](#18-failure-exercises-and-recovery)
+19. [History](#19-history)
 
 ---
 
@@ -83,6 +95,11 @@ as narrowly as `cd-deploy-sa` is now.
 | Cosign | `v3.1.3` (static binary, fetched at runtime by the CI agent, sha256-verified against a checksum pinned alongside the version) | `jenkins/ci/Jenkinsfile` |
 | crane (`go-containerregistry`) | `v0.21.9` (same fetch-and-verify pattern as Cosign) | `jenkins/ci/Jenkinsfile` |
 | Cluster Autoscaler Helm chart | `9.59.0` (app `1.35.0`, matches this cluster's Kubernetes 1.34) | `jenkins/scripts/install-jenkins.sh` |
+| kube-prometheus-stack Helm chart | `88.5.4` (prometheus-community) | `observability/scripts/install-observability.sh` |
+| promtool / Prometheus | `v3.14.0` (static binary, checksum-verified) | `jenkins/ci/Jenkinsfile` |
+| kubeconform | `v0.8.0` (same fetch-and-verify pattern) | `jenkins/ci/Jenkinsfile` |
+| Helm (fetched, CI-only) | `v3.16.4` (matches `dtzar/helm-kubectl:3.16`, the `deploy` container's own Helm line) | `jenkins/ci/Jenkinsfile` |
+| nginx-prometheus-exporter | `1.5.3` (digest-pinned) | `helm/devops-app/values.yaml` |
 
 Also requires: an EKS cluster and `devops-app` namespace already brought up via this repo's own
 `setup.sh` (Jenkins is layered on top of that infra - see [§12](#12-supporting-infrastructure) - it
@@ -499,10 +516,13 @@ copies from and deletes instead, never echoed to the console.
 ## 10. Cleanup
 
 `jenkins/scripts/uninstall-jenkins.sh` removes Jenkins, its PVC, RBAC, the webhook relay, and
-`ci-build-sa` - leaving `devops-app` and the cluster itself running. For tearing down everything
-(cluster, RDS, Jenkins, all of it), `teardown.sh` already includes the Jenkins-specific steps this
-assignment added (deleting the Jenkins PVC/EBS volume and `ci-build-sa`'s IRSA stack before the
-cluster disappears - see `teardown.sh`'s own step comments for why order matters here, and
+`ci-build-sa` - leaving `devops-app` and the cluster itself running.
+`observability/scripts/uninstall-observability.sh` does the same for the observability stack -
+removes the Helm release, its PVC, and its NetworkPolicies, leaving `jenkins`/`devops-app`
+untouched. For tearing down everything (cluster, RDS, Jenkins, observability, all of it),
+`teardown.sh` already includes the namespace-specific steps both assignments added (deleting the
+Jenkins and Prometheus PVCs/EBS volumes and `ci-build-sa`'s IRSA stack before the cluster
+disappears - see `teardown.sh`'s own step comments for why order matters here, and
 [§12](#12-supporting-infrastructure) for the full teardown flow).
 
 **JCasC-first recovery (bonus)**: this project's whole premise is that Jenkins' *configuration*
@@ -540,6 +560,9 @@ Evidence, including a real capacity problem the drill surfaced along the way, in
 | `generic-webhook-trigger` for `ci-application-pr`, not Multibranch Pipeline or GHPRB | Multibranch would mean a second, structurally different job type (and PR discovery/scanning machinery) alongside the two REST-API-created Pipeline jobs; GHPRB needs a bot GitHub account. A JSON-field-extraction trigger keeps the third job created exactly the same way as the first two | Live-verified, but only after a real bug: the first version's header-based event-type filter never actually matched GitHub's real header name, so the webhook returned 200 while silently never queuing a build - root-caused and simplified (see `evidence/06-bonus-features/13a-pr-quality-gate-trigger-bug-and-fix.txt`), not something a config.xml export alone would have caught |
 | Notifications via Slack Incoming Webhook, not the existing SNS topic | Zero AWS/Terraform changes - `cd-deploy-sa` stays a plain, non-IRSA ServiceAccount exactly as designed; both agent containers can already POST JSON without installing anything new | A second external credential to manage (`slack-webhook-url`) instead of reusing infrastructure that already existed |
 | Shared Library lives in this same repo (`jenkins/shared-library/`), not a dedicated library repo | One less repository to keep in sync, one less place a version mismatch could hide | `libraryPath` (pointing the retriever at a subdirectory instead of a repo root) is a less common configuration than the plugin's default - confirmed live against `pipeline-groovy-lib` 798.v5cc688825312, no fallback needed |
+| Frontend's metrics endpoint on a second, `ClusterIP`-only Service instead of a third port on `frontend-service` | `frontend-service` is `type: LoadBalancer` - every port listed there becomes its own public ELB listener, which would put the metrics port on the internet right alongside `:80`/`:443` | One more Service object and one more `ServiceMonitor` to keep in sync with the frontend Pod's own label selector, instead of a single Service covering both concerns |
+| Grafana with no persistence, everything from Git via the sidecar-ConfigMap mechanism | Every dashboard/datasource is already defined as code - a PVC would just be a second source of truth that can drift from it | A Pod restart loses anything a person changed by hand directly in the Grafana UI (starring a dashboard, an ad-hoc panel edit) - acceptable here since nothing is meant to be configured by hand in the first place |
+| `wget`/`grep`/`awk` for the CD Monitoring Gate's Prometheus queries, not `jq`/`python3` | The `deploy` container (`dtzar/helm-kubectl`) has neither installed, and adding one more tool just for two read-only queries didn't seem worth a new dependency on a container this project otherwise keeps minimal | More fragile JSON parsing than a real JSON library - mitigated by testing the exact response shape live rather than assuming it, and by an explicit "no data" check before ever trusting an extracted value (see [§16](#16-cicd-integration)) |
 
 ---
 
@@ -752,6 +775,9 @@ worker/                    Background poller (RDS, SNS)
 jenkins/                   Jenkins install/config scripts, CI+CD+PR Jenkinsfiles, the Shared
                            Library (shared-library/), JCasC values, RBAC, job configs,
                            architecture diagrams
+observability/             Prometheus/Grafana/Alertmanager Helm values, alert + SLO recording
+                           rules, dashboards, runbooks, NetworkPolicies, install/verify/uninstall
+                           scripts (§13-§18)
 evidence/                  Captured proof for every item on the assignment's evidence checklist:
                            Jenkins-on-Kubernetes state, CI pipeline (including a deliberately-failed
                            run that never triggers CD), CD pipeline (rollout/traceability/smoke
@@ -762,7 +788,9 @@ evidence/                  Captured proof for every item on the assignment's evi
                            JCasC-first recovery. (07-review-remediation/) real evidence for an
                            external review's remediation: full-SHA tags, the scan-before-push
                            reorder (plus a real digest-mismatch bug it surfaced), Cluster
-                           Autoscaler, the full plugin lock, and a real PR/webhook trigger
+                           Autoscaler, the full plugin lock, and a real PR/webhook trigger.
+                           (08-observability/) the four required failure exercises plus the
+                           PVC/Pod recovery drill, all live-captured
 ```
 
 `.github/workflows/ci.yml` runs `terraform fmt`/`validate`, `helm lint` plus a full `helm template`
@@ -774,7 +802,332 @@ infrastructure is a different risk profile than read-only checks.
 
 ---
 
-## 13. History
+## 13. Observability architecture and install
+
+Assignment 5 layers Prometheus + Grafana + Alertmanager on top of the existing `jenkins` and
+`devops-app` namespaces, additively - nothing here rebuilds the app, its images, or the CI/CD
+pipelines from Assignments 3/4. Everything lives under `observability/`, installed the same way
+Jenkins is: a script that's safe to re-run, not a manual `kubectl apply` sequence.
+
+```mermaid
+flowchart TB
+    Slack(["💬 Slack"])
+
+    subgraph EKS["EKS: devops-cluster"]
+        subgraph NsObs["namespace: observability"]
+            Prom["📊 Prometheus<br/>5Gi PVC, ebs-gp3, 7d retention"]
+            AM["🔔 Alertmanager"]
+            Graf["📈 Grafana<br/>no PVC - dashboards from Git"]
+            KSM["kube-state-metrics"]
+            NE["node-exporter<br/>DaemonSet, hostNetwork"]
+        end
+        subgraph NsApp["namespace: devops-app"]
+            FE["frontend + nginx-exporter sidecar<br/>:9113"]
+            BE["backend<br/>:5000/metrics"]
+            WK["worker<br/>:9100/metrics"]
+        end
+        subgraph NsJenkins["namespace: jenkins"]
+            JK["Jenkins controller<br/>:8080/prometheus"]
+            CDAgent["cd-agent<br/>Monitoring Gate"]
+        end
+        KubeAPI[("Kubernetes API<br/>+ kubelet/cAdvisor/kube-proxy")]
+    end
+
+    Prom -- scrapes --> FE
+    Prom -- scrapes --> BE
+    Prom -- scrapes --> WK
+    Prom -- scrapes --> JK
+    Prom -- scrapes --> KSM
+    Prom -- scrapes --> NE
+    Prom -- scrapes --> KubeAPI
+    Prom -- alerts --> AM
+    AM -- notifies --> Slack
+    Graf -- queries --> Prom
+    Graf -- queries --> AM
+    CDAgent -- queries --> Prom
+
+    classDef obs fill:#e6522c,stroke:#a83c1f,color:#ffffff,stroke-width:1.5px
+    classDef k8s fill:#326CE5,stroke:#16305e,color:#ffffff,stroke-width:1.5px
+    classDef external fill:#e8e8e8,stroke:#666666,color:#232F3E,stroke-width:1.5px
+
+    class Prom,AM,Graf,KSM,NE obs
+    class FE,BE,WK,JK,CDAgent,KubeAPI k8s
+    class Slack external
+```
+
+**Why `kube-prometheus-stack`, not a hand-rolled stack.** One Helm release
+(`prometheus-community/kube-prometheus-stack`, pinned `88.5.4`) brings Prometheus Operator,
+Prometheus, Alertmanager, Grafana, kube-state-metrics, and node-exporter together with a proven,
+consistent CRD-based configuration surface (`ServiceMonitor`/`PodMonitor`/`PrometheusRule`) -
+building each of those from scratch would mean re-solving problems (service discovery, rule
+reloading, dashboard provisioning) this chart already solves correctly.
+
+**The one selector gotcha, fixed before it could bite.** The chart's own defaults for
+`serviceMonitorSelectorNilUsesHelmValues`/`podMonitorSelectorNilUsesHelmValues`/
+`ruleSelectorNilUsesHelmValues` are all `true` - "only discover ServiceMonitors/PodMonitors/
+PrometheusRules carrying this Helm release's own label." Since every ServiceMonitor and
+PrometheusRule this project defines lives in a *different* release (`helm/devops-app`'s chart,
+`jenkins/servicemonitor.yaml`, `observability/rules/*.yaml`, none label-matched to the
+`observability` release itself), that default would have silently discovered nothing outside the
+chart's own bundled rules. `observability/values.yaml` sets all three to `false` up front - the
+exact same class of gotcha this project already hit once for real with Jenkins' own Kubernetes
+cloud config (see [§4](#4-jenkins-configuration-as-code-jcasc)), fixed here before it could
+reproduce rather than after.
+
+**Install / verify / uninstall**, same pattern as the Jenkins scripts:
+
+| Script | What it does |
+|---|---|
+| `observability/scripts/install-observability.sh` | Namespace, Grafana admin credentials (generated, never committed), the Slack webhook Secret (real value or a placeholder - Alertmanager's Pod needs the Secret to exist either way), the Helm release, alert/recording rules, dashboards (loaded as plain ConfigMaps, never a manual Grafana import), NetworkPolicies. |
+| `observability/scripts/verify-observability.sh` | Read-only health check - Pods, PVC, targets, alert rule groups. |
+| `observability/scripts/uninstall-observability.sh` | Removes the release, PVC, NetworkPolicies - leaves `jenkins`/`devops-app` untouched. |
+
+Install this **after** `jenkins/scripts/install-jenkins.sh` and **before** the next
+`helm upgrade` of `helm/devops-app` or a fresh `jenkins/scripts/install-jenkins.sh` run: both of
+those charts now declare `ServiceMonitor` resources, and `helm upgrade`/`kubectl apply` on a
+`ServiceMonitor` before this chart's CRDs exist fails outright (`no matches for kind
+ServiceMonitor`). `install-jenkins.sh` accounts for this itself - its ServiceMonitor step checks
+for the CRD first and skips (not fails) if it isn't there yet.
+
+Access is `kubectl port-forward` only, same posture as Jenkins - see [§17](#17-observability-security).
+
+---
+
+## 14. Application instrumentation
+
+Every service gets a `/metrics` (or equivalent) endpoint and a matching `ServiceMonitor`
+(`helm/devops-app/templates/servicemonitors.yaml`, `jenkins/servicemonitor.yaml`) - nothing here is
+manually registered in Prometheus.
+
+**Backend** (`backend/app.py`, `prometheus_client`) - manual `before_request`/`after_request`
+hooks, not `prometheus_flask_exporter`, for full control over label cardinality:
+
+* `http_requests_total{method,path,status}` (Counter) - `path` is the Flask *route template*
+  (`request.url_rule.rule`, e.g. `/api/items`), never a raw URL or an ID - unbounded label
+  cardinality from real traffic is a real Prometheus failure mode, not a hypothetical one.
+* `http_request_duration_seconds{method,path}` (Histogram).
+* `app_info{version,git_sha,release}` (Gauge, always `1`) - `RELEASE_VERSION` is the exact full
+  commit SHA `cd/Jenkinsfile`'s `IMAGE_TAG` deployed, passed through as a new
+  `config.releaseVersion` Helm value into the ConfigMap (the same env var backend/worker both
+  read) - so `app_info` reports the literal deployed commit, not a guess.
+* `items_created_total` (Counter) - the required business metric, incremented in `POST /api/items`.
+* `/metrics`, `/healthz`, and `/api/health` are excluded from `http_requests_total` - health-check
+  noise doesn't belong in a request-rate/error-rate metric.
+* `POST /api/debug/fail` - unconditionally `abort(500)`. The one deliberate business-logic addition
+  in this entire assignment; every other observability feature is infrastructure/config. Exists
+  purely to make the `HighErrorRate` failure exercise real (see [§18](#18-failure-exercises-and-recovery)) -
+  scaling the backend to 0 was the obvious-sounding alternative, but that kills the very process
+  that owns the counter the alert reads, so nothing would ever record the failures.
+
+**Worker** (`worker/worker.py`) - `prometheus_client.start_http_server(9100)`, its first-ever open
+port: `worker_items_processed_total`, `worker_poll_duration_seconds`, `worker_poll_errors_total`,
+`worker_last_poll_timestamp_seconds`, `app_info`.
+
+**Frontend** - nginx's `stub_status` on a `127.0.0.1:8081`-only server block
+(`frontend/nginx.k8s.conf`), scraped by an `nginx-prometheus-exporter` sidecar
+(`nginx/nginx-prometheus-exporter:1.5.3`, digest-pinned same as every third-party image in this
+project) that re-exposes it in Prometheus format on `:9113`. That sidecar's own metrics Service is
+deliberately **not** a port on `frontend-service` - `frontend-service` is `type: LoadBalancer`, and
+every port listed on a `LoadBalancer` Service becomes its own public ELB listener, which would put
+`:9113` on the internet right alongside `:80`/`:443`. `frontend-metrics-service` is a second,
+`ClusterIP`-only Service instead, selecting the same Pods.
+
+`stub_status` only reports connection-level stats (active/accepted/handled connections), never
+HTTP status codes - it structurally cannot see a 5xx response. `HighErrorRate` is deliberately
+backed by the *backend's* own `http_requests_total{status}`, not anything nginx-side, for exactly
+that reason. A related, accepted gap: if nginx can't reach the backend at all (a full outage, not
+an app-level error), the backend's own counter never sees those requests either, since they never
+arrive - `up{job="backend-service"}==0` (`PrometheusTargetDown`) is the actual safety net for that
+specific failure mode, not a coincidence.
+
+---
+
+## 15. Alerts, SLOs, and dashboards
+
+Six alerts (`observability/rules/*.yaml`) - two application, two Kubernetes, one Jenkins, one
+monitoring self-check:
+
+| Alert | Condition | `for` | Severity |
+|---|---|---|---|
+| `HighErrorRate` | Backend 5xx rate > 5% (`rate(http_requests_total{status=~"5.."}[5m])`) | 2m | critical |
+| `HighLatencyP95` | Backend p95 request duration > 1s | 5m | warning |
+| `ReplicasMismatch` | A `devops-app` Deployment's available replicas != desired | 5m | warning |
+| `NodeNotReady` | A node's `Ready` condition is false/unknown | 5m | critical |
+| `JenkinsQueueStuck` | Jenkins' build queue (`jenkins_queue_size_value`) non-empty | 5m | warning |
+| `PrometheusTargetDown` | Any scrape target reports `up == 0` | 5m | critical |
+
+Every alert carries a `runbook_url` annotation pointing at its own file in
+`observability/runbooks/` - real remediation steps, not a placeholder link. `PrometheusTargetDown`
+is the stack's own self-check: it catches a target going dark (Pod crashed, a NetworkPolicy
+regression, a ServiceMonitor pointing at the wrong port) regardless of which other alert would
+otherwise have depended on that target's own metrics.
+
+**SLO recording rules** (`observability/rules/slo-recording-rules.yaml`) back the SLI/SLO numbers
+without re-evaluating the same expensive `rate()`/`histogram_quantile()` expressions in every
+dashboard panel that needs them: `job:http_availability:ratio_rate5m`,
+`job:http_request_duration_seconds:p95_rate5m`, and the `p50` equivalent. The availability rule
+needed one real fix: `sum(rate(...{status!~"5.."}[5m]))` alone returns an **empty vector**, not a
+literal `0`, whenever the label filter matches zero series - which is exactly what happens during
+a total outage (every request is a 5xx, so the *non*-5xx filter matches nothing). Wrapped as
+`(sum(rate(...)) or vector(0)) / sum(rate(...))` instead, so the rule keeps recording a real `0`
+through the exact window an outage most needs it to, rather than going silent. The
+[Monitoring Gate](#16-cicd-integration)'s own error-rate query hit the identical trap and got the
+identical fix.
+
+**Alertmanager routing.** The chart's own default root route sends everything to a `null`
+receiver - a deliberate upstream choice so a fresh install never pages anyone before it's
+configured. `observability/values.yaml` explicitly re-routes the root route to a `slack` receiver;
+without this, every alert above would fire correctly in Prometheus and vanish at Alertmanager with
+no error anywhere. `Watchdog` (kube-prometheus's own always-firing pipeline self-check) stays
+routed to `null` deliberately - it's meant to be silenced, not delivered.
+
+**Three Grafana dashboards** (`observability/dashboards/*.json`), loaded purely via the chart's
+sidecar-ConfigMap mechanism (`grafana_dashboard: "1"` label) - reinstalling the release reproduces
+every dashboard from these files alone, never a manual import:
+
+* **Application Overview** - request rate by status, error rate, p50/p95 latency, items-created
+  rate, worker throughput/poll-errors, frontend connection count. `$version` (backed by
+  `label_values(app_info, git_sha)`) and `$pod` template variables, actually wired into the
+  relevant panels' PromQL (`http_requests_total{git_sha=~"$version"}`), not just present as unused
+  variables next to metrics that happen to carry that label.
+* **Kubernetes Cluster** - node status/CPU/memory, deployment replica health, pod restarts, PVC
+  usage. `$namespace` variable.
+* **Jenkins Delivery** - build queue size, executor queue length by agent label, controller JVM
+  heap/GC/CPU, `devops-app` deployment replica health.
+
+---
+
+## 16. CI/CD integration
+
+**CI** (`jenkins/ci/Jenkinsfile`, new "Observability Validation" stage, `ci-application` only - not
+`pr-Jenkinsfile`, since a PR's own quality gate has no reason to gate on `observability/` or the
+new ServiceMonitor template before merge): dashboard JSON syntax, `promtool check rules` against
+every `PrometheusRule` file, and `kubeconform` schema validation against the rendered
+ServiceMonitor template, `jenkins/servicemonitor.yaml`, every rule file, and the NetworkPolicies.
+`promtool` needs a pre-processing step first - its native rule-file schema is a bare
+`{groups: [...]}`, while a `PrometheusRule` CRD wraps that same content under
+`apiVersion`/`kind`/`metadata`/`spec.groups`, so a short inline Python script (`pyyaml`) extracts
+exactly `spec.groups` before handing the file to `promtool`. `kubeconform`'s schema catalog for
+third-party CRDs (prometheus-operator's included) comes from the community
+`datreeio/CRDs-catalog` - real structural schema validation, not just "is this valid YAML," so a
+wrong field name or bad nesting fails here instead of surfacing as a confusing error at
+`kubectl apply` time. `promtool`, `kubeconform`, and `helm` (needed only to render the Helm-templated
+ServiceMonitor before schema-checking it) are all fetched the same way Cosign/crane already are in
+this pipeline - a pinned version, checksum-verified against that release's own published checksums
+file, via `urllib.request` rather than `curl` (the `python` agent container has neither).
+
+**CD** (`jenkins/cd/Jenkinsfile`, new "Monitoring Gate" stage, right after Smoke Test): confirms
+the release is actually *healthy*, not just `Running`. A failure here reaches the exact same
+`post{failure{}}` rollback logic as every earlier stage - `HELM_DEPLOY_ATTEMPTED` is already `true`
+by this point, so the rollback mechanism itself needed zero changes.
+
+1. A bounded retry (same style as Smoke Test's own loop) polls Prometheus until all three app
+   services report `up == 1` - not an immediate query, which could race the freshly-rolled-out
+   Pods' first scrape (`scrapeInterval: 30s`) and misreport a healthy deploy as down.
+2. Real traffic: Smoke Test above exits on its *first* successful request, and even that one hits
+   `/` - the static frontend root nginx serves directly, never reaching the backend at all. An
+   error-rate query with ~0 backend samples isn't a meaningful signal (a flatline reads as "0%
+   errors" whether the release is healthy or just idle), so this stage generates its own ~40-second
+   burst of requests against `GET /api/items` specifically - proxied through to the backend, long
+   enough to span at least one real scrape interval.
+3. The error-rate query itself, wrapped in the same `vector(0)` fix as the SLO recording rule
+   above, plus its own bounded retry: `increase()` needs at least two scraped samples within its
+   window to compute anything, and a brand-new Pod's `http_requests_total` series doesn't exist at
+   all until the first request with that exact label combination lands (`prometheus_client` only
+   creates a labeled Counter series on first use, not at process startup) - so a query fired the
+   instant the traffic loop ends can still race ahead of the second scrape that would give it real
+   data. Caught live on a real CD run, not assumed.
+
+Both queries go over `wget --post-data`, not a GET query string - PromQL is full of characters
+(spaces, `{`, `"`, `|`, `~`) that would need careful percent-encoding in a URL, and the `deploy`
+container has neither `jq` nor `python3` to parse the JSON response with, so the result is read
+back with plain `grep`/`awk` instead. `jenkins/networkpolicies.yaml`'s `jenkins-agent-policy` egress
+needed one addition (port `9090` on the same Service-CIDR `ipBlock` rule the existing Smoke Test
+already uses) for `cd-agent` to reach Prometheus at all.
+
+---
+
+## 17. Observability security
+
+**Exposure**: Prometheus, Grafana, and Alertmanager are `ClusterIP` only - `kubectl port-forward`
+access, identical posture to Jenkins itself (see [§9](#9-security)). No new public LoadBalancer,
+no new Ingress.
+
+**Credentials**: Grafana's admin password is generated at install time
+(`openssl rand -hex 20`, same pattern as every other credential in this project) into a Secret,
+never committed. The Alertmanager Slack webhook follows the same real-value-or-placeholder pattern
+already used for Jenkins' own Slack credential (see [§8](#8-credentials-and-secrets)) - except it
+can't simply be *skipped* when unset the way Jenkins' can, since `alertmanager.alertmanagerSpec.secrets`
+unconditionally mounts it and a missing Secret would crash the Pod outright; unset, it installs a
+placeholder value instead, so alerts still fire correctly in Alertmanager, just don't reach Slack
+until a real webhook URL is supplied.
+
+**RBAC**: Prometheus needs cluster-wide read on pods/services/endpoints for service discovery -
+inherent to the Prometheus Operator model, not a shortcut, and nowhere near `cluster-admin`.
+
+**NetworkPolicies** (`observability/networkpolicies.yaml`): default-deny baseline plus scoped
+allows, same structure as `jenkins/networkpolicies.yaml`. Getting this right took five real,
+live-caught rounds, not one - each one found by watching Prometheus's own `/targets` go from
+all-up to specific failures after every policy version, the same "confirmed live, not assumed"
+bar this project holds every other NetworkPolicy to:
+
+* Grafana's and the operator's *ingress* rules were missing entirely - both policies originally
+  declared only `Egress` in `policyTypes`, which left ingress fully denied by the namespace's own
+  default-deny baseline (no `Ingress` in `policyTypes` doesn't mean "allow ingress," it means "this
+  policy has nothing to say about ingress," and the default-deny already said "none").
+* Alertmanager's own `/metrics` uses a *second* port (`8080`, alongside the `9093` alerting API)
+  that the original ingress rule didn't cover.
+* Prometheus's own **egress** to Grafana and the operator was missing symmetrically - a
+  NetworkPolicy ingress rule and the matching egress rule are independent; having only one side
+  denies the traffic just as completely as having neither.
+* The chart's own `apiserver` scrape job resolves straight to the API server's real control-plane
+  ENI IPs (Prometheus's "endpoints" service-discovery role bypasses the `kubernetes.default.svc`
+  ClusterIP for the actual scrape connection) - outside the Service-CIDR `ipBlock` rule that covers
+  every other in-cluster API call, but inside this cluster's real private-subnet CIDRs, the same
+  range already used for node-exporter/kubelet.
+
+Two honest limitations, both the same class already documented for Jenkins: node-exporter and
+kubelet/cAdvisor are reached at the *node's* own IP (hostNetwork), which plain NetworkPolicy does
+not meaningfully constrain on this CNI - the egress rules are still scoped as tightly as possible
+(this cluster's real subnet CIDRs, not `0.0.0.0/0`), but are a statement of intent, not a real
+enforcement boundary. And prometheus-operator's admission webhooks are called *into* its Pod by the
+EKS control plane - a source no `podSelector`/`namespaceSelector` can ever match - with no ingress
+rule written for it; confirmed live this is safe, since the chart's own `failurePolicy: Ignore`
+means Kubernetes skips the webhook and proceeds rather than rejecting the request if that traffic
+were ever blocked, and CI's own `promtool`/`kubeconform` validation is the real gate for those
+objects' shape anyway.
+
+---
+
+## 18. Failure exercises and recovery
+
+All four required failure exercises, plus the PVC/Pod recovery drill, run live against the real
+cluster - not described, not simulated. Full raw evidence (Prometheus/Alertmanager API output,
+`kubectl` state, console logs) in `evidence/08-observability/`.
+
+| Exercise | Mechanism | Result |
+|---|---|---|
+| `HighErrorRate` | Repeated `POST /api/debug/fail` against the real public LoadBalancer | pending → firing → routed to Slack with its runbook link → resolved once traffic stopped |
+| `ReplicasMismatch` | `config.dbHost` pointed at an unreachable host, backend rolled | Pod genuinely crashed at Flask startup (not just failed readiness - `init_db()` connects synchronously before serving); pending → firing → reverted → resolved |
+| `JenkinsQueueStuck` | Throwaway branch/job requesting unsatisfiable CPU | pending → firing (`kubectl describe`: `Insufficient cpu`, Cluster Autoscaler correctly declining to scale up) → cleaned up → resolved |
+| Failed release → rollback | `cd-application` triggered with a nonexistent image tag | `helm upgrade --wait` timed out after 10m; `post{failure{}}` detected the failed attempt and ran a real `helm rollback` - every Pod back on the last-known-good image |
+| PVC/Pod recovery | Pod deleted, then the PVC itself deleted | Pod: StatefulSet recreated it against the *same* PVC (identical volume UID). PVC: real data loss (AWS confirms the underlying EBS volume itself is gone) - full recovery by scaling the Prometheus CR back to 1 replica; every alert rule and all scrape targets reproduced from Git alone |
+
+Two of these needed real corrections mid-drill, not just execution: the `ReplicasMismatch` exercise
+found that a config-only Helm value change doesn't trigger a Pod rollout on its own (no
+`checksum/config` annotation on the pod template) - not a bug the real CD pipeline ever hits, since
+`IMAGE_TAG` and `config.releaseVersion` always change together and the image field alone already
+forces a rollout, but a real gap for a manual `helm upgrade` that touches only config. And the
+`JenkinsQueueStuck` exercise went through two wrong mechanisms first: the Kubernetes plugin's
+(deprecated) `label` option defines a brand-new inline pod template on the fly rather than
+matching an existing one, and `inheritFrom` on a nonexistent template name silently falls back to
+a bare default `jnlp` Pod instead of failing - both just ran the build trivially instead of ever
+queuing. What actually reproduces a stuck queue: requesting CPU no node in the cluster could ever
+satisfy.
+
+---
+
+## 19. History
 
 This is a rolling project: earlier work built the same 3-tier app first by hand on EC2 with
 Ansible, then as Terraform-managed infrastructure, then moved it onto this EKS cluster deployed via
@@ -786,3 +1139,8 @@ that earlier work that a from-scratch rebuild had never exercised before: the EC
 turned out to have been created by hand outside Terraform entirely, the cluster had no way to
 satisfy a `PersistentVolumeClaim` until Jenkins needed one, and the app chart's own `Namespace`
 template silently depended on ArgoCD's broader permissions to work at all.
+
+Assignment 5 added observability ([§13](#13-observability-architecture-and-install)-
+[§18](#18-failure-exercises-and-recovery)) on top of all of the above, additively - the same app,
+images, Helm chart, and Jenkins CI/CD from Assignments 3/4, unchanged except for the metrics
+endpoints instrumentation itself needed and the two new pipeline stages that read from Prometheus.

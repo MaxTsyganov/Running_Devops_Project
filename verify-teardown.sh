@@ -31,13 +31,14 @@ RDS_COUNT=$(aws rds describe-db-instances --region "$REGION" \
     --output text 2>/dev/null || echo 0)
 [ "$RDS_COUNT" = "0" ] && ok "No leftover RDS instances." || bad "$RDS_COUNT RDS instance(s) still exist."
 
-# EBS volumes (the Jenkins PVC is the known risk, but check broadly for any
-# volume left in "available" state - i.e. detached, definitely orphaned)
+# EBS volumes (the Jenkins and Prometheus PVCs are the known risks, but
+# check broadly for any volume left in "available" state - i.e. detached,
+# definitely orphaned)
 EBS_COUNT=$(aws ec2 describe-volumes --region "$REGION" \
     --filters "Name=status,Values=available" \
     --query "length(Volumes[?Tags[?Key=='kubernetes.io/cluster/devops-cluster']])" \
     --output text 2>/dev/null || echo 0)
-[ "$EBS_COUNT" = "0" ] && ok "No orphaned EBS volumes." || bad "$EBS_COUNT orphaned EBS volume(s) still exist (e.g. Jenkins PVC)."
+[ "$EBS_COUNT" = "0" ] && ok "No orphaned EBS volumes." || bad "$EBS_COUNT orphaned EBS volume(s) still exist (e.g. Jenkins/Prometheus PVC)."
 
 # Load balancers
 ELB_COUNT=$(aws elb describe-load-balancers --region "$REGION" \

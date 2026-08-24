@@ -1,4 +1,4 @@
-%% Jenkins CI/CD architecture - Assignment 4 - Deployment View
+%% Jenkins CI/CD + Observability architecture - Assignments 4-5 - Deployment View
 %% Shows where everything actually runs: clusters, namespaces, Pods,
 %% Services, storage, and network boundaries. For the logical order of a
 %% single pipeline run (commit -> CI -> build -> registry -> CD -> rollout
@@ -62,6 +62,14 @@ flowchart TB
                         ESO["External Secrets Operator\nSA: external-secrets-sa"]
                     end
 
+                    subgraph ObsNS["namespace: observability (Assignment 5)"]
+                        direction TB
+                        Prom[("Prometheus\nPVC: ebs-gp3, 5Gi, 7d retention")]
+                        Graf["Grafana\nno PVC - dashboards from Git\n(sidecar-ConfigMap)"]
+                        AM["Alertmanager"]
+                        ObsNetPol{{"NetworkPolicy: default-deny +\nper-workload allow\n(observability/networkpolicies.yaml)"}}
+                    end
+
                     RDS[("RDS PostgreSQL")]
                 end
             end
@@ -109,12 +117,25 @@ flowchart TB
     Admin -.->|create-jobs.sh\nREST API, idempotent, config.xml from Git\nnever hand-typed in the Jenkins UI| Controller
     ConfigRepo -.source for both calls above.-> Admin
 
+    Prom -->|scrapes /prometheus\nvia ServiceMonitor| JSvc
+    Prom -->|scrapes /metrics x3\nvia ServiceMonitor| FE
+    Prom -.-> BE
+    Prom -.-> WK
+    Prom -->|alerts| AM
+    AM -.->|notifies, Slack receiver| Slack
+    Graf -->|queries| Prom
+    Graf -.->|queries| AM
+    CDAgent -->|Monitoring Gate:\nup==1 + error-rate query| Prom
+    Admin -.->|kubectl port-forward\nnever public| Graf
+
     classDef external fill:#eee,stroke:#999,color:#333
     classDef aws fill:#fff3e0,stroke:#e65100,color:#333
     classDef jenkins fill:#e3f2fd,stroke:#1565c0,color:#333
     classDef app fill:#e8f5e9,stroke:#2e7d32,color:#333
     classDef data fill:#fce4ec,stroke:#ad1457,color:#333
+    classDef obs fill:#fdece7,stroke:#c0392b,color:#333
     class Dev,User,GH,Smee,Admin,Slack,ConfigRepo external
     class ALB,RDS,ECR,S3,SNS,SecMgr,KMS aws
     class Relay,Controller,PVC,JSvc,CIAgent,CDAgent,PRAgent jenkins
     class FE,BE,WK,BESvc,ESO app
+    class Prom,Graf,AM obs
