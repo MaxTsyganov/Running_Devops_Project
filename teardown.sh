@@ -115,7 +115,7 @@ else
     info "No live cluster found - nothing to clean up here."
 fi
 
-step "[5/10] Deleting IRSA IAM service accounts (backend-sa, worker-sa, ci-build-sa, fluent-bit-sa, external-secrets-sa)..."
+step "[5/10] Deleting IRSA IAM service accounts (backend-sa, worker-sa, ci-build-sa, fluent-bit-sa, external-secrets-sa, cluster-autoscaler-sa)..."
 # Same lesson as the security-group rule above: these were created by
 # `eksctl create iamserviceaccount` as their own CloudFormation stacks,
 # separate from the main cluster stack. Deleting them explicitly first
@@ -146,6 +146,16 @@ if eksctl get cluster --name devops-cluster --region us-east-1 >/dev/null 2>&1; 
         --namespace external-secrets --name external-secrets-sa \
         --wait >/dev/null 2>&1 && success "Deleted IAM role for external-secrets-sa." \
         || info "external-secrets-sa's IAM role already gone, continuing."
+    # Uninstalled first, not just its IRSA role deleted out from under it -
+    # otherwise Cluster Autoscaler keeps running with a now-invalid IAM
+    # role reference until the cluster itself disappears a step later.
+    helm uninstall cluster-autoscaler -n kube-system >/dev/null 2>&1 \
+        || info "No Cluster Autoscaler Helm release found, continuing."
+    eksctl delete iamserviceaccount --verbose 0 \
+        --cluster devops-cluster --region us-east-1 \
+        --namespace kube-system --name cluster-autoscaler-sa \
+        --wait >/dev/null 2>&1 && success "Deleted IAM role for cluster-autoscaler-sa." \
+        || info "cluster-autoscaler-sa's IAM role already gone, continuing."
 else
     info "No live cluster found - nothing to delete here."
 fi

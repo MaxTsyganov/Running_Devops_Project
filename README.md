@@ -96,7 +96,8 @@ Six scripts, each idempotent (safe to re-run) and each doing exactly one thing:
 
 ```bash
 bash jenkins/scripts/install-jenkins.sh       # namespace, RBAC, ci-build-sa, EBS CSI driver +
-                                               # StorageClass, the Jenkins Helm release + JCasC
+                                               # StorageClass, the Jenkins Helm release + JCasC,
+                                               # Cluster Autoscaler
 bash jenkins/scripts/configure-jenkins.sh     # mints the smee.io channel, deploys webhook-relay,
                                                # creates the webhook + PR-token secret (admin
                                                # password and secrets go to a local temp file, not
@@ -740,6 +741,7 @@ output.sh                  Shared step()/info()/success()/fail()/ok()/bad() cons
 Makefile                   make k8s-deploy / make k8s-teardown / raw terraform targets
 .github/workflows/ci.yml   terraform validate + helm lint + Trivy on every push/PR
 .trivyignore               Accepted-risk CVE allowlist for image scanning (empty - nothing needed yet)
+.gitattributes             Normalizes line endings to LF - shell script shebangs break under CRLF
 terraform/                 RDS, S3, SNS, ECR, Secrets Manager, CloudWatch log group, IAM policies,
                            VPC/subnets - no compute
 helm/devops-app/           The Kubernetes side: one Helm chart, deployed by Jenkins CD (§6)

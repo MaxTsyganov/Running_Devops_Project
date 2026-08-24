@@ -6,10 +6,27 @@ simulated output). This folder supplements 01-05, which cover the core
 (non-bonus) assignment requirements. Built and evidenced in two passes -
 items 1-5 first, items 6-8 afterward - now combined into one folder since
 they're the same category of deliverable, just added in separate sessions.
-Everything reflects the final, fully-fixed pipeline; every file was
-re-captured against real builds after an earlier pass (documented below and
-in the commit history) turned up real bugs that made the first round of
-evidence unrepresentative of what the pipeline actually does today.
+Everything reflects the final, fully-fixed pipeline *as of that pass*; every
+file was re-captured against real builds after an earlier pass (documented
+below and in the commit history) turned up real bugs that made the first
+round of evidence unrepresentative of what the pipeline actually did then.
+
+Note added after a later remediation pass (external review response, see
+README's git history around the same date): the pipeline's shape changed
+again since these captures - full 40-char commit SHA tags instead of
+8-char, Kaniko builds to a local tarball and Trivy scans it *before*
+anything reaches ECR (a "Push + Sign" stage now pushes via `crane` only
+after that scan passes, not Kaniko's own atomic push), and Cluster
+Autoscaler was added to handle real capacity contention under concurrent
+builds. Everything below is still accurate proof of the underlying bonus
+item (matrix builds, SBOM, signing, rollback, NetworkPolicies, the Shared
+Library, the PR gate, notifications, JCasC recovery all still work exactly
+as described) - just against an earlier build/tag-length/push-ordering
+shape. Real evidence for the newer pipeline shape has not been captured
+into a numbered folder the same way this one is - see the README's own
+Trade-offs table (§11) instead, which documents each change with the
+live-verification detail (real bugs found, exact scale-up timings, etc.)
+this project's evidence files otherwise carry.
 
 1. Parallel / matrix builds
    01-parallel-matrix-build-proof.txt

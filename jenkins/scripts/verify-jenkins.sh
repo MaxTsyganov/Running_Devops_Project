@@ -41,6 +41,12 @@ kubectl get deployment webhook-relay -n jenkins >/dev/null 2>&1 && ok "webhook-r
 RELAY_READY=$(kubectl get deployment webhook-relay -n jenkins -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
 [ "$RELAY_READY" = "1" ] && ok "webhook-relay is Ready" || bad "webhook-relay is not Ready"
 
+step "Cluster Autoscaler"
+kubectl get deployment cluster-autoscaler-aws-cluster-autoscaler -n kube-system >/dev/null 2>&1 \
+    && ok "Cluster Autoscaler Deployment exists" || bad "Cluster Autoscaler Deployment missing - run install-jenkins.sh"
+CA_READY=$(kubectl get deployment cluster-autoscaler-aws-cluster-autoscaler -n kube-system -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
+[ "$CA_READY" = "1" ] && ok "Cluster Autoscaler is Ready" || bad "Cluster Autoscaler is not Ready"
+
 step "Jobs created from code"
 PF_PID=""
 if ! curl -sf -o /dev/null http://localhost:8080/login 2>/dev/null; then

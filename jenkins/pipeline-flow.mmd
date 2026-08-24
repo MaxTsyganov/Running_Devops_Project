@@ -42,10 +42,10 @@ sequenceDiagram
             note over Ctrl: no image pushed, CD never triggered
         else tests pass
             par matrix cell: frontend
-                CI->>CI: Build (Kaniko, own Pod, no Docker socket)
-                CI->>ECR: Push, tagged with immutable commit SHA
-                ECR-->>CI: digest
-                CI->>CI: Scan (Trivy, blocks on fixable CRITICAL) + SBOM (CycloneDX)
+                CI->>CI: Build (Kaniko, own Pod, no Docker socket, local tarball only - no push yet)
+                CI->>CI: Scan (Trivy, blocks on fixable CRITICAL) + SBOM (CycloneDX) - against that local tarball
+                CI->>ECR: Push (crane), tagged with immutable commit SHA - only after the scan passed
+                ECR-->>CI: digest (crane's own reported digest, not predicted before the push)
                 CI->>CI: Sign digest (Cosign, AWS KMS key)
                 CI->>CI: Publish metadata (tag + digest, archived)
             and matrix cell: backend
