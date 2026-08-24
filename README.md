@@ -153,15 +153,16 @@ configuration on boot - no manual System Config page was ever touched:
   `python` container at runtime instead (§5). The same `ci-agent` template is also what each
   parallel matrix cell in §5's Build/Scan/Sign stage requests a fresh Pod from - no separate
   template needed for that either.
-- **Plugin list**: `kubernetes`, `kubernetes-credentials-provider`, `workflow-aggregator`, `git`,
-  `github`, `job-dsl`, `configuration-as-code`, `credentials-binding`, `timestamper`, `ws-cleanup`,
-  `pipeline-groovy-lib`, `generic-webhook-trigger` - named only as of this commit, not yet pinned to
-  individual versions (an earlier attempt pinning each plugin's version by hand hit a
-  `ClassNotFoundException` from mutually-incompatible pinned versions - each plugin's dependency
-  graph was checked in isolation, not as a set). `jenkins/scripts/lock-plugin-versions.sh` captures
-  the exact `shortName:version` pairs a live, successfully-booted controller actually resolved -
-  meant to replace this list with pinned versions that are known to work together, not guessed ones;
-  not yet run against a live controller as of this commit.
+- **Plugin list**: all 85 entries in `installPlugins` are pinned `shortName:version`, not bare names -
+  the 12 actually wanted (`kubernetes`, `kubernetes-credentials-provider`, `workflow-aggregator`,
+  `git`, `github`, `job-dsl`, `configuration-as-code`, `credentials-binding`, `timestamper`,
+  `ws-cleanup`, `pipeline-groovy-lib`, `generic-webhook-trigger`) plus every transitive dependency,
+  captured by `jenkins/scripts/lock-plugin-versions.sh` against a live controller and confirmed by
+  wiping the Jenkins PVC and reinstalling from scratch on that exact pinned set. An earlier attempt
+  pinned only the top-level plugins, each to whatever version plugins.jenkins.io reported
+  independently - those turned out mutually incompatible (a `ClassNotFoundException`, each plugin's
+  dependency graph checked in isolation rather than as a set); capturing a set that's already proven
+  to boot clean together is the fix, not guessing more carefully.
 - **Shared Library** (`devops-shared-lib`, bonus): a `globalLibraries` entry points
   `pipeline-groovy-lib`'s `modernSCM` retriever at this same repo (`main` branch,
   `libraryPath: jenkins/shared-library`) - one less repo to keep in sync, not a dedicated library
@@ -245,10 +246,12 @@ on the same `x-github-event` header it already inspected. The token itself is ge
 the same `git-webhook-secret` shared secret from [§8](#8-credentials-and-secrets)) before it's ever
 forwarded to either Jenkins endpoint - not left as a manual GitHub-plugin System Config step, since
 that could only ever be a documented follow-up, not something a script could apply to Jenkins' own
-UI state. `VERIFY_SIGNATURES` in `jenkins/webhook-relay.yaml` is a one-line toggle back to
-forward-everything if a real delivery is ever seen failing verification that a manual test wouldn't
-have caught (see that file's own comment on why: smee.io re-encodes the original payload before this
-relay ever sees it, which needs confirming against a real GitHub delivery, not just a synthetic one).
+UI state. **Confirmed live** against real GitHub deliveries (both `push` and `pull_request` events,
+via a real PR through the full quality-gate flow) - smee.io re-encoding the original payload before
+this relay ever sees it was the real risk (a re-encoded body byte-for-byte diverging from what GitHub
+signed the HMAC over), and it didn't happen: every real delivery verified and forwarded correctly.
+`VERIFY_SIGNATURES` in `jenkins/webhook-relay.yaml` remains a one-line toggle back to
+forward-everything, kept as a rollback switch rather than removed now that it's unneeded.
 
 **Checkout**: the job's own SCM config only fetches `pr-Jenkinsfile` itself from `main` (same as the
 other two jobs) - the pipeline's first stage does its own separate `checkout` with an explicit
@@ -303,7 +306,14 @@ call, not after) still gates whether to even look - an earlier failure (bad `IMA
 lint` error) that never reached the Deploy stage correctly reports nothing to roll back, without a
 cluster round-trip. If the rollback itself fails, the build's console log still shows exactly where
 it broke; there was never a scenario tested where the previous revision was itself unhealthy, since
-CI's own scan gate keeps that from happening in the first place.
+CI's own scan gate keeps that from happening in the first place. **Confirmed live** for the paths that
+matter day to day: several real CD runs correctly never trigger this block at all (deploy succeeds,
+`post{success{}}` runs instead), and a real pre-Deploy failure (a `CreateContainerConfigError` on the
+`cd-agent` Pod itself, caught and fixed the same day - see the agent-hardening note above) correctly
+reported nothing to roll back, since `HELM_DEPLOY_ATTEMPTED` was never set. The one thing not forced
+live is the specific edge case this logic exists for - a genuine `--wait` timeout with a bad revision
+already sitting live - since reproducing that safely needs a multi-minute deploy that's actually going
+to hang, not a quick synthetic failure.
 
 ---
 
@@ -398,24 +408,31 @@ container in both agent templates sets explicit CPU/memory requests and limits. 
 Pod runs as `runAsNonRoot`, `allowPrivilegeEscalation: false`, all capabilities dropped, read-only
 root filesystem. The Jenkins controller itself runs under the official chart's own default
 `containerSecurityContext` - `runAsUser: 1000`, `runAsGroup: 1000`, `readOnlyRootFilesystem: true`,
-`allowPrivilegeEscalation: false` - never overridden to anything looser. Both the Jenkins controller
-image and agent container images are pinned to a fixed tag, never `latest`.
+`allowPrivilegeEscalation: false` - never overridden to anything looser. The Jenkins controller image
+is pinned to a fixed tag, never `latest`; agent container images go further and are pinned by digest
+(see [§4](#4-jenkins-configuration-as-code-jcasc)).
 
 `ci-agent`/`cd-agent`'s own containers (`jenkins/values.yaml`, applied via JCasC's raw-YAML
 `yamlMergeStrategy: merge` - the structured `containers:` shorthand those templates otherwise use has
-no `securityContext` field of its own) are now hardened per-container, not uniformly: `python`,
-`trivy`, and `deploy` run `runAsNonRoot`, `allowPrivilegeEscalation: false`, all capabilities
-dropped, read-only root filesystem with an explicit writable `emptyDir` at `/tmp` (and
-`TRIVY_CACHE_DIR`/`HOME` pointed at it, since neither tool's default cache location is guessable
-under an arbitrary non-root UID with no `/etc/passwd` entry). `kaniko` deliberately stays on
-`allowPrivilegeEscalation: false` + `seccompProfile: RuntimeDefault` only - it has to `chown`/`chmod`
-extracted layer files to match Dockerfile/base-image ownership while unpacking, which needs root or
-`CAP_CHOWN`/`CAP_FOWNER` (Kaniko's own documented constraint, not an oversight - see that container's
-comment in `jenkins/values.yaml`), so `runAsNonRoot` and a full capability drop would break real
-builds. **Not yet confirmed live**: this hardening pass was written without a running cluster to test
-against - a real CI/CD run needs to confirm `trivy`'s cache-dir override and `deploy`'s `HOME`
-override actually work before this is trusted the way the rest of this README's "confirmed live"
-claims are.
+no `securityContext` field of its own) are hardened per-container, not uniformly: `python`, `trivy`,
+and `deploy` run `runAsNonRoot`, `allowPrivilegeEscalation: false`, all capabilities dropped,
+read-only root filesystem with an explicit writable `emptyDir` at `/tmp` (`HOME`/`TRIVY_CACHE_DIR`
+pointed at it, since none of pip's user-install fallback, Trivy's vulnerability-DB cache, or
+Helm/kubectl's own config/cache resolve anything sane under an arbitrary non-root UID with no
+`/etc/passwd` entry). `kaniko` deliberately stays on `allowPrivilegeEscalation: false` +
+`seccompProfile: RuntimeDefault` only - it has to `chown`/`chmod` extracted layer files to match
+Dockerfile/base-image ownership while unpacking, which needs root or `CAP_CHOWN`/`CAP_FOWNER`
+(Kaniko's own documented constraint, not an oversight - see that container's comment in
+`jenkins/values.yaml`), so `runAsNonRoot` and a full capability drop would break real builds.
+**Confirmed live**, including two real bugs this hardening pass only surfaced under an actual build:
+`python` needed the same `HOME=/tmp` override as `deploy` (missed initially since only `trivy`'s cache
+path was an obvious guess-under-arbitrary-UID case; `pip install`'s user-install fallback hit the same
+problem, failing with `Read-only file system: '/.local'`), and `cd-agent`'s Pod-level
+`securityContext.runAsNonRoot: true` broke its own `jnlp` sidecar (`jenkins/inbound-agent`'s image
+declares `USER jenkins` - a name, not a numeric UID, which the kubelet can't statically verify as
+non-root - `CreateContainerConfigError`). Fixed by moving `runAsNonRoot` off the Pod level onto just
+the `deploy` container, matching `ci-agent`'s own per-container pattern (which never set it Pod-wide
+for exactly this reason).
 
 **Scanning Jenkins' own images**: separate from CI's scan of the *app* images (§5), the 5 images
 Jenkins itself is built from - the controller (`jenkins/jenkins:2.541.3-lts-jdk17`) and every
@@ -507,14 +524,14 @@ Evidence, including a real capacity problem the drill surfaced along the way, in
 |---|---|---|
 | Jenkins in the same cluster as the app | No second cluster's cost, no cross-cluster credential for CD to manage | Less blast-radius isolation than a fully separate Jenkins cluster |
 | Job creation via REST API script, not Job DSL seed job or Multibranch Pipeline | A JCasC-driven seed job crashed the whole controller boot on a syntax slip - a bug here now only fails one script | An extra manual step (`create-jobs.sh`) instead of jobs appearing automatically on controller boot |
-| Automated rollback only after a Helm revision actually exists | An earlier-stage failure (bad `IMAGE_TAG`, a lint error) never touched the cluster - rolling back would target a revision nothing was wrong with | An `env.HELM_DEPLOYED` flag to track across `post{}`, instead of an unconditional rollback-on-any-failure |
+| Automated rollback only after a Helm revision actually exists | An earlier-stage failure (bad `IMAGE_TAG`, a lint error) never touched the cluster - rolling back would target a revision nothing was wrong with | An extra `helm status`/`helm history` round-trip to the cluster in the failure path, instead of trusting a flag alone - needed because `--wait` can time out (Helm CLI exits non-zero) after Helm already created the revision server-side, which a flag set only on success would miss |
 | Cosign signs with an AWS KMS key (`awskms://`), not keyless/Sigstore | Matches this project's IRSA-everywhere pattern (`ci-build-sa` just gets one more narrow IAM action) instead of adding a new external dependency (the public Sigstore Fulcio/Rekor infrastructure) this project doesn't otherwise talk to | Verification needs the same AWS account/key reference, not a portable, identity-based verification anyone can run against a public transparency log |
 | SBOM/sign/scan run per-service in a `matrix`, each cell its own Pod | Real parallelism (separate CPU/memory per service) instead of three processes contending inside one shared container | Up to 3 extra `ci-agent` Pods scheduled at once (on top of the pipeline's own top-level Pod) - more momentary cluster resource pressure during that stage |
 | Custom webhook relay instead of the official `smee-client` npm package | `smee-client` (all versions checked) has a real upstream bug reusing an incoming header value on its own outgoing request - reproduced only with real GitHub traffic, not synthetic test POSTs | ~100 lines of relay code to maintain instead of a dependency |
 | `webhook_content_type: json` via a raw API request, not `gh api`'s `-f config[key]=value` flags | `gh api -f config[content_type]=json` silently failed to nest into GitHub's webhook config - GitHub defaulted to form-encoding instead, which broke the Jenkins GitHub plugin's payload parser (`GHEventPayload$Push.getRepository()` returned null) until this was caught via a captured raw payload and the hook was recreated with an explicit JSON body | One more thing to get right if this hook is ever recreated by hand |
 | Trivy scans the image *after* Kaniko has already pushed it, not before | Kaniko builds and pushes as one atomic `--destination` step - there's no local, daemon-accessible image to scan first without a separate build-to-tarball-then-push flow | A build that fails the Scan stage still leaves that (immutable-tagged, never referenced by any deploy) image sitting in ECR; the actual safety property - nothing gets deployed - still holds, since CD only ever triggers from CI's `success` post-block |
 | Jenkins CD (`helm upgrade --install`) instead of ArgoCD/GitOps | A real CI/CD pipeline needs to own deploy directly - GitOps auto-sync would revert every Jenkins deploy as drift (see [History](#13-history)) | Deploy history lives in Helm release revisions, not a GitOps `Application`'s sync history |
-| `t3.medium` nodes instead of `t3.small` | Jenkins (a resident controller Pod, a resident webhook-relay Pod, and bursts of ephemeral CI/CD agent Pods) on top of an already-tight `t3.small` cluster (11 pods/node) risked agent Pods stuck `Pending` mid-build; `t3.medium` doubles memory per node and raises the ceiling to 17/node for the same node count | Roughly doubles hourly node cost |
+| `t3.medium` nodes instead of `t3.small` | Jenkins (a resident controller Pod, a resident webhook-relay Pod, and bursts of ephemeral CI/CD agent Pods) on top of an already-tight `t3.small` cluster (11 pods/node) risked agent Pods stuck `Pending` mid-build; `t3.medium` doubles memory per node and raises the ceiling to 17/node for the same node count | Roughly doubles hourly node cost, and still not unlimited: confirmed live when two full CI matrix builds landed at once (two real pushes a few seconds apart), several matrix cells sat genuinely `Pending`/`Insufficient cpu,memory` for roughly a minute before earlier stages finished and freed capacity - resolved on its own, no stuck build, but a true capacity guardrail (Cluster Autoscaler, or a lower `containerCapStr`) would smooth this instead of relying on it draining naturally |
 | `generic-webhook-trigger` for `ci-application-pr`, not Multibranch Pipeline or GHPRB | Multibranch would mean a second, structurally different job type (and PR discovery/scanning machinery) alongside the two REST-API-created Pipeline jobs; GHPRB needs a bot GitHub account. A JSON-field-extraction trigger keeps the third job created exactly the same way as the first two | Live-verified, but only after a real bug: the first version's header-based event-type filter never actually matched GitHub's real header name, so the webhook returned 200 while silently never queuing a build - root-caused and simplified (see `evidence/06-bonus-features/13a-pr-quality-gate-trigger-bug-and-fix.txt`), not something a config.xml export alone would have caught |
 | Notifications via Slack Incoming Webhook, not the existing SNS topic | Zero AWS/Terraform changes - `cd-deploy-sa` stays a plain, non-IRSA ServiceAccount exactly as designed; both agent containers can already POST JSON without installing anything new | A second external credential to manage (`slack-webhook-url`) instead of reusing infrastructure that already existed |
 | Shared Library lives in this same repo (`jenkins/shared-library/`), not a dedicated library repo | One less repository to keep in sync, one less place a version mismatch could hide | `libraryPath` (pointing the retriever at a subdirectory instead of a repo root) is a less common configuration than the plugin's default - confirmed live against `pipeline-groovy-lib` 798.v5cc688825312, no fallback needed |
