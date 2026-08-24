@@ -38,14 +38,14 @@ JENKINS_PASSWORD=$(MSYS_NO_PATHCONV=1 kubectl exec --namespace jenkins svc/jenki
 
 step "Querying the live controller's actual installed plugin set..."
 LOCK_FILE="jenkins/plugins.lock.txt"
-curl -sf -u "${JENKINS_USER}:${JENKINS_PASSWORD}" \
+curl -sf -g -u "${JENKINS_USER}:${JENKINS_PASSWORD}" \
     "${JENKINS_URL}/pluginManager/api/json?depth=1&tree=plugins[shortName,version]" \
     | python3 -c '
 import json, sys
 data = json.load(sys.stdin)
 plugins = sorted(data["plugins"], key=lambda p: p["shortName"])
 for p in plugins:
-    print(f"{p[\"shortName\"]}:{p[\"version\"]}")
+    print(p["shortName"] + ":" + p["version"])
 ' > "$LOCK_FILE"
 
 PLUGIN_COUNT=$(wc -l < "$LOCK_FILE")
