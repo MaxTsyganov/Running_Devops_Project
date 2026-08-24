@@ -1,0 +1,6 @@
+# Normalize line endings to LF for every text file, regardless of platform
+# or local core.autocrlf setting - this repo's shell scripts break under
+# CRLF (a shebang line ending in \r fails to exec), and mixed endings were
+# producing spurious "LF will be replaced by CRLF" warnings on every commit
+# from Windows/Git Bash.
+* text=auto eol=lf
