@@ -363,19 +363,39 @@ pipeline {
                         # job:http_availability:ratio_rate5m in
                         # observability/rules/slo-recording-rules.yaml,
                         # which had the identical flaw.
-                        RESPONSE=$(prom_query '(sum(increase(http_requests_total{job="backend-service",status=~"5.."}[2m])) or vector(0)) / sum(increase(http_requests_total{job="backend-service"}[2m]))')
-                        # An empty result vector (e.g. Prometheus hasn't
-                        # scraped the traffic above yet) has no "value" key
-                        # anywhere in the response at all - checked
-                        # explicitly first. Skipping this check is a real
-                        # trap: with no "value" key, the "last ,\"...\"
-                        # substring" extraction below would instead grab the
-                        # JSON key name "result" (from an empty
-                        # "result":[]), and awk's non-numeric-string-to-0
-                        # coercion would then read that as "0% errors" -
-                        # silently passing the gate on missing data instead
-                        # of failing it. Caught live before this ever ran in
-                        # a real build, not assumed safe.
+                        # Bounded retry here too, not a single query - caught
+                        # live on this exact deploy: increase() needs at
+                        # least two scraped samples within its window to
+                        # compute a delta, and a brand-new Pod's
+                        # http_requests_total series doesn't exist at all
+                        # until the first request with each exact label
+                        # combination lands (prometheus_client only creates
+                        # a labeled Counter series on first use, not at
+                        # startup) - so a query fired the instant the
+                        # traffic loop above ends can still race ahead of
+                        # the second scrape that would let increase()
+                        # produce a real value, even though the traffic
+                        # itself already succeeded.
+                        RESPONSE=""
+                        for i in $(seq 1 6); do
+                            RESPONSE=$(prom_query '(sum(increase(http_requests_total{job="backend-service",status=~"5.."}[2m])) or vector(0)) / sum(increase(http_requests_total{job="backend-service"}[2m]))')
+                            # An empty result vector has no "value" key
+                            # anywhere in the response at all - checked
+                            # explicitly. Skipping this check is a real
+                            # trap: with no "value" key, the "last ,\"...\"
+                            # substring" extraction below would instead grab
+                            # the JSON key name "result" (from an empty
+                            # "result":[]), and awk's non-numeric-string-to-0
+                            # coercion would then read that as "0% errors" -
+                            # silently passing the gate on missing data
+                            # instead of failing it. Caught live before this
+                            # ever ran in a real build, not assumed safe.
+                            if echo "$RESPONSE" | grep -q '"value":'; then
+                                break
+                            fi
+                            echo "Waiting for the error-rate query to have real data... ($i/6)"
+                            sleep 10
+                        done
                         if ! echo "$RESPONSE" | grep -q '"value":'; then
                             echo "Monitoring Gate FAILED: error-rate query returned no data"
                             exit 1
