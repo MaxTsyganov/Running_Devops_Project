@@ -161,9 +161,9 @@ pipeline {
                                 sh '''
                                     set -e
                                     echo "Building devops-${SERVICE}:${IMAGE_TAG} (local tarball, not pushed yet)..."
-                                    # $(pwd)/digest.txt and $(pwd)/${SERVICE}.tar, not /workspace/...:
-                                    # /workspace is Kaniko's own private scratch directory inside this
-                                    # one container, not the Pod's shared Jenkins workspace volume
+                                    # $(pwd)/${SERVICE}.tar, not /workspace/...: /workspace is
+                                    # Kaniko's own private scratch directory inside this one
+                                    # container, not the Pod's shared Jenkins workspace volume
                                     # (mounted at the same $(pwd) in every container) - confirmed live
                                     # the hard way, when Sign (running in the python container)
                                     # couldn't find a file Build had "written" to a path that was
@@ -174,13 +174,20 @@ pipeline {
                                     # pushed-then-scanned. --destination is still required even
                                     # without pushing, so the tarball's own manifest is tagged
                                     # correctly for crane to push later.
+                                    # No --digest-file: confirmed live that Kaniko's own predicted
+                                    # digest does NOT match what crane actually pushes from this
+                                    # tarball (a real, different manifest serialization between
+                                    # Kaniko's --tarPath output and crane's push, despite identical
+                                    # image content) - Cosign signing that digest 404'd, since it was
+                                    # never the digest ECR actually stored. The Push + Sign stage
+                                    # captures crane's own reported digest instead - the only value
+                                    # that's guaranteed to match what's actually in the registry.
                                     /kaniko/executor \
                                         --context "dir://$(pwd)/${SERVICE}" \
                                         --dockerfile "${SERVICE}/Dockerfile" \
                                         --destination "${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}" \
                                         --no-push \
                                         --tarPath "$(pwd)/${SERVICE}.tar" \
-                                        --digest-file "$(pwd)/digest.txt" \
                                         --cache=false
                                 '''
                             }
@@ -267,16 +274,22 @@ print(base64.b64decode(token).decode().split(':', 1)[1])
                                     set -x
 
                                     echo "Pushing devops-${SERVICE}:${IMAGE_TAG} (already scanned)..."
-                                    /tmp/crane push "${SERVICE}.tar" "${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}"
+                                    # Captures crane's own reported digest reference from its stdout
+                                    # (the log lines above it are crane's own diagnostics on stderr,
+                                    # not captured here) - this is the digest actually stored in ECR
+                                    # by the tool that did the pushing, not a prediction from Kaniko
+                                    # made before the push happened. Confirmed live these two can
+                                    # genuinely differ (see the Build stage's own comment on why) -
+                                    # signing or recording anything other than this exact value would
+                                    # reference a digest ECR never actually has.
+                                    IMAGE_REF="$(/tmp/crane push "${SERVICE}.tar" "${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}")"
+                                    DIGEST="${IMAGE_REF#*@}"
+                                    echo "$DIGEST" > digest.txt
 
                                     set +x
-                                    DIGEST="$(cat digest.txt)"
-                                    IMAGE_REF="${ECR_REGISTRY}/devops-${SERVICE}@${DIGEST}"
                                     echo "Signing $IMAGE_REF with ${COSIGN_KMS_KEY}..."
-                                    # Signs by digest, not by mutable tag - the same digest Kaniko
-                                    # computed at build time (digest.txt), which crane's push
-                                    # preserves exactly since it pushes the same content-addressed
-                                    # manifest, not a re-encoded one. --use-signing-config=false
+                                    # Signs by digest, not by mutable tag - the digest crane just
+                                    # reported pushing, above. --use-signing-config=false
                                     # --tlog-upload=false: cosign uploads to the public Rekor
                                     # transparency log by default even for KMS-based (non-keyless)
                                     # signing, unless told not to - caught live via `cosign verify`
