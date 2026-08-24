@@ -56,6 +56,85 @@ controller:
                     label: "ci-agent"
                     namespace: "jenkins"
                     serviceAccount: "ci-build-sa"
+                    # Pod-level baseline only sets what's safe for every
+                    # container in this template, including kaniko below -
+                    # runAsNonRoot can't go here (it's enforced across the
+                    # whole Pod, and kaniko fails it - see kaniko's own
+                    # securityContext for why). Per-container securityContext
+                    # additions layer on top via yamlMergeStrategy: merge,
+                    # matched by container name against the "containers:"
+                    # list above - one raw-YAML fragment per template, not
+                    # one per container, since the merge is Pod-scoped.
+                    yamlMergeStrategy: merge
+                    yaml: |
+                      spec:
+                        securityContext:
+                          seccompProfile:
+                            type: RuntimeDefault
+                        volumes:
+                          - name: tmp
+                            emptyDir: {}
+                        containers:
+                          - name: python
+                            securityContext:
+                              runAsNonRoot: true
+                              runAsUser: 1000
+                              allowPrivilegeEscalation: false
+                              readOnlyRootFilesystem: true
+                              capabilities:
+                                drop: ["ALL"]
+                            # Confirmed live: without this, `pip install` (lintCode.groovy,
+                            # runTests.groovy, and the Sign stage's own boto3 install) fails
+                            # with "Read-only file system: '/.local'" - pip falls back to a
+                            # user install when it can't write the global site-packages, and
+                            # under an arbitrary non-root UID with no /etc/passwd entry, an
+                            # unset HOME resolves to "/", landing that fallback on the
+                            # read-only root instead of the writable tmp volume below.
+                            env:
+                              - name: HOME
+                                value: "/tmp"
+                            volumeMounts:
+                              - name: tmp
+                                mountPath: /tmp
+                          - name: kaniko
+                            # Deliberately NOT runAsNonRoot / readOnlyRootFilesystem /
+                            # capability-dropped like the other three containers here.
+                            # Kaniko unpacks base-image layers and has to chown/chmod
+                            # extracted files to match whatever ownership the Dockerfile
+                            # and base image specify (COPY --chown, non-root base images,
+                            # etc.) - that's a privileged filesystem operation only root
+                            # (or a process holding CAP_CHOWN/CAP_FOWNER) can do. This is
+                            # Kaniko's own documented constraint, not an oversight -
+                            # https://github.com/GoogleContainerTools/kaniko#security.
+                            # allowPrivilegeEscalation/seccomp are still safe to set:
+                            # neither one is part of the ownership-preservation mechanism
+                            # above. NOT verified live - if a build shows kaniko itself
+                            # (not the image being built) needs a capability beyond root's
+                            # default set, that'd only show up under an actual build.
+                            securityContext:
+                              allowPrivilegeEscalation: false
+                              seccompProfile:
+                                type: RuntimeDefault
+                          - name: trivy
+                            securityContext:
+                              runAsNonRoot: true
+                              runAsUser: 1000
+                              allowPrivilegeEscalation: false
+                              readOnlyRootFilesystem: true
+                              capabilities:
+                                drop: ["ALL"]
+                            # Trivy's vulnerability-DB cache defaults to a
+                            # path under the invoking user's home directory -
+                            # not guessable under an arbitrary non-root UID
+                            # with no /etc/passwd entry, so pointed at the
+                            # same writable tmp volume explicitly instead of
+                            # assumed. NOT verified live.
+                            env:
+                              - name: TRIVY_CACHE_DIR
+                                value: "/tmp/trivy-cache"
+                            volumeMounts:
+                              - name: tmp
+                                mountPath: /tmp
                     containers:
                       # Lint/test tooling - same base image the app's own
                       # Dockerfiles use, so results reflect the real runtime.
@@ -68,8 +147,17 @@ controller:
                       # (python-slim/nginx-alpine based), so lower requests
                       # are realistic, and it leaves more of the extra
                       # headroom free for CI/CD agent bursts.
+                      # Tag kept alongside the digest for human readability
+                      # (what a person reads at a glance); the digest after
+                      # @ is what the kubelet actually resolves and pulls -
+                      # the tag portion is ignored for that purpose. Each
+                      # digest below was resolved directly against the
+                      # registry (Docker Hub / GCR manifest API) at the time
+                      # it was pinned, same "checked, not guessed" standard
+                      # as the controller image tag and plugin versions.
+                      # Re-pin by re-querying the registry, not by guessing.
                       - name: "python"
-                        image: "python:3.11-slim"
+                        image: "python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7"
                         command: "sleep"
                         args: "99d"
                         resourceRequestCpu: "150m"
@@ -77,7 +165,7 @@ controller:
                         resourceLimitCpu: "500m"
                         resourceLimitMemory: "512Mi"
                       - name: "kaniko"
-                        image: "gcr.io/kaniko-project/executor:v1.24.0-debug"
+                        image: "gcr.io/kaniko-project/executor:v1.24.0-debug@sha256:2562c4fe551399514277ffff7dcca9a3b1628c4ea38cb017d7286dc6ea52f4cd"
                         command: "sleep"
                         args: "99d"
                         resourceRequestCpu: "250m"
@@ -90,7 +178,7 @@ controller:
                       # only ever needed to push, scanning is the first thing
                       # in this pipeline that reads an image back).
                       - name: "trivy"
-                        image: "aquasec/trivy:0.74.0"
+                        image: "aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969"
                         command: "sleep"
                         args: "99d"
                         resourceRequestCpu: "250m"
@@ -101,9 +189,47 @@ controller:
                     label: "cd-agent"
                     namespace: "jenkins"
                     serviceAccount: "cd-deploy-sa"
+                    yamlMergeStrategy: merge
+                    yaml: |
+                      spec:
+                        # runAsNonRoot NOT set Pod-wide - confirmed live it cascades to the
+                        # jnlp sidecar every template auto-gets from the Kubernetes plugin,
+                        # and jenkins/inbound-agent's image declares USER jenkins (a name, not
+                        # a numeric UID), which the kubelet can't statically verify as non-root
+                        # - CreateContainerConfigError on jnlp specifically. Same reason
+                        # ci-agent's Pod-level securityContext below never sets it either; put
+                        # it on the one container that actually needs it instead.
+                        securityContext:
+                          seccompProfile:
+                            type: RuntimeDefault
+                        volumes:
+                          - name: tmp
+                            emptyDir: {}
+                        containers:
+                          - name: deploy
+                            securityContext:
+                              runAsNonRoot: true
+                              runAsUser: 1000
+                              allowPrivilegeEscalation: false
+                              readOnlyRootFilesystem: true
+                              capabilities:
+                                drop: ["ALL"]
+                            # kubectl/helm both want a writable HOME for
+                            # their own cache/config (~/.kube, ~/.cache/helm)
+                            # - not guessable under an arbitrary non-root UID
+                            # with no /etc/passwd entry, so both pointed at
+                            # the same writable tmp volume explicitly.
+                            # NOT verified live.
+                            env:
+                              - name: HOME
+                                value: "/tmp"
+                            volumeMounts:
+                              - name: tmp
+                                mountPath: /tmp
                     containers:
+                      # Same digest-pinning convention as ci-agent's containers above.
                       - name: "deploy"
-                        image: "dtzar/helm-kubectl:3.16"
+                        image: "dtzar/helm-kubectl:3.16@sha256:732b9752c447ce91cbd908c15f9f450e2d94cd3cfec47ce1072956df532cb0bf"
                         command: "sleep"
                         args: "99d"
                         resourceRequestCpu: "250m"
@@ -137,15 +263,19 @@ controller:
   # against an already-running controller - a bug there now fails just
   # that script, not the controller.
 
-  # Plugin names only, no individual version pins. An earlier attempt
+  # Plugin names only, no individual version pins - yet. An earlier attempt
   # pinned each plugin to whatever version plugins.jenkins.io reported at
   # the time - those versions turned out mutually incompatible (a
   # snakeyaml/credentials ClassNotFoundException killed the controller on
   # boot), because each plugin's dependency graph was checked in isolation,
-  # not as a set. Reproducibility instead comes from the pinned Jenkins
-  # core image tag above (controller.image.tag): for the same core
-  # version, the plugin installer resolves the same compatible set every
-  # time - that's the installer's job to solve, not ours to hand-solve.
+  # not as a set. Guessing versions again isn't the fix; capturing a set
+  # that's already proven compatible is - jenkins/scripts/
+  # lock-plugin-versions.sh reads the exact shortName:version pairs a live,
+  # successfully-booted controller actually resolved (top-level entries
+  # below plus every transitive dependency) into jenkins/plugins.lock.txt,
+  # meant to replace this bare-name list with "name:version" entries the
+  # Helm chart accepts directly. Not run yet as of this commit - needs a
+  # live controller to capture against, not something to fabricate here.
   installPlugins:
     - "kubernetes"
     - "kubernetes-credentials-provider"

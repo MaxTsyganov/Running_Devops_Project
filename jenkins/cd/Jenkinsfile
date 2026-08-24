@@ -16,6 +16,11 @@ pipeline {
 
     parameters {
         string(name: 'IMAGE_TAG', defaultValue: '', description: 'Immutable tag built by ci-application - never "latest"')
+        // KEY=value manifest (release-manifest.txt) ci-Jenkinsfile always
+        // supplies when it triggers this job - tag, CI build number, commit,
+        // and all three service digests. `text`, not `string`: needs
+        // multi-line values, which Jenkins' plain string parameter can't hold.
+        text(name: 'RELEASE_MANIFEST', defaultValue: '', description: 'release-manifest.txt from the ci-application build that produced IMAGE_TAG. Required for a manual Build Now too - copy it from that build\'s archived artifact.')
     }
 
     options {
@@ -45,16 +50,57 @@ pipeline {
                     if (params.IMAGE_TAG == 'latest') {
                         error("IMAGE_TAG must be an immutable tag (commit SHA), not 'latest'.")
                     }
+                    if (!params.RELEASE_MANIFEST?.trim()) {
+                        error("RELEASE_MANIFEST is required - it carries the per-service image digests CI produced, which is how a CD build satisfies Traceability back to the CI build, the commit, and the digest. ci-Jenkinsfile always supplies this when it triggers cd-application; a manual Build Now needs to copy it from that CI build's archived release-manifest.txt artifact.")
+                    }
+                    // Written to a file, not interpolated into the shell
+                    // heredoc below - keeps the validation step below a plain
+                    // file read with no shell-quoting surface, even though
+                    // this content is CI's own output, not attacker-controlled.
+                    writeFile file: 'release-manifest.txt', text: params.RELEASE_MANIFEST
+                }
+                container('deploy') {
+                    sh '''
+                        set -e
+                        # Confirms the manifest was actually produced for *this*
+                        # IMAGE_TAG (catches a stale/mismatched manifest on a manual
+                        # trigger) and that all three digests are well-formed. This
+                        # is deliberately format validation, not a live registry
+                        # existence check: cd-deploy-sa is intentionally non-IRSA
+                        # (jenkins/rbac/cd-deploy-rbac.yaml - it only ever calls the
+                        # in-cluster Kubernetes API), and the assignment's own CD
+                        # RBAC requirement is "only the namespace/resource types
+                        # deployment needs" - granting AWS/ECR read access here to
+                        # perform a live check would cut against that. A genuinely
+                        # nonexistent image still fails safely regardless: kubelet's
+                        # ImagePullBackOff surfaces in the Rollout stage below,
+                        # which already triggers the same automated rollback path
+                        # as any other post-deploy failure.
+                        MANIFEST_TAG=$(grep '^IMAGE_TAG=' release-manifest.txt | cut -d= -f2)
+                        if [ "$MANIFEST_TAG" != "${IMAGE_TAG}" ]; then
+                            echo "RELEASE_MANIFEST is for tag '$MANIFEST_TAG', not the requested IMAGE_TAG '${IMAGE_TAG}' - refusing to deploy a mismatched manifest."
+                            exit 1
+                        fi
+                        for svc in FRONTEND BACKEND WORKER; do
+                            DIGEST=$(grep "^DIGEST_${svc}=" release-manifest.txt | cut -d= -f2)
+                            echo "${svc} digest: ${DIGEST:-<missing>}"
+                            echo "$DIGEST" | grep -qE '^sha256:[0-9a-f]{64}$' \
+                                || { echo "DIGEST_${svc} in the manifest is missing or malformed (expected sha256:<64 hex chars>)."; exit 1; }
+                        done
+                        echo "Release manifest validated: tag ${IMAGE_TAG}, all three service digests well-formed."
+                    '''
                 }
                 // Traceability: who triggered this, which image, where it's
-                // going. The commit that produced this tag is recoverable
-                // from ci-application's build history - the tag itself IS
-                // the short commit SHA.
+                // going, and now which CI build/commit/digests produced it -
+                // all straight from the validated manifest above, not just
+                // inferred from the tag.
                 echo "=== Deployment request ==="
                 echo "Triggered by:     ${currentBuild.getBuildCauses()}"
                 echo "Image tag:        ${params.IMAGE_TAG}"
                 echo "Target namespace: ${env.TARGET_NAMESPACE}"
                 echo "Target cluster:   devops-cluster (in-cluster deploy via cd-deploy-sa ServiceAccount)"
+                echo "Release manifest:"
+                echo params.RELEASE_MANIFEST
             }
         }
 
@@ -98,6 +144,20 @@ pipeline {
         stage('Deploy') {
             steps {
                 container('deploy') {
+                    script {
+                        // Set before invoking Helm, not after it returns -
+                        // read by post{failure{}} below to decide whether to
+                        // even look for a rollback target. If `--wait`
+                        // below times out, `helm upgrade --install` has
+                        // already created the new revision server-side
+                        // before its own CLI process exits non-zero; setting
+                        // this only on success would miss exactly that case
+                        // and report "nothing applied" while a bad revision
+                        // sits live on the cluster. Checkout/Validation/
+                        // Manifest-Validation failures never reach this
+                        // stage, so the flag correctly stays unset for those.
+                        env.HELM_DEPLOY_ATTEMPTED = 'true'
+                    }
                     sh '''
                         set -e
                         # No --create-namespace: that makes Helm touch the
@@ -121,15 +181,6 @@ pipeline {
                             --set secrets.dbPasswordSecretName=${DB_SECRET_NAME} \
                             --wait --timeout 10m
                     '''
-                }
-                // Marks "a Helm revision now exists to roll back to" -
-                // read by post{failure{}} below. Guards automated rollback
-                // so it only ever fires once something was actually
-                // deployed - Checkout/Validation/Manifest-Validation
-                // failures touch the cluster not at all, so there is
-                // nothing to roll back from.
-                script {
-                    env.HELM_DEPLOYED = 'true'
                 }
             }
         }
@@ -220,32 +271,43 @@ pipeline {
     post {
         failure {
             script {
-                if (env.HELM_DEPLOYED == 'true') {
-                    echo "=== DEPLOYMENT FAILED after a new revision was already live - checking for a rollback target ==="
+                if (env.HELM_DEPLOY_ATTEMPTED == 'true') {
+                    echo "=== DEPLOYMENT FAILED after Deploy was attempted - checking actual cluster state for a rollback target ==="
                     container('deploy') {
                         sh '''
                             set -e
-                            # `helm rollback` errors ("release has no 0 version") on a
-                            # first-ever deploy - revision 1 has nothing earlier to roll
-                            # back to. Caught live on this project's actual first deploy,
-                            # not hypothesized: a bare `helm rollback` there crashed this
-                            # whole post{failure{}} block with a raw Helm error instead of
-                            # the informative message below. `helm history` always prints
-                            # one header line plus one line per revision, so 2 lines total
-                            # means exactly one revision exists.
-                            REVISION_LINES=$(helm history devops-app -n ${TARGET_NAMESPACE} 2>/dev/null | wc -l)
-                            if [ "$REVISION_LINES" -le 2 ]; then
-                                echo "This was the first-ever deploy (revision 1) - no earlier revision exists to roll back to. devops-app stays as deployed; fix forward with a new commit."
+                            # Checked against the cluster's own recorded state, not a
+                            # Groovy flag: this must equally cover (a) helm upgrade
+                            # --install succeeding but a later Rollout/Verify/Smoke-Test
+                            # stage failing, and (b) --wait itself timing out, where Helm
+                            # already created the revision server-side before its own CLI
+                            # process exited non-zero - a bare "did the sh step return 0"
+                            # check would misreport case (b) as nothing having been applied.
+                            if ! helm status devops-app -n ${TARGET_NAMESPACE} >/dev/null 2>&1; then
+                                echo "No devops-app Helm release exists on the cluster - Deploy never actually created one. Nothing to roll back."
                             else
-                                helm rollback devops-app -n ${TARGET_NAMESPACE} --wait --timeout 5m
-                                echo "=== Rolled back. Pods now: ==="
-                                kubectl get pods -n ${TARGET_NAMESPACE} -o custom-columns='NAME:.metadata.name,IMAGE:.spec.containers[0].image'
+                                # `helm rollback` errors ("release has no 0 version") on a
+                                # first-ever deploy - revision 1 has nothing earlier to roll
+                                # back to. Caught live on this project's actual first deploy,
+                                # not hypothesized: a bare `helm rollback` there crashed this
+                                # whole post{failure{}} block with a raw Helm error instead of
+                                # the informative message below. `helm history` always prints
+                                # one header line plus one line per revision, so 2 lines total
+                                # means exactly one revision exists.
+                                REVISION_LINES=$(helm history devops-app -n ${TARGET_NAMESPACE} 2>/dev/null | wc -l)
+                                if [ "$REVISION_LINES" -le 2 ]; then
+                                    echo "This was the first-ever deploy (revision 1) - no earlier revision exists to roll back to. devops-app stays as deployed; fix forward with a new commit."
+                                else
+                                    helm rollback devops-app -n ${TARGET_NAMESPACE} --wait --timeout 5m
+                                    echo "=== Rolled back. Pods now: ==="
+                                    kubectl get pods -n ${TARGET_NAMESPACE} -o custom-columns='NAME:.metadata.name,IMAGE:.spec.containers[0].image'
+                                fi
                             fi
                         '''
                     }
                 } else {
                     echo """
-=== DEPLOYMENT FAILED before any Helm revision was applied ===
+=== DEPLOYMENT FAILED before Deploy was ever attempted ===
 Nothing to roll back - devops-app is unchanged. Investigate:
   kubectl get pods -n ${env.TARGET_NAMESPACE}
   kubectl describe pod <pod-name> -n ${env.TARGET_NAMESPACE}
@@ -254,7 +316,7 @@ Nothing to roll back - devops-app is unchanged. Investigate:
                 }
             }
             script {
-                def detail = (env.HELM_DEPLOYED == 'true') ? 'see build log for rollback outcome' : 'no revision was ever applied'
+                def detail = (env.HELM_DEPLOY_ATTEMPTED == 'true') ? 'see build log for rollback outcome' : 'no revision was ever applied'
                 container('deploy') {
                     notifySlack('FAILURE', "CD failed deploying :${params.IMAGE_TAG} to ${env.TARGET_NAMESPACE} - ${detail}.")
                 }

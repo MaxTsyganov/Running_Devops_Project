@@ -80,7 +80,7 @@ as narrowly as `cd-deploy-sa` is now.
 | eksctl | `v0.229.0`/`0.230.0` | `setup.sh`, `jenkins/scripts/install-jenkins.sh` |
 | Helm | `v3.21.4` | client-side, any recent 3.x |
 | kubectl / aws-cli | any recent version | client-side |
-| Cosign | `v3.1.3` (static binary, fetched at runtime by the CI agent) | `jenkins/ci/Jenkinsfile` |
+| Cosign | `v3.1.3` (static binary, fetched at runtime by the CI agent, sha256-verified against a checksum pinned alongside the version) | `jenkins/ci/Jenkinsfile` |
 
 Also requires: an EKS cluster and `devops-app` namespace already brought up via this repo's own
 `setup.sh` (Jenkins is layered on top of that infra - see [§12](#12-supporting-infrastructure) - it
@@ -90,17 +90,22 @@ doesn't create a cluster itself), and a GitHub repository with permission to add
 
 ## 3. Installing Jenkins from code
 
-Five scripts, each idempotent (safe to re-run) and each doing exactly one thing:
+Six scripts, each idempotent (safe to re-run) and each doing exactly one thing:
 
 ```bash
-bash jenkins/scripts/install-jenkins.sh     # namespace, RBAC, ci-build-sa, EBS CSI driver +
-                                             # StorageClass, the Jenkins Helm release + JCasC
-bash jenkins/scripts/configure-jenkins.sh   # prints admin password, mints the smee.io channel,
-                                             # deploys webhook-relay, creates the webhook secret
-bash jenkins/jobs/create-jobs.sh            # creates/updates ci-application + cd-application
-                                             # via Jenkins' REST API (needs a port-forward - see below)
-bash jenkins/scripts/verify-jenkins.sh      # read-only health check against everything above
-bash jenkins/scripts/uninstall-jenkins.sh   # removes Jenkins only - app and cluster untouched
+bash jenkins/scripts/install-jenkins.sh       # namespace, RBAC, ci-build-sa, EBS CSI driver +
+                                               # StorageClass, the Jenkins Helm release + JCasC
+bash jenkins/scripts/configure-jenkins.sh     # mints the smee.io channel, deploys webhook-relay,
+                                               # creates the webhook + PR-token secret (admin
+                                               # password and secrets go to a local temp file, not
+                                               # the console - see §8)
+bash jenkins/jobs/create-jobs.sh              # creates/updates all three jobs via Jenkins' REST
+                                               # API (needs a port-forward - see below)
+bash jenkins/scripts/verify-jenkins.sh        # read-only health check against everything above
+bash jenkins/scripts/lock-plugin-versions.sh  # captures the live controller's exact resolved
+                                               # plugin set - run once after a clean boot, see
+                                               # jenkins/values.yaml's installPlugins comment
+bash jenkins/scripts/uninstall-jenkins.sh     # removes Jenkins only - app and cluster untouched
 ```
 
 `create-jobs.sh` needs Jenkins reachable at `http://localhost:8080`:
@@ -139,7 +144,10 @@ configuration on boot - no manual System Config page was ever touched:
 - **Agent templates**: `ci-agent` (three containers - `python` for lint/test/signing, `kaniko` for
   the image build, `trivy` for the image scan/SBOM; `serviceAccount: ci-build-sa`) and `cd-agent`
   (one `deploy` container with `kubectl`+`helm`; `serviceAccount: cd-deploy-sa`). Both templates set
-  explicit `resourceRequest*`/`resourceLimit*` on every container. No fourth container for Cosign -
+  explicit `resourceRequest*`/`resourceLimit*` on every container, and every container image is
+  pinned by digest (`image:tag@sha256:...`), not just tag - each digest resolved directly against
+  the registry (Docker Hub / GCR manifest API) at the time it was pinned, re-pinned the same way on
+  update rather than guessed. No fourth container for Cosign -
   its only official image is distroless (no shell), which breaks the idle-container-then-`exec`
   pattern every other tool here uses, so the CI pipeline fetches the static binary into the existing
   `python` container at runtime instead (§5). The same `ci-agent` template is also what each
@@ -147,10 +155,13 @@ configuration on boot - no manual System Config page was ever touched:
   template needed for that either.
 - **Plugin list**: `kubernetes`, `kubernetes-credentials-provider`, `workflow-aggregator`, `git`,
   `github`, `job-dsl`, `configuration-as-code`, `credentials-binding`, `timestamper`, `ws-cleanup`,
-  `pipeline-groovy-lib`, `generic-webhook-trigger` - named only, no individual version pins (an
-  earlier attempt pinning each plugin's version hit a `ClassNotFoundException` from
-  mutually-incompatible pinned versions; the installer resolves a compatible set for a given Jenkins
-  core version far more reliably than hand-pinning each one).
+  `pipeline-groovy-lib`, `generic-webhook-trigger` - named only as of this commit, not yet pinned to
+  individual versions (an earlier attempt pinning each plugin's version by hand hit a
+  `ClassNotFoundException` from mutually-incompatible pinned versions - each plugin's dependency
+  graph was checked in isolation, not as a set). `jenkins/scripts/lock-plugin-versions.sh` captures
+  the exact `shortName:version` pairs a live, successfully-booted controller actually resolved -
+  meant to replace this list with pinned versions that are known to work together, not guessed ones;
+  not yet run against a live controller as of this commit.
 - **Shared Library** (`devops-shared-lib`, bonus): a `globalLibraries` entry points
   `pipeline-groovy-lib`'s `modernSCM` retriever at this same repo (`main` branch,
   `libraryPath: jenkins/shared-library`) - one less repo to keep in sync, not a dedicated library
@@ -224,9 +235,20 @@ on `pull_request` events with `action` in `opened`/`synchronize`/`reopened` - Gi
 `pull_request` actions too (`closed`, `labeled`, ...) that shouldn't trigger a build.
 `jenkins/webhook-relay.yaml`'s relay script routes by event type: `push`/`ping` keep going to the
 `github` plugin's `/github-webhook/` endpoint exactly as before, `pull_request` goes to
-`/generic-webhook-trigger/invoke?token=pr-quality-gate` instead - one relay, two destinations, based
-on the same `x-github-event` header it already inspected. `configure-jenkins.sh` subscribes the
-GitHub webhook to both event types.
+`/generic-webhook-trigger/invoke?token=<generated>` instead - one relay, two destinations, based
+on the same `x-github-event` header it already inspected. The token itself is generated by
+`configure-jenkins.sh` (not a literal committed to this repo) and injected into
+`ci-application-pr-config.xml`'s `<token>` at apply time by `create-jobs.sh` - see [§8](#8-credentials-and-secrets).
+`configure-jenkins.sh` subscribes the GitHub webhook to both event types.
+
+**Signature verification**: every delivery is HMAC-verified in the relay itself (`relay.js`, using
+the same `git-webhook-secret` shared secret from [§8](#8-credentials-and-secrets)) before it's ever
+forwarded to either Jenkins endpoint - not left as a manual GitHub-plugin System Config step, since
+that could only ever be a documented follow-up, not something a script could apply to Jenkins' own
+UI state. `VERIFY_SIGNATURES` in `jenkins/webhook-relay.yaml` is a one-line toggle back to
+forward-everything if a real delivery is ever seen failing verification that a manual test wouldn't
+have caught (see that file's own comment on why: smee.io re-encodes the original payload before this
+relay ever sees it, which needs confirming against a real GitHub delivery, not just a synthetic one).
 
 **Checkout**: the job's own SCM config only fetches `pr-Jenkinsfile` itself from `main` (same as the
 other two jobs) - the pipeline's first stage does its own separate `checkout` with an explicit
@@ -239,39 +261,49 @@ of what the target branch looks like by the time the build runs.
 ## 6. CD Pipeline (`jenkins/cd/Jenkinsfile`)
 
 Never builds an image, never touches application source - checks out only to read the Helm chart.
-Takes one parameter, `IMAGE_TAG`, and refuses to run without one or with `latest`. Deploys directly
-via `helm upgrade --install` - an earlier version of this project used ArgoCD/GitOps for this
-instead; see [History](#13-history) for why that changed.
+Takes two parameters: `IMAGE_TAG` (refuses to run without one, or with `latest`) and
+`RELEASE_MANIFEST` (the `release-manifest.txt` `ci-Jenkinsfile` produces - see [§7](#7-jobs-as-code-and-how-ci-connects-to-cd)).
+Deploys directly via `helm upgrade --install` - an earlier version of this project used
+ArgoCD/GitOps for this instead; see [History](#13-history) for why that changed.
 
 | Stage | What it does |
 |---|---|
 | Checkout | Pulls the Helm chart only |
-| Input Validation | Rejects a missing or `latest` `IMAGE_TAG` |
+| Input Validation | Rejects a missing/`latest` `IMAGE_TAG` or a missing `RELEASE_MANIFEST`; confirms the manifest was produced for this exact tag and that all three service digests in it are well-formed (`sha256:<64 hex>`) |
 | Load infra config | Reads `dbHost`/`s3BucketName`/`snsTopicArn`/`dbPasswordSecretName` from the `terraform-outputs` ConfigMap `setup.sh` publishes in `devops-app` (these change every `terraform apply`, so they're read at deploy time, never hardcoded) |
 | Manifest Validation | `helm lint --strict` + a full `helm template` render |
 | Deploy | `helm upgrade --install devops-app ./helm/devops-app --set image.tag=$IMAGE_TAG ... --wait --timeout 10m` |
 | Rollout | `kubectl rollout status` on all three Deployments |
 | Verify | Confirms every Pod's image ends in `:$IMAGE_TAG` - fails the build if any doesn't |
-| Smoke Test | Real HTTP request to the frontend LoadBalancer, retried for up to 2 minutes while its DNS propagates |
+| Smoke Test | Real HTTP request to `frontend-service`'s in-cluster DNS name, retried for up to 30s while Service endpoints propagate - not the public LoadBalancer (see [§9](#9-security)'s Network note on why: it's the one deliberate choice that keeps the CD agent's egress NetworkPolicy scoped to a real Pod-backed destination instead of opening port 80 to `0.0.0.0/0`) |
 
 Runs on the `cd-agent` template as `cd-deploy-sa` - a plain (non-IRSA) ServiceAccount, since it only
-ever calls the in-cluster Kubernetes API, never an AWS API directly.
+ever calls the in-cluster Kubernetes API, never an AWS API directly. `RELEASE_MANIFEST`'s digest
+check is deliberately format validation, not a live ECR existence check: a live check would mean
+granting `cd-deploy-sa` AWS/ECR read access it has no other need for, which cuts against its own
+least-privilege design here - a genuinely nonexistent image still fails safely regardless, via
+`ImagePullBackOff` surfacing at the Rollout stage, which already triggers the same automated
+rollback path as any other post-deploy failure.
 
 **Traceability**: a CD build's console log shows exactly who triggered it
-(`currentBuild.getBuildCauses()`), the image tag, target namespace/cluster, and - if triggered by
-CI - the CI build that produced that tag is one click away (`ci-application`'s own build history,
-keyed by the same commit SHA that *is* the image tag). `kubectl get pods -n devops-app -o
+(`currentBuild.getBuildCauses()`), the image tag, target namespace/cluster, and the full
+`RELEASE_MANIFEST` it validated - the CI build number, Git commit, and all three service digests
+that produced this deployment, not just the tag. `kubectl get pods -n devops-app -o
 jsonpath='{..image}'` independently confirms the deployed tag matches.
 
-**Automated rollback**: `post { failure { ... } }` in `cd-Jenkinsfile` runs
-`helm rollback devops-app -n devops-app --wait --timeout 5m` for real, automatically, whenever
-Deploy has already applied a new Helm revision and something afterward goes wrong (Deploy itself
-timing out, or a subsequent Rollout/Verify/Smoke Test failure) - guarded by an `env.HELM_DEPLOYED`
-flag set right after `helm upgrade --install` succeeds, so an earlier failure (bad `IMAGE_TAG`, a
-`helm lint` error) that never touched the cluster correctly does *not* trigger a rollback of a
-revision that was never replaced. If the rollback itself fails, the build's console log still shows
-exactly where it broke; there was never a scenario tested where the previous revision was itself
-unhealthy, since CI's own scan gate keeps that from happening in the first place.
+**Automated rollback**: `post { failure { ... } }` in `cd-Jenkinsfile` checks `helm history`/`helm
+status` against the cluster's own recorded state - not a Groovy flag set only on a fully successful
+`helm upgrade --install` - and runs `helm rollback devops-app -n devops-app --wait --timeout 5m` for
+real, automatically, whenever a revision actually exists to roll back to. Checking the cluster
+directly instead of trusting a success-only flag matters for one real edge case: if `--wait` itself
+times out, Helm has already created the new revision server-side before its own CLI process exits
+non-zero, so a flag set only after that command returns 0 would miss exactly that case and report
+"nothing applied" while a bad revision sits live. `env.HELM_DEPLOY_ATTEMPTED` (set *before* the Helm
+call, not after) still gates whether to even look - an earlier failure (bad `IMAGE_TAG`, a `helm
+lint` error) that never reached the Deploy stage correctly reports nothing to roll back, without a
+cluster round-trip. If the rollback itself fails, the build's console log still shows exactly where
+it broke; there was never a scenario tested where the previous revision was itself unhealthy, since
+CI's own scan gate keeps that from happening in the first place.
 
 ---
 
@@ -284,12 +316,21 @@ it does, so re-running after editing a Jenkinsfile or a `config.xml` is a normal
 Creating any of them by hand through the Jenkins UI is explicitly out of scope for this assignment
 and isn't how these ever get created here.
 
-CI connects to CD via `build job: 'cd-application', parameters: [string(name: 'IMAGE_TAG', value:
-env.IMAGE_TAG)], wait: false` in `ci-Jenkinsfile`'s `post { success { ... } }` block - CI hands CD
-the exact tag it just pushed, `wait: false` so CI's own build finishes and frees its agent Pod
-immediately rather than blocking on the entire CD run. Even though CD fires automatically, it still
-exists as its own job with its own Jenkinsfile, satisfying the assignment's requirement that CI and
-CD stay visibly separate pipelines.
+CI connects to CD via `build job: 'cd-application', parameters: [...], wait: false` in
+`ci-Jenkinsfile`'s `post { success { ... } }` block, passing two things: `IMAGE_TAG` (the tag it just
+pushed) and `RELEASE_MANIFEST` - a plain `KEY=value` text manifest (`release-manifest.txt`, also
+archived as a build artifact) carrying the CI build number, Git commit, and all three services'
+image digests, assembled from values each matrix cell bubbles into the shared Pipeline `env` as it
+finishes (`env."DIGEST_${SERVICE}"` - `env` is Pipeline-global, not scoped to whichever agent Pod a
+step happened to run on, so this survives past the matrix even though each cell ran on its own
+separate Pod). `wait: false` so CI's own build finishes and frees its agent Pod immediately rather
+than blocking on the entire CD run. This manifest hand-off is what lets a CD build satisfy
+Traceability back to the exact CI build/commit/digests that produced it (see
+[§6](#6-cd-pipeline-jenkinscdjenkinsfile)), not just the tag - and it's one of the assignment's own
+listed CI→CD linkage options ("saving artifact metadata or a release manifest that CD reads
+explicitly"), not a bespoke mechanism. Even though CD fires automatically, it still exists as its own
+job with its own Jenkinsfile, satisfying the assignment's requirement that CI and CD stay visibly
+separate pipelines.
 
 ---
 
@@ -300,7 +341,8 @@ CD stay visibly separate pipelines.
 | ECR push (CI) | IRSA (`ci-build-sa` → `DevOps-CI-ECR-Push-Policy`) - no static credential exists |
 | kubectl/helm access (CD) | `cd-deploy-sa`'s own ServiceAccount token, auto-mounted in-cluster |
 | DB password | AWS Secrets Manager, read by External Secrets Operator - never touches Jenkins at all |
-| GitHub webhook signature | Jenkins Credential `git-webhook-secret` (Secret text), created from a Kubernetes Secret labeled `jenkins.io/credentials-type: secretText` - picked up automatically by the Kubernetes Credentials Provider plugin, no JCasC edit or restart needed |
+| GitHub webhook signature | `git-webhook-secret` Kubernetes Secret's `text` key - read directly by `webhook-relay`'s `relay.js` to HMAC-verify every delivery; also labeled `jenkins.io/credentials-type: secretText` so it's picked up automatically by the Kubernetes Credentials Provider plugin as a normal Jenkins Credential too, no JCasC edit or restart needed |
+| `ci-application-pr` webhook routing token | Same Secret's `pr-token` key - generated alongside the signature secret, never a literal in git. `webhook-relay` reads it to build the endpoint URL it forwards `pull_request` events to; `create-jobs.sh` reads the same key to substitute `ci-application-pr-config.xml`'s `<token>` placeholder at apply time, so both sides stay in sync without either one committing the value |
 | Slack Incoming Webhook URL (bonus) | Same mechanism, different credential: `slack-webhook-url`, created by `configure-jenkins.sh` from `$SLACK_WEBHOOK_URL` if the caller set it - optional, CI/CD work with or without it |
 
 **Build notifications (bonus)**: `jenkins/shared-library/vars/notifySlack.groovy` posts a
@@ -359,6 +401,22 @@ root filesystem. The Jenkins controller itself runs under the official chart's o
 `allowPrivilegeEscalation: false` - never overridden to anything looser. Both the Jenkins controller
 image and agent container images are pinned to a fixed tag, never `latest`.
 
+`ci-agent`/`cd-agent`'s own containers (`jenkins/values.yaml`, applied via JCasC's raw-YAML
+`yamlMergeStrategy: merge` - the structured `containers:` shorthand those templates otherwise use has
+no `securityContext` field of its own) are now hardened per-container, not uniformly: `python`,
+`trivy`, and `deploy` run `runAsNonRoot`, `allowPrivilegeEscalation: false`, all capabilities
+dropped, read-only root filesystem with an explicit writable `emptyDir` at `/tmp` (and
+`TRIVY_CACHE_DIR`/`HOME` pointed at it, since neither tool's default cache location is guessable
+under an arbitrary non-root UID with no `/etc/passwd` entry). `kaniko` deliberately stays on
+`allowPrivilegeEscalation: false` + `seccompProfile: RuntimeDefault` only - it has to `chown`/`chmod`
+extracted layer files to match Dockerfile/base-image ownership while unpacking, which needs root or
+`CAP_CHOWN`/`CAP_FOWNER` (Kaniko's own documented constraint, not an oversight - see that container's
+comment in `jenkins/values.yaml`), so `runAsNonRoot` and a full capability drop would break real
+builds. **Not yet confirmed live**: this hardening pass was written without a running cluster to test
+against - a real CI/CD run needs to confirm `trivy`'s cache-dir override and `deploy`'s `HOME`
+override actually work before this is trusted the way the rest of this README's "confirmed live"
+claims are.
+
 **Scanning Jenkins' own images**: separate from CI's scan of the *app* images (§5), the 5 images
 Jenkins itself is built from - the controller (`jenkins/jenkins:2.541.3-lts-jdk17`) and every
 agent-template container (`python:3.11-slim`, the Kaniko executor, `dtzar/helm-kubectl`, Trivy
@@ -410,6 +468,10 @@ a `set +x` before that token is ever touched - the same "never printed to a log"
 URL (masked via `withCredentials`) and the DB password (never written to disk at all) are already
 held to. The token itself is 12-hour-lived and scoped only to this account's ECR, not full AWS access,
 but a real credential in a build log is a real credential in a build log regardless of blast radius.
+The same bar applies outside pipeline logs too: `configure-jenkins.sh` used to print the Jenkins
+admin password and the freshly generated webhook secret straight to the operator's terminal (and
+therefore into any saved transcript of that terminal) - both now go to a local temp file the operator
+copies from and deletes instead, never echoed to the console.
 
 ---
 

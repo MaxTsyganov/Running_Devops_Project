@@ -53,8 +53,9 @@ sequenceDiagram
             and matrix cell: worker
                 CI->>CI: same 5 steps, own Pod
             end
+            CI->>CI: assemble release-manifest.txt (tag, CI build #, commit, all 3 digests)
             CI->>Ctrl: build succeeded (any cell failing fails the whole build)
-            Ctrl->>CD: trigger cd-application(IMAGE_TAG=<sha>)
+            Ctrl->>CD: trigger cd-application(IMAGE_TAG=<sha>, RELEASE_MANIFEST=...)
         end
         CI->>Slack: notifySlack() - bonus, success or failure either way
     end
@@ -62,7 +63,7 @@ sequenceDiagram
     rect rgb(227, 242, 253)
         note over CD: CD Pipeline (cd-Jenkinsfile) - never rebuilds the image
         CD->>CD: Checkout (Helm chart only)
-        CD->>CD: Input Validation (tag/digest exists, not latest)
+        CD->>CD: Input Validation (tag not latest, manifest matches tag, digests well-formed)
         CD->>CD: Manifest Validation (helm lint, helm template)
         CD->>K8s: Authenticate via cd-deploy-sa ServiceAccount
         CD->>K8s: helm upgrade --install (same tag CI just pushed)
@@ -73,7 +74,7 @@ sequenceDiagram
             CD->>K8s: automated rollback: helm rollback devops-app (only if a revision was already live)
         else rollout succeeds
             CD->>K8s: Verify - every Pod running the expected tag
-            CD->>User: Smoke test - real HTTP request to the LoadBalancer
+            CD->>K8s: Smoke test - real HTTP request to frontend-service (in-cluster DNS)
             alt smoke test fails
                 CD--xCtrl: build marked failed
                 CD->>K8s: automated rollback: helm rollback devops-app (only if a revision was already live)

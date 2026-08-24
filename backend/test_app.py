@@ -1,4 +1,5 @@
 from datetime import datetime
+from io import BytesIO
 
 import app as app_module
 
@@ -33,3 +34,37 @@ def test_create_item_rejects_name_over_255_chars():
     resp = client.post("/api/items", json={"name": "x" * 256})
     assert resp.status_code == 400
     assert "255" in resp.get_json()["error"]
+
+
+def test_create_item_rejects_missing_name():
+    client = app_module.app.test_client()
+    resp = client.post("/api/items", json={})
+    assert resp.status_code == 400
+    assert "required" in resp.get_json()["error"].lower()
+
+
+def test_create_item_rejects_whitespace_only_name():
+    client = app_module.app.test_client()
+    resp = client.post("/api/items", json={"name": "   "})
+    assert resp.status_code == 400
+    assert "required" in resp.get_json()["error"].lower()
+
+
+def test_upload_rejects_request_without_file_field():
+    # No S3 bucket config or real upload needed - rejected before
+    # S3_BUCKET_NAME is even checked.
+    client = app_module.app.test_client()
+    resp = client.post("/api/upload", data={})
+    assert resp.status_code == 400
+    assert "no file" in resp.get_json()["error"].lower()
+
+
+def test_upload_rejects_empty_filename():
+    client = app_module.app.test_client()
+    resp = client.post(
+        "/api/upload",
+        data={"file": (BytesIO(b"data"), "")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    assert "name" in resp.get_json()["error"].lower()

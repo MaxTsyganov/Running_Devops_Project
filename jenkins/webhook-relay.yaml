@@ -29,6 +29,14 @@
 # https://smee.io/<channel> generated once via `curl -sI https://smee.io/new`
 # and persisted, not committed - re-running configure.sh reuses the existing
 # channel instead of minting a new one each time).
+#
+# Signature verification lives here, not in Jenkins' own GitHub plugin: this
+# relay is the one component with an outbound connection to the public
+# internet, so it's the actual trust boundary between a real GitHub delivery
+# and anything Jenkins ever sees - verifying here means neither Jenkins
+# endpoint has to trust an unauthenticated POST from inside the cluster
+# network, regardless of what the GitHub plugin's own System Config does or
+# doesn't check.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -36,6 +44,8 @@ metadata:
   namespace: jenkins
 data:
   relay.js: |
+    const crypto = require("node:crypto");
+
     const smeeUrl = process.env.SMEE_URL;
     const target = process.env.TARGET_URL;
     // Separate target for pull_request events: the "github" plugin's push
@@ -43,7 +53,35 @@ data:
     // ci-application-pr is triggered by the generic-webhook-trigger plugin
     // instead, which listens on its own endpoint. push/ping keep going to
     // TARGET_URL exactly as before; only pull_request gets routed here.
-    const targetPr = process.env.TARGET_URL_PR;
+    // PR_WEBHOOK_TOKEN is appended at runtime (never baked into this
+    // ConfigMap or committed to git) - generated fresh by
+    // configure-jenkins.sh and read from git-webhook-secret.
+    const targetPrBase = process.env.TARGET_URL_PR;
+    const prToken = process.env.PR_WEBHOOK_TOKEN;
+    const targetPr = (targetPrBase && prToken) ? `${targetPrBase}?token=${prToken}` : targetPrBase;
+
+    // HMAC secret GitHub signs every real delivery with (configure-jenkins.sh
+    // generates it, stored in git-webhook-secret). VERIFY_SIGNATURES defaults
+    // to enforcing this and is deliberately a plain env var (not read from a
+    // Secret) so it's a one-line manifest edit to flip off, not a credential
+    // to rotate, if a real GitHub delivery is ever seen failing verification
+    // that a manual curl/wget test against this endpoint wouldn't catch
+    // (smee.io re-encodes the original payload as JSON before this relay
+    // ever sees it - verified against the actual byte layout smee.io hands
+    // back over its SSE stream, but a mismatch here means "reject a real
+    // delivery," not "forward a forged one," so fail loud instead of silent).
+    const hmacSecret = process.env.WEBHOOK_HMAC_SECRET;
+    const verifySignatures = process.env.VERIFY_SIGNATURES !== "false";
+
+    function signatureValid(body, signatureHeader) {
+      if (!hmacSecret || !signatureHeader || !signatureHeader.startsWith("sha256=")) {
+        return false;
+      }
+      const expected = "sha256=" + crypto.createHmac("sha256", hmacSecret).update(body).digest("hex");
+      const a = Buffer.from(expected);
+      const b = Buffer.from(signatureHeader);
+      return a.length === b.length && crypto.timingSafeEqual(a, b);
+    }
 
     async function forward(data) {
       // smee.io sends housekeeping messages (e.g. an empty {} on connect)
@@ -55,6 +93,15 @@ data:
       }
       const dest = (event === "pull_request" && targetPr) ? targetPr : target;
       const body = JSON.stringify(data.body);
+      const signatureHeader = data["x-hub-signature-256"] || "";
+      if (verifySignatures) {
+        if (!signatureValid(body, signatureHeader)) {
+          console.error(`Dropped ${event} delivery - signature did not verify, not forwarding to Jenkins.`);
+          return;
+        }
+      } else {
+        console.log(`VERIFY_SIGNATURES=false - forwarding ${event} unverified.`);
+      }
       try {
         const res = await fetch(dest, {
           method: "POST",
@@ -63,7 +110,7 @@ data:
             "content-type": "application/json",
             "x-github-event": event || "",
             "x-github-delivery": data["x-github-delivery"] || "",
-            "x-hub-signature-256": data["x-hub-signature-256"] || "",
+            "x-hub-signature-256": signatureHeader,
             "x-hub-signature": data["x-hub-signature"] || "",
           },
         });
@@ -141,12 +188,30 @@ spec:
                   key: url
             - name: TARGET_URL
               value: "http://jenkins.jenkins.svc.cluster.local:8080/github-webhook/"
-            # ci-application-pr's generic-webhook-trigger endpoint - the
-            # "pr-quality-gate" token matches jenkins/jobs/
-            # ci-application-pr-config.xml's <token> so only that job
-            # responds to this specific delivery.
+            # Base URL only - relay.js appends ?token=$PR_WEBHOOK_TOKEN at
+            # runtime. jenkins/jobs/create-jobs.sh injects the same generated
+            # token into ci-application-pr-config.xml's <token> when it
+            # creates that job, so the two stay in sync without either one
+            # being a committed literal.
             - name: TARGET_URL_PR
-              value: "http://jenkins.jenkins.svc.cluster.local:8080/generic-webhook-trigger/invoke?token=pr-quality-gate"
+              value: "http://jenkins.jenkins.svc.cluster.local:8080/generic-webhook-trigger/invoke"
+            - name: WEBHOOK_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: git-webhook-secret
+                  key: text
+            - name: PR_WEBHOOK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: git-webhook-secret
+                  key: pr-token
+            # Plain value, not a Secret ref - a one-line manifest edit to
+            # flip off if a real GitHub delivery is ever seen failing
+            # verification (see relay.js's own comment on why that's a
+            # "reject a real one" risk here, not a "forward a forged one"
+            # risk), not something that needs rotating like the two above.
+            - name: VERIFY_SIGNATURES
+              value: "true"
           volumeMounts:
             - name: script
               mountPath: /relay

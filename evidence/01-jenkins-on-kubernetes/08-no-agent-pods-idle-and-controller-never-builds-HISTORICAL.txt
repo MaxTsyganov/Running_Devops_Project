@@ -1,3 +1,18 @@
+=== HISTORICAL - captured BEFORE the idleMinutes fix, kept for the record ===
+This capture predates removing idleMinutes from both agent templates in
+jenkins/values.yaml (see that file's own comment on the Kubernetes cloud
+config for the full story). At the time this was captured, idleMinutes kept
+a just-finished agent Pod alive and idle for reuse - directly contradicting
+podRetention: never - which is exactly why the output below (captured under
+a title claiming no agent Pods remain) actually shows two still-running
+cd-application agent Pods. That was the live bug, not a labeling mistake:
+this file is being kept, relabeled, rather than replaced, so the discrepancy
+stays visible instead of being quietly edited away. See
+evidence/06-bonus-features/15-jcasc-recovery-drill-proof.txt for the fix
+confirmed live afterward, with idleMinutes removed and no idle agent Pods
+holding onto capacity between builds.
+===============================================================================
+
 === No agent Pods currently running (ephemeral - only appear during a build) ===
 Only the controller (jenkins-0) and the persistent webhook-relay should be present:
 NAME                                 READY   STATUS    RESTARTS   AGE
@@ -9,4 +24,3 @@ webhook-relay-78d5d77975-2xzbx       1/1     Running   0          65m
 === Confirmed via jenkins/values.yaml: numExecutors: 0 on the controller ===
   (controller.numExecutors: 0 - structurally impossible for a build to run on it)
   numExecutors: 0
-

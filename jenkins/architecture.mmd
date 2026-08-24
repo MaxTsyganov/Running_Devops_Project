@@ -11,6 +11,7 @@ flowchart TB
     GH[GitHub repository]
     Smee[["smee.io channel\n(public relay, outbound-only from our side)"]]
     Slack[["Slack (bonus)\nIncoming Webhook"]]
+    ConfigRepo[["Same repo, config path:\njenkins/values.yaml (JCasC + plugin list)\njenkins/jobs/*.xml (job definitions)"]]
 
     Dev -->|push or PR| GH
     GH -->|webhook POST\nHTTPS, HMAC-signed| Smee
@@ -104,13 +105,16 @@ flowchart TB
     ESO -.writes app-secrets Secret.-> WK
 
     Admin["Admin (developer machine)"] -.->|kubectl port-forward\nnever public| JSvc
+    Admin -.->|helm install/upgrade -f values.yaml\napplies JCasC (clouds, agent templates,\nShared Library) + installPlugins, from Git| Controller
+    Admin -.->|create-jobs.sh\nREST API, idempotent, config.xml from Git\nnever hand-typed in the Jenkins UI| Controller
+    ConfigRepo -.source for both calls above.-> Admin
 
     classDef external fill:#eee,stroke:#999,color:#333
     classDef aws fill:#fff3e0,stroke:#e65100,color:#333
     classDef jenkins fill:#e3f2fd,stroke:#1565c0,color:#333
     classDef app fill:#e8f5e9,stroke:#2e7d32,color:#333
     classDef data fill:#fce4ec,stroke:#ad1457,color:#333
-    class Dev,User,GH,Smee,Admin,Slack external
+    class Dev,User,GH,Smee,Admin,Slack,ConfigRepo external
     class ALB,RDS,ECR,S3,SNS,SecMgr,KMS aws
     class Relay,Controller,PVC,JSvc,CIAgent,CDAgent,PRAgent jenkins
     class FE,BE,WK,BESvc,ESO app

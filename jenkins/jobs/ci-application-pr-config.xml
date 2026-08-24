@@ -81,7 +81,12 @@
           <defaultValue></defaultValue>
         </org.jenkinsci.plugins.gwt.GenericVariable>
       </genericVariables>
-      <token>pr-quality-gate</token>
+      <!-- Substituted by jenkins/jobs/create-jobs.sh from git-webhook-secret's
+           pr-token key at apply time - never a literal here, so it's not a
+           value anyone with read access to this repo can also use to invoke
+           the endpoint (see jenkins/webhook-relay.yaml for the same token
+           used on the relay side of this trigger). -->
+      <token>__PR_WEBHOOK_TOKEN__</token>
       <printContributedVariables>true</printContributedVariables>
       <printPostContent>false</printPostContent>
       <silentResponse>false</silentResponse>

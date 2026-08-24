@@ -38,6 +38,12 @@ pipeline {
         // the same approach already used for pyflakes/pytest, no fourth
         // agent container needed.
         COSIGN_VERSION = 'v3.1.3'
+        // sha256 of cosign-linux-amd64 from that release's own
+        // cosign_checksums.txt (github.com/sigstore/cosign/releases/download/
+        // v3.1.3/cosign_checksums.txt) - hardcoded here, not fetched at build
+        // time, so a compromised release download can't also serve a matching
+        // fake checksum. Bumping COSIGN_VERSION means updating this too.
+        COSIGN_SHA256 = '4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71'
         // awskms:///alias/... - three slashes: awskms:// plus an empty
         // endpoint (default AWS endpoint) plus the /alias/... path. Signs
         // with an asymmetric KMS key (terraform/kms.tf) - no private key
@@ -188,6 +194,10 @@ pipeline {
                                     # above) - fetch the static binary with urllib since this container
                                     # has neither curl nor wget either (checked directly, not assumed).
                                     python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64', '/tmp/cosign')"
+                                    # Verify against the checksum pinned above before trusting/executing
+                                    # this binary - it's fetched over plain HTTPS at build time with no
+                                    # OS package manager or signature check in front of it otherwise.
+                                    echo "${COSIGN_SHA256}  /tmp/cosign" | sha256sum -c -
                                     chmod +x /tmp/cosign
                                     # set +x from here on: Jenkins' sh step echoes every command it
                                     # runs (the "+ ..." lines in the console log) - without this, both
@@ -249,6 +259,18 @@ print(base64.b64decode(token).decode().split(':', 1)[1])
                                 cat "image-metadata-${SERVICE}.txt"
                             '''
                             archiveArtifacts artifacts: "image-metadata-${SERVICE}.txt", fingerprint: true
+                            // Bubbled into the Pipeline-global env, not just this
+                            // matrix cell's own Pod/workspace - env is shared
+                            // across the whole Pipeline run regardless of which
+                            // agent Pod a step executes on, so post{success{}}
+                            // below (running after all three matrix cells finish)
+                            // can read every service's digest to build the
+                            // release manifest CD needs for Traceability. A local
+                            // shell variable or a file on this cell's own Pod
+                            // wouldn't survive past this matrix cell.
+                            script {
+                                env."DIGEST_${SERVICE}" = sh(script: 'cat digest.txt', returnStdout: true).trim()
+                            }
                         }
                     }
                 }
@@ -264,17 +286,45 @@ print(base64.b64decode(token).decode().split(':', 1)[1])
             cleanWs()
         }
         success {
-            echo "CI succeeded - triggering cd-application with IMAGE_TAG=${env.IMAGE_TAG}"
-            build job: 'cd-application',
-                  parameters: [string(name: 'IMAGE_TAG', value: env.IMAGE_TAG)],
-                  wait: false
+            script {
+                // Plain KEY=value lines, same shape as this matrix's own
+                // per-service image-metadata-${SERVICE}.txt above - not JSON,
+                // deliberately: CD parses this with grep/cut in a shell step
+                // (jenkins/cd/Jenkinsfile's Input Validation stage), so there's
+                // no JSON library/script-approval surface on either side, just
+                // the same plain-text convention already used everywhere else
+                // in this pipeline.
+                def manifest = """IMAGE_TAG=${env.IMAGE_TAG}
+CI_BUILD_NUMBER=${env.BUILD_NUMBER}
+GIT_COMMIT=${env.GIT_COMMIT_SHORT}
+DIGEST_FRONTEND=${env.DIGEST_frontend}
+DIGEST_BACKEND=${env.DIGEST_backend}
+DIGEST_WORKER=${env.DIGEST_worker}
+"""
+                writeFile file: 'release-manifest.txt', text: manifest
+                archiveArtifacts artifacts: 'release-manifest.txt', fingerprint: true
+                echo "CI succeeded - triggering cd-application with IMAGE_TAG=${env.IMAGE_TAG}"
+                build job: 'cd-application',
+                      parameters: [
+                          string(name: 'IMAGE_TAG', value: env.IMAGE_TAG),
+                          text(name: 'RELEASE_MANIFEST', value: manifest)
+                      ],
+                      wait: false
+            }
             container('python') {
                 notifySlack('SUCCESS', "Built, scanned, and signed :${env.IMAGE_TAG} for all three services - triggering cd-application.")
             }
         }
         failure {
             container('python') {
-                notifySlack('FAILURE', "CI failed on commit ${env.GIT_COMMIT_SHORT ?: env.GIT_COMMIT} - nothing was built or deployed.")
+                // Not "nothing was built" - Kaniko pushes to ECR as part of Build,
+                // before that same matrix cell's Scan/Sign stages run, and other
+                // services' matrix cells run in parallel and may have already
+                // finished. A failure here can leave one or more images already in
+                // ECR, unscanned/unsigned/unpromoted. What's actually guaranteed is
+                // that nothing was deployed - cd-application only ever triggers
+                // from this pipeline's post{success{}} block, never reached here.
+                notifySlack('FAILURE', "CI failed on commit ${env.GIT_COMMIT_SHORT ?: env.GIT_COMMIT} - one or more services may be partially built/pushed; nothing was deployed.")
             }
         }
     }
