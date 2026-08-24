@@ -5,6 +5,11 @@
 # setup.sh attaches these exact policies, by name, to the backend-sa/
 # worker-sa IAM roles it creates via `eksctl create iamserviceaccount`
 # (IRSA). Don't rename them without updating the POLICY_ARN lines in setup.sh.
+
+# Only used to scope the Cluster Autoscaler policy's eks:DescribeNodegroup
+# statement below to this account's own resources, not "*".
+data "aws_caller_identity" "current" {}
+
 resource "aws_iam_policy" "backend_least_privilege_policy" {
   name        = "DevOps-Backend-Least-Privilege-Policy"
   description = "Minimal permissions required for the backend to access its specific S3 bucket and SNS topic."
@@ -171,6 +176,72 @@ resource "aws_iam_policy" "fluent_bit_logging_policy" {
         Resource = [
           "${aws_cloudwatch_log_group.app_logs.arn}:*"
         ]
+      }
+    ]
+  })
+}
+
+# Cluster Autoscaler - added when a real, reproducible capacity-contention
+# problem showed up live: two full Jenkins CI matrix builds landing at once
+# (a burst of up to 6 ephemeral ci-agent Pods) transiently starved the
+# cluster's fixed 3-node baseline. The read-only Describe actions can't be
+# scoped by resource (AWS's autoscaling API doesn't support resource-level
+# permissions on Describe calls), but the actions that actually change
+# anything (SetDesiredCapacity, TerminateInstanceInAutoScalingGroup,
+# UpdateAutoScalingGroup) are conditioned on the ASG carrying this specific
+# cluster's own auto-discovery tag - devops-cluster's node group ASG is
+# tagged with it (see jenkins/scripts/install-jenkins.sh), nothing else in
+# this AWS account is, so this can't touch any other ASG even though the
+# Resource element itself has to be "*" (the same AWS limitation - these
+# actions don't support ARN-scoped resources either, only tag conditions).
+resource "aws_iam_policy" "cluster_autoscaler_policy" {
+  name        = "DevOps-ClusterAutoscaler-Policy"
+  description = "Minimal permissions for Cluster Autoscaler to scale devops-cluster's own managed node group - AWS's documented minimal policy shape for this, not a broader one."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ClusterAutoscalerReadOnly"
+        Effect = "Allow"
+        Action = [
+          "autoscaling:DescribeAutoScalingGroups",
+          "autoscaling:DescribeAutoScalingInstances",
+          "autoscaling:DescribeLaunchConfigurations",
+          "autoscaling:DescribeScalingActivities",
+          "autoscaling:DescribeTags",
+          "ec2:DescribeInstanceTypes",
+          "ec2:DescribeLaunchTemplateVersions"
+        ]
+        Resource = ["*"]
+      },
+      {
+        # EKS-managed node groups specifically (not self-managed ASGs) need
+        # this too - confirmed live, Cluster Autoscaler logs an
+        # AccessDeniedException reading labels/taints/tags from the managed
+        # nodegroup API without it. Its own statement, not folded into the
+        # Describe actions above: unlike those, this one actually supports
+        # resource-level ARN scoping, so it gets it - devops-cluster's own
+        # nodegroups only, not every nodegroup in the account.
+        Sid      = "ClusterAutoscalerDescribeOurNodegroupsOnly"
+        Effect   = "Allow"
+        Action   = ["eks:DescribeNodegroup"]
+        Resource = ["arn:aws:eks:*:${data.aws_caller_identity.current.account_id}:nodegroup/devops-cluster/*/*"]
+      },
+      {
+        Sid    = "ClusterAutoscalerMutateOwnASGOnly"
+        Effect = "Allow"
+        Action = [
+          "autoscaling:SetDesiredCapacity",
+          "autoscaling:TerminateInstanceInAutoScalingGroup",
+          "autoscaling:UpdateAutoScalingGroup"
+        ]
+        Resource = ["*"]
+        Condition = {
+          StringEquals = {
+            "autoscaling:ResourceTag/k8s.io/cluster-autoscaler/devops-cluster" = "owned"
+          }
+        }
       }
     ]
   })
