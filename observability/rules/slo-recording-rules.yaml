@@ -13,9 +13,17 @@ spec:
     - name: slo.rules
       interval: 30s
       rules:
+        # (sum(...) or vector(0)) around the numerator - not optional.
+        # Caught live testing the CD Monitoring Gate's own near-identical
+        # query (jenkins/cd/Jenkinsfile): a label filter that matches zero
+        # time series (here, "every request was 5xx" - a total outage)
+        # makes sum()/rate() produce an EMPTY vector, not a literal 0, so
+        # this rule would record NO value at all during an outage - a gap
+        # in exactly the data an outage most needs. vector(0) supplies a
+        # real zero to divide by instead.
         - record: job:http_availability:ratio_rate5m
           expr: >
-            sum(rate(http_requests_total{job="backend-service",status!~"5.."}[5m]))
+            (sum(rate(http_requests_total{job="backend-service",status!~"5.."}[5m])) or vector(0))
             /
             sum(rate(http_requests_total{job="backend-service"}[5m]))
         - record: job:http_request_duration_seconds:p95_rate5m

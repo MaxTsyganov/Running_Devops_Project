@@ -117,17 +117,41 @@ spec:
         - protocol: TCP
           port: 8080
     - to:
+        # One combined rule for every same-namespace scrape target sharing
+        # this direction - each port below only matters to whichever of
+        # these actually listens on it (grafana:3000, operator's own
+        # metrics:10250, kube-state-metrics:8080, alertmanager:8080/9093),
+        # the extra reachability on ports the others don't listen on is
+        # harmless. Caught live: this rule originally covered only
+        # kube-state-metrics/alertmanager - Prometheus's own EGRESS to
+        # Grafana and the operator was missing entirely, which is a
+        # different, equally necessary half of the pairing from the
+        # ingress rules already written on grafana-policy/
+        # prometheus-operator-policy (NetworkPolicy requires both the
+        # source's egress AND the destination's ingress to independently
+        # allow traffic - having only one side denies it just as
+        # completely as having neither).
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: kube-state-metrics
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: alertmanager
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+        - podSelector:
+            matchLabels:
+              app: kube-prometheus-stack-operator
       ports:
         - protocol: TCP
           port: 8080
         - protocol: TCP
           port: 9093
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 10250
     - to:
         - namespaceSelector:
             matchLabels:
@@ -160,10 +184,25 @@ spec:
           port: 10250 # kubelet + cAdvisor
         - protocol: TCP
           port: 10249 # kube-proxy
+        # Port 443 here too - caught live: the chart's own "apiserver" job
+        # (observability-apiserver ServiceMonitor) scrapes the API server's
+        # real control-plane ENI IPs directly (Prometheus's "endpoints" role
+        # service discovery resolves straight to backend IPs, bypassing the
+        # kubernetes.default.svc ClusterIP entirely for the actual scrape
+        # connection) - and those ENI IPs land in this cluster's private
+        # subnets, same as node/kubelet IPs, not in the 172.20.0.0/16
+        # Service CIDR the rule above covers. Confirmed live: this job was
+        # the one real target still down after every other fix here.
+        - protocol: TCP
+          port: 443
 
 ---
 # Alertmanager: accepts alerts from Prometheus (and optionally queries from
-# Grafana's Alertmanager datasource); egresses to Slack.
+# Grafana's Alertmanager datasource) on 9093, plus its own separate /metrics
+# on 8080 (a second port on the same Service - caught live: the chart's own
+# observability-alertmanager ServiceMonitor has two endpoints, 9093 for the
+# API and 8080 for metrics, and only allowing 9093 left the metrics scrape
+# down). Egresses to Slack.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -187,6 +226,8 @@ spec:
       ports:
         - protocol: TCP
           port: 9093
+        - protocol: TCP
+          port: 8080
   egress:
     - to:
         - ipBlock:
@@ -210,10 +251,14 @@ spec:
 ---
 # Grafana: queries Prometheus and Alertmanager as datasources; its sidecar
 # (dashboard/datasource provisioning) watches ConfigMaps cluster-wide via
-# the Kubernetes API. Reachable itself only via kubectl port-forward -
-# same posture as Jenkins/Prometheus/Alertmanager, no ingress rule needed
-# for that (see jenkins-controller-policy precedent: port-forward already
-# works today with no explicit ingress-from-apiserver rule).
+# the Kubernetes API. Reachable itself only via kubectl port-forward - same
+# posture as Jenkins/Prometheus/Alertmanager, no *inbound-user-traffic*
+# ingress rule needed for that (see jenkins-controller-policy precedent:
+# port-forward already works today with no explicit ingress-from-apiserver
+# rule). Does still need one real ingress rule though - Prometheus scrapes
+# Grafana's own /metrics (the observability-grafana ServiceMonitor) -
+# caught live, this was the one Ingress rule missing from this policy
+# entirely (it only declared Egress).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -224,7 +269,16 @@ spec:
     matchLabels:
       app.kubernetes.io/name: grafana
   policyTypes:
+    - Ingress
     - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 3000
   egress:
     - to:
         - podSelector:
@@ -318,7 +372,11 @@ spec:
 ---
 # prometheus-operator: manages the Prometheus/Alertmanager StatefulSets and
 # watches every monitoring.coreos.com CRD cluster-wide via the Kubernetes
-# API. No ingress rule for its admission webhooks - see header comment #2.
+# API. No ingress rule for its admission webhooks - see header comment #2 -
+# but it does need one for Prometheus scraping its own /metrics (the
+# observability-operator ServiceMonitor, port "https"/10250, TLS) - caught
+# live, same class of gap as grafana-policy above (Egress-only policyTypes
+# left ingress fully denied by the namespace's default-deny baseline).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -329,7 +387,16 @@ spec:
     matchLabels:
       app: kube-prometheus-stack-operator
   policyTypes:
+    - Ingress
     - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 10250
   egress:
     - to:
         - ipBlock:

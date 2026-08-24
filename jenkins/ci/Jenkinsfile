@@ -106,6 +106,96 @@ pipeline {
             }
         }
 
+        // Assignment 5 - only in ci-application, not pr-Jenkinsfile: this
+        // validates observability/ and helm/devops-app's new ServiceMonitor
+        // template, neither of which a PR's own quality gate has any reason
+        // to gate on before merge. Kept inline here rather than in
+        // jenkins/shared-library/ - it's only ever called from this one
+        // pipeline, unlike lintCode.groovy/runTests.groovy which are
+        // genuinely shared between ci/Jenkinsfile and pr-Jenkinsfile.
+        stage('Observability Validation') {
+            steps {
+                container('python') {
+                    sh '''
+                        set -e
+
+                        echo "--- Dashboard JSON syntax ---"
+                        for f in observability/dashboards/*.json; do
+                            python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f"
+                        done
+
+                        echo "--- Fetching promtool, kubeconform, helm (checksum-verified static binaries) ---"
+                        # Same pattern as Cosign/crane in this pipeline's own
+                        # environment{} block: pinned version, hardcoded
+                        # checksum from that release's own published
+                        # checksums file, not fetched at build time. urllib,
+                        # not curl - this container has neither curl nor wget
+                        # (see the Cosign fetch above in Push + Sign).
+                        python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com/prometheus/prometheus/releases/download/v3.14.0/prometheus-3.14.0.linux-amd64.tar.gz', '/tmp/prometheus.tar.gz')"
+                        echo "f665c6da19eb7ba399c915d30c7d9793c9b417bf8a749b504bc470678631478d  /tmp/prometheus.tar.gz" | sha256sum -c -
+                        tar -xzf /tmp/prometheus.tar.gz -C /tmp
+
+                        python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz', '/tmp/kubeconform.tar.gz')"
+                        echo "9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883  /tmp/kubeconform.tar.gz" | sha256sum -c -
+                        tar -xzf /tmp/kubeconform.tar.gz -C /tmp
+
+                        # v3.16, matching the cd-agent template's own
+                        # dtzar/helm-kubectl:3.16 image (jenkins/values.yaml)
+                        # - only needed here to render helm/devops-app's
+                        # ServiceMonitor template before schema-checking it,
+                        # not to actually install anything.
+                        python3 -c "import urllib.request; urllib.request.urlretrieve('https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz', '/tmp/helm.tar.gz')"
+                        echo "fc307327959aa38ed8f9f7e66d45492bb022a66c3e5da6063958254b9767d179  /tmp/helm.tar.gz" | sha256sum -c -
+                        tar -xzf /tmp/helm.tar.gz -C /tmp
+
+                        echo "--- PrometheusRule semantics (promtool) ---"
+                        pip install --quiet --no-cache-dir pyyaml==6.0.2
+                        mkdir -p /tmp/rules-extracted
+                        # promtool's native rule-file schema is a bare
+                        # {groups: [...]} at the top level - a PrometheusRule
+                        # CRD wraps that same content under
+                        # apiVersion/kind/metadata/spec.groups, which
+                        # promtool can't parse directly. Pulls exactly the
+                        # groups key, not the whole spec block, so this stays
+                        # correct even if spec ever carries anything else
+                        # alongside groups.
+                        python3 -c "
+import yaml, glob, os
+for f in glob.glob('observability/rules/*.yaml'):
+    with open(f) as fh:
+        doc = yaml.safe_load(fh)
+    out = {'groups': doc['spec']['groups']}
+    with open(os.path.join('/tmp/rules-extracted', os.path.basename(f)), 'w') as fh:
+        yaml.safe_dump(out, fh)
+"
+                        /tmp/prometheus-3.14.0.linux-amd64/promtool check rules /tmp/rules-extracted/*.yaml
+
+                        echo "--- ServiceMonitor/PrometheusRule/NetworkPolicy schema (kubeconform) ---"
+                        # Real CRD schema validation, not just "is this valid
+                        # YAML" - catches a structurally wrong field/nesting
+                        # that would otherwise only surface as a confusing
+                        # failure at kubectl apply time. datreeio/CRDs-catalog
+                        # is the standard community schema catalog for
+                        # third-party CRDs kubeconform's own bundled/default
+                        # set doesn't cover (prometheus-operator's included).
+                        /tmp/linux-amd64/helm template devops-app ./helm/devops-app \
+                            --namespace devops-app \
+                            --set image.registry=validate --set image.tag=validate \
+                            --set config.dbHost=validate --set config.s3BucketName=validate \
+                            --set config.snsTopicArn=validate --set secrets.dbPasswordSecretName=validate \
+                            -s templates/servicemonitors.yaml > /tmp/rendered-servicemonitors.yaml
+                        /tmp/kubeconform -strict -summary \
+                            -schema-location default \
+                            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+                            /tmp/rendered-servicemonitors.yaml \
+                            jenkins/servicemonitor.yaml \
+                            observability/rules/*.yaml \
+                            observability/networkpolicies.yaml
+                    '''
+                }
+            }
+        }
+
         stage('Static Analysis / Lint') {
             steps {
                 container('python') {

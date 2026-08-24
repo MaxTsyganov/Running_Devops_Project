@@ -228,9 +228,16 @@ spec:
             # pipeline. Also grants ci-agent pods this same access, since both templates
             # share one policy (see header comment #2) - harmless, since nothing in
             # ci-agent's own steps ever makes any HTTP call anywhere in-cluster.
+            # Port 9090 added for Assignment 5's Monitoring Gate stage
+            # (jenkins/cd/Jenkinsfile) - cd-agent queries
+            # observability-prometheus's Service by the same in-cluster DNS
+            # mechanism, so the identical pre-DNAT-ClusterIP reasoning above
+            # applies unchanged, not a new problem to re-diagnose.
       ports:
         - protocol: TCP
           port: 80
+        - protocol: TCP
+          port: 9090
     - to:
         - namespaceSelector:
             matchLabels:

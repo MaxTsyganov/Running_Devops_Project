@@ -268,6 +268,145 @@ pipeline {
                 }
             }
         }
+
+        // Assignment 5. A failure here reaches the exact same post{failure{}}
+        // rollback logic below as every earlier stage - HELM_DEPLOY_ATTEMPTED
+        // is already true by this point, so nothing about the rollback
+        // mechanism itself needed to change for this stage to exist.
+        stage('Monitoring Gate') {
+            steps {
+                container('deploy') {
+                    sh '''
+                        set -e
+                        # In-cluster Service DNS, same reasoning as Smoke
+                        # Test's own INTERNAL_HOST above - resolves to a real
+                        # Pod IP jenkins-agent-policy's egress rule can match
+                        # against (jenkins/networkpolicies.yaml, port 9090
+                        # added alongside the existing port-80 rule).
+                        PROM_HOST="observability-prometheus.observability.svc.cluster.local:9090"
+
+                        # wget --post-data, not a GET query string: PromQL
+                        # itself is full of characters (spaces, {}, ", |, ~)
+                        # that would need careful percent-encoding in a URL -
+                        # sending it as a form-encoded POST body sidesteps
+                        # that entirely, since neither query below contains a
+                        # literal "&" (the one character that actually needs
+                        # escaping in a form body).
+                        prom_query() {
+                            wget -q -O- --timeout=10 --post-data="query=$1" "http://${PROM_HOST}/api/v1/query" 2>/dev/null || echo ""
+                        }
+
+                        echo "=== Waiting for Prometheus to confirm all three scrape targets are up ==="
+                        # Not an immediate query: the freshly-rolled-out Pods'
+                        # first scrape may not have happened yet
+                        # (observability/values.yaml: scrapeInterval 30s) -
+                        # a bounded retry here, same style as Smoke Test's own
+                        # loop, not a blind sleep or a single query that could
+                        # misreport a healthy deploy as down.
+                        TARGETS_UP=""
+                        for i in $(seq 1 12); do
+                            RESPONSE=$(prom_query 'min(up{job=~"backend-service|worker-service|frontend-metrics-service"})')
+                            if echo "$RESPONSE" | grep -q '"value":.*,"1"'; then
+                                echo "All scrape targets confirmed up."
+                                TARGETS_UP="true"
+                                break
+                            fi
+                            echo "Waiting for scrape targets to report up... ($i/12)"
+                            sleep 10
+                        done
+                        if [ "$TARGETS_UP" != "true" ]; then
+                            echo "Monitoring Gate FAILED: scrape targets never reported up within the observation window"
+                            exit 1
+                        fi
+
+                        # Smoke Test above exits on its first successful
+                        # request - one real HTTP request total in the normal
+                        # case, and even that one hits "/" - the static
+                        # frontend root, served by nginx directly
+                        # (frontend/nginx.k8s.conf's `location /`), which
+                        # never reaches the backend at all. The error-rate
+                        # check below reads http_requests_total{job="backend-
+                        # service"}, so this deliberately hits GET
+                        # /api/items instead - proxied to the backend
+                        # (`location /api/`), read-only. Not /api/health:
+                        # that path is in backend/app.py's own
+                        # _METRICS_EXCLUDED_PATHS (health-check noise is
+                        # deliberately kept out of http_requests_total), so
+                        # hitting it here would generate zero traffic this
+                        # query could ever see.
+                        echo "=== Generating backend traffic for the error-rate check ==="
+                        # 40 requests over ~40s, deliberately longer than one
+                        # scrape interval (observability/values.yaml: 30s) -
+                        # not just "some traffic", but traffic that spans at
+                        # least one real scrape, so increase() below sees an
+                        # actual counter delta instead of racing a window
+                        # where nothing was sampled yet.
+                        INTERNAL_HOST="frontend-service.${TARGET_NAMESPACE}.svc.cluster.local"
+                        for i in $(seq 1 40); do
+                            wget -q -O- --timeout=5 "http://${INTERNAL_HOST}/api/items" >/dev/null 2>&1 || true
+                            sleep 1
+                        done
+
+                        echo "=== Checking backend error rate over the traffic window just generated ==="
+                        # (sum(...) or vector(0)) around the 5xx numerator -
+                        # not optional. Caught live: when zero requests
+                        # actually returned a 5xx (the healthy case this
+                        # gate exists to confirm), the label filter
+                        # status=~"5.." matches no time series at all, and
+                        # PromQL's sum()/increase() over zero matched series
+                        # produces an EMPTY vector, not a literal 0 - so the
+                        # division below yields empty too (no result for a
+                        # missing numerator to divide), which the "no data"
+                        # check above would then wrongly fail the gate on a
+                        # perfectly healthy deploy. vector(0) supplies a real
+                        # zero to divide by instead. Same fix applied to
+                        # job:http_availability:ratio_rate5m in
+                        # observability/rules/slo-recording-rules.yaml,
+                        # which had the identical flaw.
+                        RESPONSE=$(prom_query '(sum(increase(http_requests_total{job="backend-service",status=~"5.."}[2m])) or vector(0)) / sum(increase(http_requests_total{job="backend-service"}[2m]))')
+                        # An empty result vector (e.g. Prometheus hasn't
+                        # scraped the traffic above yet) has no "value" key
+                        # anywhere in the response at all - checked
+                        # explicitly first. Skipping this check is a real
+                        # trap: with no "value" key, the "last ,\"...\"
+                        # substring" extraction below would instead grab the
+                        # JSON key name "result" (from an empty
+                        # "result":[]), and awk's non-numeric-string-to-0
+                        # coercion would then read that as "0% errors" -
+                        # silently passing the gate on missing data instead
+                        # of failing it. Caught live before this ever ran in
+                        # a real build, not assumed safe.
+                        if ! echo "$RESPONSE" | grep -q '"value":'; then
+                            echo "Monitoring Gate FAILED: error-rate query returned no data"
+                            exit 1
+                        fi
+                        # Last ,"..." substring in the response, not a
+                        # bracket-anchored pattern - avoids relying on how
+                        # this shell's grep handles escaped [ ] (BRE
+                        # semantics for that differ enough across
+                        # implementations - GNU vs. BusyBox - that this is
+                        # worth sidestepping rather than assuming). Safe now
+                        # that the check above guarantees a "value" pair
+                        # actually exists - it's always the last quoted
+                        # string Prometheus emits for a single-result query.
+                        ERROR_VALUE=$(echo "$RESPONSE" | grep -o ',"[^"]*"' | tail -1 | tr -d ',"')
+                        echo "Backend error rate over the traffic window: ${ERROR_VALUE}"
+                        # Same 5% threshold as the HighErrorRate alert
+                        # (observability/rules/application-alerts.yaml) - a
+                        # release CD would let through shouldn't already be
+                        # sitting a hair away from paging someone. NaN (e.g.
+                        # a 0/0 from zero traffic reaching the backend at
+                        # all) fails the comparison too, correctly treated
+                        # as "no meaningful data" rather than "0% errors".
+                        awk -v v="$ERROR_VALUE" 'BEGIN { exit !(v+0 <= 0.05) }' || {
+                            echo "Monitoring Gate FAILED: backend error rate ${ERROR_VALUE} exceeds the 5% threshold"
+                            exit 1
+                        }
+                        echo "Monitoring Gate passed: backend error rate ${ERROR_VALUE} within threshold."
+                    '''
+                }
+            }
+        }
     }
 
     post {
