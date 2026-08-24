@@ -81,6 +81,7 @@ as narrowly as `cd-deploy-sa` is now.
 | Helm | `v3.21.4` | client-side, any recent 3.x |
 | kubectl / aws-cli | any recent version | client-side |
 | Cosign | `v3.1.3` (static binary, fetched at runtime by the CI agent, sha256-verified against a checksum pinned alongside the version) | `jenkins/ci/Jenkinsfile` |
+| crane (`go-containerregistry`) | `v0.21.9` (same fetch-and-verify pattern as Cosign) | `jenkins/ci/Jenkinsfile` |
 
 Also requires: an EKS cluster and `devops-app` namespace already brought up via this repo's own
 `setup.sh` (Jenkins is layered on top of that infra - see [§12](#12-supporting-infrastructure) - it
@@ -151,7 +152,7 @@ configuration on boot - no manual System Config page was ever touched:
   its only official image is distroless (no shell), which breaks the idle-container-then-`exec`
   pattern every other tool here uses, so the CI pipeline fetches the static binary into the existing
   `python` container at runtime instead (§5). The same `ci-agent` template is also what each
-  parallel matrix cell in §5's Build/Scan/Sign stage requests a fresh Pod from - no separate
+  parallel matrix cell in §5's Build/Scan/Push+Sign stage requests a fresh Pod from - no separate
   template needed for that either.
 - **Plugin list**: all 85 entries in `installPlugins` are pinned `shortName:version`, not bare names -
   the 12 actually wanted (`kubernetes`, `kubernetes-credentials-provider`, `workflow-aggregator`,
@@ -184,20 +185,21 @@ first build has already run with it configured).
 
 | Stage | What it does |
 |---|---|
-| Checkout | Pulls the repo, computes `IMAGE_TAG` = short (8-char) commit SHA |
+| Checkout | Pulls the repo, computes `IMAGE_TAG` = full commit SHA |
 | Validation | Confirms every service's `Dockerfile`/`.dockerignore` and the Helm chart exist |
 | Static Analysis / Lint | `pyflakes` against `backend/app.py` and `worker/worker.py` |
 | Tests | `pytest` against `backend/test_app.py`, results published via `junit` |
-| **Build, Scan, Sign** (`matrix`) | Runs once per service (`frontend`/`backend`/`worker`), each cell on its **own freshly-provisioned `ci-agent` Pod** - genuine parallel builds, not three processes sharing one container. Each cell: **Build** (Kaniko builds and pushes that one image - no Docker socket, see [§9](#9-security)), **Scan + SBOM** (Trivy scans the pushed image - HIGH+CRITICAL reported non-blocking and archived, fixable CRITICAL findings fail that cell's build - and generates a CycloneDX SBOM, archived as `sbom-<service>.json`), **Sign** (Cosign signs the image *by digest* with the project's AWS KMS key), **Publish Metadata** (archives `image-metadata-<service>.txt`: tag, digest, signed status) |
+| **Build, Scan, Push+Sign** (`matrix`) | Runs once per service (`frontend`/`backend`/`worker`), each cell on its **own freshly-provisioned `ci-agent` Pod** - genuine parallel builds, not three processes sharing one container. Each cell: **Build** (Kaniko builds to a local tarball only - `--no-push --tarPath` - no Docker socket, see [§9](#9-security)), **Scan + SBOM** (Trivy scans that local tarball, the same tarball-scanning mode `pr-Jenkinsfile`'s quality gate uses - HIGH+CRITICAL reported non-blocking and archived, fixable CRITICAL findings fail that cell's build *before anything reaches ECR* - and generates a CycloneDX SBOM, archived as `sbom-<service>.json`), **Push + Sign** (`crane` pushes the already-scanned tarball to ECR, then Cosign signs the pushed image *by digest* with the project's AWS KMS key), **Publish Metadata** (archives `image-metadata-<service>.txt`: tag, digest, signed status) |
 
 Runs on the `ci-agent` template as `ci-build-sa` (IRSA - pushes to/pulls from ECR and signs via
 AWS KMS through a real AWS IAM role, no static credential anywhere in the pipeline). Images are
-tagged with the immutable 8-char commit SHA - never `latest` - and the three ECR repos are
+tagged with the immutable full commit SHA - never `latest` - and the three ECR repos are
 `IMAGE_TAG_MUTABILITY: IMMUTABLE` (`terraform/ecr.tf`), so even a mistake can't silently overwrite a
-tag already in use. A failed Test/Lint/Build/Scan/Sign cell fails the whole build (Declarative
+tag already in use. A failed Test/Lint/Build/Scan/Push cell fails the whole build (Declarative
 Pipeline's default, including matrix cells) and never reaches the `success` post-block that triggers
-CD - so a scan failure still guarantees nothing gets deployed, even though (see
-[§11](#11-trade-offs)) Kaniko's build and push happen as one atomic step, before the scan runs.
+CD - so a scan failure means nothing gets deployed *and* nothing ever reaches ECR in the first place,
+since Kaniko no longer pushes as part of Build (see [§11](#11-trade-offs) - this used to be a
+documented atomic-push trade-off; it isn't one anymore).
 
 **Signing**: `cosign sign --key awskms:///alias/devops-app-cosign --use-signing-config=false
 --tlog-upload=false --yes <image>@<digest>` - signs the immutable digest, not the mutable tag,
@@ -529,7 +531,7 @@ Evidence, including a real capacity problem the drill surfaced along the way, in
 | SBOM/sign/scan run per-service in a `matrix`, each cell its own Pod | Real parallelism (separate CPU/memory per service) instead of three processes contending inside one shared container | Up to 3 extra `ci-agent` Pods scheduled at once (on top of the pipeline's own top-level Pod) - more momentary cluster resource pressure during that stage |
 | Custom webhook relay instead of the official `smee-client` npm package | `smee-client` (all versions checked) has a real upstream bug reusing an incoming header value on its own outgoing request - reproduced only with real GitHub traffic, not synthetic test POSTs | ~100 lines of relay code to maintain instead of a dependency |
 | `webhook_content_type: json` via a raw API request, not `gh api`'s `-f config[key]=value` flags | `gh api -f config[content_type]=json` silently failed to nest into GitHub's webhook config - GitHub defaulted to form-encoding instead, which broke the Jenkins GitHub plugin's payload parser (`GHEventPayload$Push.getRepository()` returned null) until this was caught via a captured raw payload and the hook was recreated with an explicit JSON body | One more thing to get right if this hook is ever recreated by hand |
-| Trivy scans the image *after* Kaniko has already pushed it, not before | Kaniko builds and pushes as one atomic `--destination` step - there's no local, daemon-accessible image to scan first without a separate build-to-tarball-then-push flow | A build that fails the Scan stage still leaves that (immutable-tagged, never referenced by any deploy) image sitting in ECR; the actual safety property - nothing gets deployed - still holds, since CD only ever triggers from CI's `success` post-block |
+| Trivy scans a local Kaniko tarball (`--no-push --tarPath`) before anything reaches ECR, then `crane` pushes only what already passed - not Kaniko's atomic `--destination` push. Originally this project accepted the atomic-push trade-off (a scan failure left an unscanned, never-deployed image sitting in ECR); building to a tarball first, the same mode `pr-Jenkinsfile`'s quality gate already used, closes that instead of just tolerating it. | `crane` (`go-containerregistry`) is a fourth static binary fetched at runtime, checksum-verified the same way as Cosign - a scan-then-push flow needs *something* that can push a pre-built tarball without Kaniko rebuilding it | One more tool to keep pinned/checksummed, and one more ECR auth round-trip per service (shared with Cosign's own token fetch in the same stage, not duplicated) |
 | Jenkins CD (`helm upgrade --install`) instead of ArgoCD/GitOps | A real CI/CD pipeline needs to own deploy directly - GitOps auto-sync would revert every Jenkins deploy as drift (see [History](#13-history)) | Deploy history lives in Helm release revisions, not a GitOps `Application`'s sync history |
 | `t3.medium` nodes instead of `t3.small` | Jenkins (a resident controller Pod, a resident webhook-relay Pod, and bursts of ephemeral CI/CD agent Pods) on top of an already-tight `t3.small` cluster (11 pods/node) risked agent Pods stuck `Pending` mid-build; `t3.medium` doubles memory per node and raises the ceiling to 17/node for the same node count | Roughly doubles hourly node cost, and still not unlimited: confirmed live when two full CI matrix builds landed at once (two real pushes a few seconds apart), several matrix cells sat genuinely `Pending`/`Insufficient cpu,memory` for roughly a minute before earlier stages finished and freed capacity - resolved on its own, no stuck build, but a true capacity guardrail (Cluster Autoscaler, or a lower `containerCapStr`) would smooth this instead of relying on it draining naturally |
 | `generic-webhook-trigger` for `ci-application-pr`, not Multibranch Pipeline or GHPRB | Multibranch would mean a second, structurally different job type (and PR discovery/scanning machinery) alongside the two REST-API-created Pipeline jobs; GHPRB needs a bot GitHub account. A JSON-field-extraction trigger keeps the third job created exactly the same way as the first two | Live-verified, but only after a real bug: the first version's header-based event-type filter never actually matched GitHub's real header name, so the webhook returned 200 while silently never queuing a build - root-caused and simplified (see `evidence/06-bonus-features/13a-pr-quality-gate-trigger-bug-and-fix.txt`), not something a config.xml export alone would have caught |

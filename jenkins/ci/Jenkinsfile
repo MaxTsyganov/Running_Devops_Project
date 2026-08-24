@@ -1,11 +1,13 @@
-// CI pipeline: build, test, scan, sign, push. Never deploys - that's
+// CI pipeline: build, test, scan, push, sign. Never deploys - that's
 // jenkins/cd/Jenkinsfile's job (see the CI/CD separation table in the
 // assignment brief). Checkout/Lint/Test run on the "ci-agent" Kubernetes pod
-// template (jenkins/values.yaml). Build/Scan/Sign run per service inside a
-// matrix, each cell on its own freshly-provisioned ci-agent pod - genuine
-// parallelism (separate CPU/memory per service), not three processes
-// contending inside one shared container. Agent pods never mount the node's
-// Docker socket - Kaniko builds OCI images without a daemon.
+// template (jenkins/values.yaml). Build/Scan/Push+Sign run per service
+// inside a matrix, each cell on its own freshly-provisioned ci-agent pod -
+// genuine parallelism (separate CPU/memory per service), not three
+// processes contending inside one shared container. Agent pods never mount
+// the node's Docker socket - Kaniko builds OCI images without a daemon, and
+// nothing ever reaches ECR until Trivy has scanned it first (Kaniko builds
+// to a local tarball only; crane pushes it after the scan passes).
 @Library('devops-shared-lib') _
 pipeline {
     agent {
@@ -44,6 +46,15 @@ pipeline {
         // time, so a compromised release download can't also serve a matching
         // fake checksum. Bumping COSIGN_VERSION means updating this too.
         COSIGN_SHA256 = '4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71'
+        // crane (go-containerregistry) pushes the already-built, already-
+        // scanned image tarball straight to ECR without rebuilding - see the
+        // Push + Sign stage below for why Kaniko no longer pushes directly.
+        // Same distroless-so-fetch-a-static-binary reasoning as Cosign.
+        CRANE_VERSION = 'v0.21.9'
+        // sha256 of go-containerregistry_Linux_x86_64.tar.gz from that
+        // release's own checksums.txt - hardcoded here for the same reason
+        // as COSIGN_SHA256 above.
+        CRANE_SHA256 = '5c16d8ddb971cb1d5e6ed8b1e743da8224414eeba2c2762d8f1a61b2f095699e'
         // awskms:///alias/... - three slashes: awskms:// plus an empty
         // endpoint (default AWS endpoint) plus the /alias/... path. Signs
         // with an asymmetric KMS key (terraform/kms.tf) - no private key
@@ -66,11 +77,16 @@ pipeline {
             steps {
                 checkout scm
                 script {
-                    env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short=8 HEAD', returnStdout: true).trim()
-                    env.IMAGE_TAG = env.GIT_COMMIT_SHORT
+                    // Full 40-char SHA, not a truncated one - ECR tags allow up to 128
+                    // chars and this value is never used as a Kubernetes label (which
+                    // would cap it at 63), only as the image tag itself, so there was
+                    // no real constraint forcing a shorter one - just collision risk
+                    // for no benefit.
+                    env.GIT_COMMIT_SHA = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = env.GIT_COMMIT_SHA
                 }
                 echo "Branch:       ${env.GIT_BRANCH ?: env.BRANCH_NAME}"
-                echo "Commit:       ${env.GIT_COMMIT_SHORT}"
+                echo "Commit:       ${env.GIT_COMMIT_SHA}"
                 echo "Build number: ${env.BUILD_NUMBER}"
                 echo "Image tag:    ${env.IMAGE_TAG}"
             }
@@ -118,7 +134,7 @@ pipeline {
         // its own workspace) since separate pods never share a filesystem;
         // IMAGE_TAG still comes from the single Checkout stage above so all
         // three services land on the exact same immutable tag.
-        stage('Build, Scan, Sign') {
+        stage('Build, Scan, Push+Sign') {
             matrix {
                 axes {
                     axis {
@@ -144,18 +160,26 @@ pipeline {
                             container('kaniko') {
                                 sh '''
                                     set -e
-                                    echo "Building devops-${SERVICE}:${IMAGE_TAG}..."
-                                    # $(pwd)/digest.txt, not /workspace/digest.txt: /workspace is
-                                    # Kaniko's own private scratch directory inside this one
-                                    # container, not the Pod's shared Jenkins workspace volume
-                                    # (mounted at the same $(pwd) in every container) - confirmed
-                                    # live the hard way, when Sign (running in the python
-                                    # container) couldn't find a file Build had "written" to a path
-                                    # that was never actually shared.
+                                    echo "Building devops-${SERVICE}:${IMAGE_TAG} (local tarball, not pushed yet)..."
+                                    # $(pwd)/digest.txt and $(pwd)/${SERVICE}.tar, not /workspace/...:
+                                    # /workspace is Kaniko's own private scratch directory inside this
+                                    # one container, not the Pod's shared Jenkins workspace volume
+                                    # (mounted at the same $(pwd) in every container) - confirmed live
+                                    # the hard way, when Sign (running in the python container)
+                                    # couldn't find a file Build had "written" to a path that was
+                                    # never actually shared.
+                                    # --no-push --tarPath instead of a direct --destination push: see
+                                    # the Push + Sign stage below for why - the image gets scanned
+                                    # from this tarball before anything reaches ECR at all, not
+                                    # pushed-then-scanned. --destination is still required even
+                                    # without pushing, so the tarball's own manifest is tagged
+                                    # correctly for crane to push later.
                                     /kaniko/executor \
                                         --context "dir://$(pwd)/${SERVICE}" \
                                         --dockerfile "${SERVICE}/Dockerfile" \
                                         --destination "${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}" \
+                                        --no-push \
+                                        --tarPath "$(pwd)/${SERVICE}.tar" \
                                         --digest-file "$(pwd)/digest.txt" \
                                         --cache=false
                                 '''
@@ -166,78 +190,104 @@ pipeline {
                     stage('Scan + SBOM') {
                         steps {
                             container('trivy') {
-                                // Scan (full report + blocking gate on fixable CRITICAL findings)
-                                // lives in the Shared Library now (jenkins/shared-library/vars/
-                                // trivyScan.groovy) - identical logic pr-Jenkinsfile's quality
-                                // gate also needs, just against a local tarball instead of a
-                                // pushed image. SBOM generation stays here: it's only meaningful
-                                // for an image that's actually going to be deployed, which a PR
-                                // build never is.
-                                trivyScan("${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}", false, "${SERVICE}")
+                                // Scans the local tarball Build produced, not a pushed image -
+                                // Kaniko no longer pushes before this gate runs (see Push + Sign
+                                // below). Scan (full report + blocking gate on fixable CRITICAL
+                                // findings) lives in the Shared Library now (jenkins/shared-library/
+                                // vars/trivyScan.groovy) - the exact same tarball-scanning mode
+                                // pr-Jenkinsfile's quality gate already uses, just no longer unique
+                                // to PR builds. SBOM generation stays a CI-only step: it's only
+                                // meaningful for an image that's actually going to be deployed,
+                                // which a PR build never is.
+                                trivyScan("${env.WORKSPACE}/${SERVICE}.tar", true, "${SERVICE}")
                                 sh '''
                                     set -e
-                                    IMAGE="${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}"
-                                    echo "=== SBOM for $IMAGE ==="
-                                    trivy image --format cyclonedx --output "sbom-${SERVICE}.json" "$IMAGE"
+                                    echo "=== SBOM for devops-${SERVICE}:${IMAGE_TAG} ==="
+                                    trivy image --input "${SERVICE}.tar" --format cyclonedx --output "sbom-${SERVICE}.json"
                                 '''
                                 archiveArtifacts artifacts: "sbom-${SERVICE}.json", fingerprint: true
                             }
                         }
                     }
 
-                    stage('Sign') {
+                    // Combined into one stage, not two: both crane's push and cosign's
+                    // sign need the same ECR bearer token, and each `sh` step is its own
+                    // shell - splitting them would mean fetching that token (and both
+                    // binaries) twice for no reason.
+                    stage('Push + Sign') {
                         steps {
                             container('python') {
                                 sh '''
                                     set -e
+                                    # crane pushes the tarball Build produced - already scanned by
+                                    # the previous stage - straight to ECR without rebuilding. This
+                                    # is the actual point of building to a tarball first: a failed
+                                    # scan now means nothing ever reaches ECR at all, not just
+                                    # "nothing gets deployed." No official go-containerregistry image
+                                    # has a shell either, so same fetch-a-static-binary approach as
+                                    # Cosign below.
+                                    python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz', '/tmp/crane.tar.gz')"
+                                    echo "${CRANE_SHA256}  /tmp/crane.tar.gz" | sha256sum -c -
+                                    tar -xzf /tmp/crane.tar.gz -C /tmp crane
+                                    chmod +x /tmp/crane
+
                                     # No official Cosign image has a shell (see COSIGN_VERSION comment
                                     # above) - fetch the static binary with urllib since this container
                                     # has neither curl nor wget either (checked directly, not assumed).
                                     python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64', '/tmp/cosign')"
-                                    # Verify against the checksum pinned above before trusting/executing
-                                    # this binary - it's fetched over plain HTTPS at build time with no
-                                    # OS package manager or signature check in front of it otherwise.
+                                    # Verify against the checksums pinned above before trusting/executing
+                                    # either binary - both are fetched over plain HTTPS at build time with
+                                    # no OS package manager or signature check in front of them otherwise.
                                     echo "${COSIGN_SHA256}  /tmp/cosign" | sha256sum -c -
                                     chmod +x /tmp/cosign
+
                                     # set +x from here on: Jenkins' sh step echoes every command it
-                                    # runs (the "+ ..." lines in the console log) - without this, both
-                                    # the ECR_TOKEN assignment below and the cosign invocation's
-                                    # --registry-password argument print the real bearer token
-                                    # (short-lived, 12h, ECR-scoped only, but still a real credential -
-                                    # confirmed leaking in this project's own captured build logs before
-                                    # this fix). Same "never printed to a log" bar the Slack webhook URL
-                                    # and DB password are already held to elsewhere in this project.
+                                    # runs (the "+ ..." lines in the console log) - without this, the
+                                    # ECR_TOKEN assignment, crane's login, and cosign's
+                                    # --registry-password argument would all print the real bearer
+                                    # token (short-lived, 12h, ECR-scoped only, but still a real
+                                    # credential - confirmed leaking in this project's own captured
+                                    # build logs before this fix). Same "never printed to a log" bar
+                                    # the Slack webhook URL and DB password are already held to
+                                    # elsewhere in this project.
                                     set +x
-                                    # Cosign's AWS SDK usage covers KMS (signing) via ci-build-sa's IRSA
-                                    # identity automatically, but - unlike Kaniko, which has an ECR
-                                    # credential helper built directly into its executor - go-
-                                    # containerregistry (what Cosign uses to read the image) has no
-                                    # built-in ECR support at all without an external Docker credential
-                                    # helper on PATH. Confirmed live: signing failed with a 401 reading
-                                    # the manifest until this token was passed explicitly. boto3, not
-                                    # awscli, to avoid a much heavier runtime install for one API call -
-                                    # same boto3 version already pinned in backend/requirements.txt.
+                                    # One ECR token, used for both crane's push and cosign's sign -
+                                    # go-containerregistry (what both tools are built on) has no
+                                    # built-in ECR credential helper, unlike Kaniko's executor. boto3,
+                                    # not awscli, to avoid a much heavier runtime install for one API
+                                    # call - same boto3 version already pinned in
+                                    # backend/requirements.txt.
                                     pip install --quiet --no-cache-dir boto3==1.34.131
                                     ECR_TOKEN="$(python3 -c "
 import base64, boto3
 token = boto3.client('ecr', region_name='us-east-1').get_authorization_token()['authorizationData'][0]['authorizationToken']
 print(base64.b64decode(token).decode().split(':', 1)[1])
 ")"
+                                    /tmp/crane auth login "${ECR_REGISTRY}" -u AWS -p "$ECR_TOKEN"
+                                    set -x
+
+                                    echo "Pushing devops-${SERVICE}:${IMAGE_TAG} (already scanned)..."
+                                    /tmp/crane push "${SERVICE}.tar" "${ECR_REGISTRY}/devops-${SERVICE}:${IMAGE_TAG}"
+
+                                    set +x
                                     DIGEST="$(cat digest.txt)"
                                     IMAGE_REF="${ECR_REGISTRY}/devops-${SERVICE}@${DIGEST}"
                                     echo "Signing $IMAGE_REF with ${COSIGN_KMS_KEY}..."
-                                    # Signs by digest, not by mutable tag. --use-signing-config=
-                                    # false --tlog-upload=false: cosign uploads to the public
-                                    # Rekor transparency log by default even for KMS-based
-                                    # (non-keyless) signing, unless told not to - caught live via
-                                    # `cosign verify` failing with "transparency log certificate
-                                    # does not match" until both flags were added (v3.1.3 ignores
-                                    # a bare --tlog-upload=false under its newer signing-config
-                                    # mode; --use-signing-config=false is required to fall back to
-                                    # where that flag actually takes effect). Uploading there would
-                                    # silently reintroduce the exact public-Sigstore dependency
-                                    # this project chose KMS signing specifically to avoid (see
-                                    # README trade-offs).
+                                    # Signs by digest, not by mutable tag - the same digest Kaniko
+                                    # computed at build time (digest.txt), which crane's push
+                                    # preserves exactly since it pushes the same content-addressed
+                                    # manifest, not a re-encoded one. --use-signing-config=false
+                                    # --tlog-upload=false: cosign uploads to the public Rekor
+                                    # transparency log by default even for KMS-based (non-keyless)
+                                    # signing, unless told not to - caught live via `cosign verify`
+                                    # failing with "transparency log certificate does not match"
+                                    # until both flags were added (v3.1.3 ignores a bare
+                                    # --tlog-upload=false under its newer signing-config mode;
+                                    # --use-signing-config=false is required to fall back to where
+                                    # that flag actually takes effect). Uploading there would
+                                    # silently reintroduce the exact public-Sigstore dependency this
+                                    # project chose KMS signing specifically to avoid (see README
+                                    # trade-offs).
                                     /tmp/cosign sign --key "${COSIGN_KMS_KEY}" \
                                         --use-signing-config=false --tlog-upload=false \
                                         --registry-username AWS --registry-password "$ECR_TOKEN" \
@@ -296,7 +346,7 @@ print(base64.b64decode(token).decode().split(':', 1)[1])
                 // in this pipeline.
                 def manifest = """IMAGE_TAG=${env.IMAGE_TAG}
 CI_BUILD_NUMBER=${env.BUILD_NUMBER}
-GIT_COMMIT=${env.GIT_COMMIT_SHORT}
+GIT_COMMIT=${env.GIT_COMMIT_SHA}
 DIGEST_FRONTEND=${env.DIGEST_frontend}
 DIGEST_BACKEND=${env.DIGEST_backend}
 DIGEST_WORKER=${env.DIGEST_worker}
@@ -324,7 +374,7 @@ DIGEST_WORKER=${env.DIGEST_worker}
                 // ECR, unscanned/unsigned/unpromoted. What's actually guaranteed is
                 // that nothing was deployed - cd-application only ever triggers
                 // from this pipeline's post{success{}} block, never reached here.
-                notifySlack('FAILURE', "CI failed on commit ${env.GIT_COMMIT_SHORT ?: env.GIT_COMMIT} - one or more services may be partially built/pushed; nothing was deployed.")
+                notifySlack('FAILURE', "CI failed on commit ${env.GIT_COMMIT_SHA ?: env.GIT_COMMIT} - one or more services may be partially built/pushed; nothing was deployed.")
             }
         }
     }
