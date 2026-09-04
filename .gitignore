@@ -25,6 +25,14 @@ crash.log
 
 # Local-only notes, never meant to be committed
 AWS_NOTES.md
+CHEAT-SHEET.md
+README-BEGINNER.md
+ASSIGNMENT-NOTES-BEGINNER.md
+README-HE.md
+ASSIGNMENT-NOTES-HE.md
+CHEAT-SHEET-HE.md
+project_defense_guide.html
+Project_Defense_Guide.pdf
 
 # Real per-run values (RDS endpoint, S3 bucket, credentials) never touch
 # disk during a normal deploy - Jenkins CD reads them from a ConfigMap at
